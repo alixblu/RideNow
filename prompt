@@ -1,0 +1,108 @@
+Read AGENTS.md and docs/database/ridenow.dbml before making changes.
+
+The DBML file is the source of truth for the initial RideNow
+persistent data model.
+
+Do NOT invent:
+- tables
+- entity fields
+- relationships
+- enum values
+- database columns
+
+unless I explicitly ask you to modify the schema.
+
+Scaffold the existing Spring Boot microservices using the conventional
+Spring Boot layered architecture:
+
+controller/
+service/
+repository/
+entity/
+dto/
+  request/
+  response/
+exception/
+
+IMPORTANT MICROSERVICE RULE:
+
+The DBML describes the logical system-wide data model, but each
+microservice owns its own database.
+
+Therefore, relationships crossing service boundaries must NOT become:
+- JPA @ManyToOne
+- JPA @OneToMany
+- JPA @OneToOne
+- database foreign keys between service databases
+
+Store external references as IDs instead.
+
+Example:
+
+Trip Service may contain:
+
+    UUID passengerId;
+    UUID driverId;
+    UUID vehicleId;
+
+It must NOT contain:
+
+    User passenger;
+    Driver driver;
+    Vehicle vehicle;
+
+Service ownership:
+
+USER SERVICE
+Owns:
+- users
+
+DRIVER SERVICE
+Owns:
+- drivers
+- vehicles
+
+TRIP SERVICE
+Owns:
+- trips
+- trip_offers
+
+PAYMENT SERVICE
+Owns:
+- payments
+
+For ratings, inspect the current project organization and report where
+you think it should belong before implementing it. Do not choose its
+service automatically.
+
+Redis state such as live driver location should NOT be modeled as a
+PostgreSQL table unless it appears in the DBML.
+
+SQS/EventBridge/WebSocket data should NOT become database entities
+unless explicitly defined by the schema.
+
+For each service:
+1. Read the corresponding tables from ridenow.dbml.
+2. Create the JPA entities.
+3. Create enums corresponding to documented status values.
+4. Create JpaRepository interfaces.
+5. Create basic service classes.
+6. Create REST controllers only where appropriate.
+7. Create request/response DTOs.
+8. Create basic exception handling.
+
+Use:
+- UUID IDs
+- constructor injection
+- Lombok @RequiredArgsConstructor if Lombok is installed
+- Java records for DTOs where appropriate
+- @Enumerated(EnumType.STRING) for enums
+- @Version for the Trip version field if appropriate for optimistic locking
+
+Do not implement business workflows yet.
+
+Before modifying files:
+- show me which DBML tables map to which microservice
+- show me which Java classes you intend to create
+
+After I confirm, make the changes.

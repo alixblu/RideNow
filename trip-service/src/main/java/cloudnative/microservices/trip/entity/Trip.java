@@ -1,0 +1,104 @@
+package cloudnative.microservices.trip.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Table(name = "trips", indexes = {
+        @Index(name = "idx_trips_passenger_id", columnList = "passenger_id"),
+        @Index(name = "idx_trips_driver_id", columnList = "driver_id"),
+        @Index(name = "idx_trips_status", columnList = "status"),
+        @Index(name = "idx_trips_requested_at", columnList = "requested_at"),
+        @Index(name = "idx_trips_passenger_requested_at", columnList = "passenger_id, requested_at"),
+        @Index(name = "idx_trips_driver_requested_at", columnList = "driver_id, requested_at")
+})
+@Getter
+@NoArgsConstructor
+public class Trip {
+
+    @Id
+    private UUID id;
+
+    @Column(name = "passenger_id", nullable = false)
+    private UUID passengerId;
+
+    @Column(name = "driver_id")
+    private UUID driverId;
+
+    @Column(name = "vehicle_id")
+    private UUID vehicleId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ride_type", nullable = false)
+    private RideType rideType;
+
+    @Column(name = "pickup_lat", nullable = false, precision = 9, scale = 6)
+    private BigDecimal pickupLat;
+
+    @Column(name = "pickup_lng", nullable = false, precision = 9, scale = 6)
+    private BigDecimal pickupLng;
+
+    @Column(name = "pickup_address")
+    private String pickupAddress;
+
+    @Column(name = "destination_lat", nullable = false, precision = 9, scale = 6)
+    private BigDecimal destinationLat;
+
+    @Column(name = "destination_lng", nullable = false, precision = 9, scale = 6)
+    private BigDecimal destinationLng;
+
+    @Column(name = "destination_address")
+    private String destinationAddress;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TripStatus status;
+
+    @Column(name = "estimated_fare", precision = 12, scale = 2)
+    private BigDecimal estimatedFare;
+
+    @Column(name = "final_fare", precision = 12, scale = 2)
+    private BigDecimal finalFare;
+
+    @Column(name = "cancellation_reason")
+    private String cancellationReason;
+
+    @Version
+    @Column(nullable = false)
+    private long version;
+
+    @Column(name = "requested_at", nullable = false)
+    private Instant requestedAt;
+
+    @Column(name = "accepted_at")
+    private Instant acceptedAt;
+
+    @Column(name = "arrived_at")
+    private Instant arrivedAt;
+
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+}
