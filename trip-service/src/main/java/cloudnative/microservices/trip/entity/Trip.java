@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
+import cloudnative.microservices.trip.exception.TripNotAcceptableException;
 import lombok.NoArgsConstructor;
 
 @Entity
@@ -101,4 +102,45 @@ public class Trip {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /**
+     * Creates a new trip that is already SEARCHING for a driver, so it can be offered
+     * to multiple drivers. Minimal fields for the concurrency lab; the full request
+     * flow (fare estimation, etc.) is a later stage.
+     */
+    public Trip(UUID id, UUID passengerId, RideType rideType,
+                BigDecimal pickupLat, BigDecimal pickupLng,
+                BigDecimal destinationLat, BigDecimal destinationLng, Instant now) {
+        this.id = id;
+        this.passengerId = passengerId;
+        this.rideType = rideType;
+        this.pickupLat = pickupLat;
+        this.pickupLng = pickupLng;
+        this.destinationLat = destinationLat;
+        this.destinationLng = destinationLng;
+        this.status = TripStatus.SEARCHING;
+        this.requestedAt = now;
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * Assigns a driver to this trip. THE signature business rule:
+     * a trip may only be accepted while it is still SEARCHING. If a driver already
+     * won it, the status is no longer SEARCHING and this throws.
+     *
+     * This guard, combined with the @Version optimistic lock, is what guarantees
+     * exactly one winner when many drivers accept at the same instant: even if two
+     * threads both read status=SEARCHING, only one commit succeeds; the other fails
+     * the version check and is rejected before it can overwrite the winner.
+     */
+    public void acceptBy(UUID driverId, Instant now) {
+        if (this.status != TripStatus.SEARCHING) {
+            throw new TripNotAcceptableException(this.id, this.status);
+        }
+        this.driverId = driverId;
+        this.status = TripStatus.DRIVER_ASSIGNED;
+        this.acceptedAt = now;
+        this.updatedAt = now;
+    }
 }

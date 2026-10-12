@@ -1,0 +1,27 @@
+# Local PostgreSQL for trip-service ONLY (database-per-service rule).
+# Host port 5435 so it coexists with driver-db (5433) and user-db (5434).
+#
+#   docker compose up -d     # start
+#   docker compose down      # stop (keep data)
+#   docker compose down -v   # stop and wipe data
+
+services:
+  trip-db:
+    image: postgres:17
+    container_name: trip-db
+    environment:
+      POSTGRES_DB: trip_service
+      POSTGRES_USER: trip
+      POSTGRES_PASSWORD: trip_local
+    ports:
+      - "5435:5432"
+    volumes:
+      - trip-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trip -d trip_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  trip-db-data:

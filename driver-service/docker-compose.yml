@@ -1,0 +1,33 @@
+﻿# Local PostgreSQL for driver-service ONLY.
+#
+# Microservice rule: each service owns its own database. This compose file
+# lives inside driver-service on purpose - user-service, trip-service, etc.
+# will each get their own separate database, never this one.
+#
+# Usage:
+#   docker compose up -d     # start the database in the background
+#   docker compose ps        # see it running
+#   docker compose down      # stop it (data is kept in the named volume)
+#   docker compose down -v   # stop it AND delete all data (fresh start)
+
+services:
+  driver-db:
+    image: postgres:17
+    container_name: driver-db
+    environment:
+      POSTGRES_DB: driver_service       # the database created on first start
+      POSTGRES_USER: driver             # the login role
+      POSTGRES_PASSWORD: driver_local   # local-only password; never used in the cloud
+    ports:
+      - "5433:5432"                     # host 5433 -> container 5432, so each
+                                        # service DB can use a different host port
+    volumes:
+      - driver-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U driver -d driver_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  driver-db-data:

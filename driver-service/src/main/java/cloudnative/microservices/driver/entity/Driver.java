@@ -42,4 +42,21 @@ public class Driver {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /**
+     * Creates a brand-new driver profile with server-owned defaults:
+     * status ACTIVE, zero trips, no rating yet, timestamps set to now.
+     * The service is the only caller; this keeps "how a driver is born"
+     * in one place instead of scattered setters.
+     */
+    public Driver(UUID id, UUID userId, String licenseNumber, Instant now) {
+        this.id = id;
+        this.userId = userId;
+        this.licenseNumber = licenseNumber;
+        this.status = DriverStatus.ACTIVE;
+        this.averageRating = null;
+        this.totalTrips = 0L;
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
 }

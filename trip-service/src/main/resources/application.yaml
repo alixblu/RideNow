@@ -1,3 +1,20 @@
+server:
+  port: 8082
+
 spring:
   application:
     name: trip-service
+  datasource:
+    url: jdbc:postgresql://localhost:5435/trip_service
+    username: trip
+    password: trip_local
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

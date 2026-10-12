@@ -1,3 +1,32 @@
 spring:
   application:
     name: driver-service
+
+  # How this service reaches ITS OWN database.
+  # Host port 5433 matches the docker-compose.yml port mapping for driver-db.
+  datasource:
+    url: jdbc:postgresql://localhost:5433/driver_service
+    username: driver
+    password: driver_local
+
+  jpa:
+    hibernate:
+      # validate = on startup, check that the entities match existing tables,
+      # but do NOT create or change tables. We will create tables explicitly
+      # (a migration tool comes in a later lesson). For this first run we switch
+      # to "update" so Hibernate creates the tables from the entities, letting
+      # you see data persist before we introduce proper migrations.
+      ddl-auto: update
+    properties:
+      hibernate:
+        # Log the SQL Hibernate runs, formatted, so you can SEE what happens.
+        format_sql: true
+    show-sql: true
+
+# Actuator exposes a /actuator/health endpoint so you (and later Kubernetes)
+# can ask "is this service healthy?" without hitting business endpoints.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
