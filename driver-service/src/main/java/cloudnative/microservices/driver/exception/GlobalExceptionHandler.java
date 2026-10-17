@@ -41,6 +41,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, message, request);
     }
 
+    @ExceptionHandler(UpstreamUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleUpstreamUnavailable(
+            UpstreamUnavailableException exception, HttpServletRequest request) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request);
+    }
+
     private ResponseEntity<ApiErrorResponse> build(
             HttpStatus status, String message, HttpServletRequest request
     ) {

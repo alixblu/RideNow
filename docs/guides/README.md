@@ -30,17 +30,25 @@ These guides are the turn-by-turn directions (every command, file, and click).
 | 5 | `stage-05-containerize.md` | outline (expand when you reach it) |
 | 6 | `stage-06-compose-system.md` | outline |
 | 7 | `stage-07-aws-iam.md` | outline |
-| 8 | `stage-08-aws-vpc.md` | outline |
-| 9 | `stage-09-aws-rds.md` | outline |
+  | 9 | `stage-09-aws-rds.md` | outline |
 | 10 | `stage-10-aws-ecr.md` | outline |
 | 11 | `stage-11-aws-redis-sqs-eventbridge.md` | outline |
 | 12 | `stage-12-eks-first-pod.md` | outline |
 | 13 | `stage-13-eks-hardening.md` | outline |
+
+## Scope of these guides
+
+Guides cover two kinds of hands-on work only:
+- **Backend code build** (stages 2-4b): Java/Spring Boot code, build, and verify.
+- **AWS Console configuration** (stages 7-13): click-by-click setup of the related AWS
+  service, **console only**. Infrastructure-as-code (CloudFormation) is intentionally NOT
+  in the guides - learn the console first; codify later as a separate exercise.
+
+Stages 5-6 are local backend packaging (Docker build/run), not AWS.
 
 ## A note on the AWS/EKS outlines (stages 7-13)
 
 These are intentionally left as outlines. The AWS Console UI and exact button labels
 change over time, and the right steps depend on choices you make in earlier stages.
 When you reach one of these stages, ask for it to be expanded into full click-by-click
-detail verified against the current console. Writing them in exhaustive detail now would
-risk them being wrong by the time you use them.
+console detail verified against the current console.

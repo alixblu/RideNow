@@ -1,8 +1,8 @@
 # Stage 6 - Run the whole local system with Compose
 
 > Part: PART 2 - CONTAINERIZATION
-> Status: OUTLINE. Ask to expand this into full click-by-click detail when you reach it,
-> so the steps are verified against the current tooling/console at that time.
+> Status: OUTLINE. Local backend build/run steps (Docker). Ask to expand into full
+> step-by-step detail when you reach it.
 
 ## Outline of steps
 

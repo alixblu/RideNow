@@ -16,7 +16,7 @@ spring:
       # (a migration tool comes in a later lesson). For this first run we switch
       # to "update" so Hibernate creates the tables from the entities, letting
       # you see data persist before we introduce proper migrations.
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         # Log the SQL Hibernate runs, formatted, so you can SEE what happens.
@@ -30,3 +30,8 @@ management:
     web:
       exposure:
         include: health
+
+# Where driver-service reaches user-service (Stage 4).
+services:
+  user-service:
+    base-url: http://localhost:8081

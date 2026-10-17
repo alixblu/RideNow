@@ -59,4 +59,10 @@ public class Driver {
         this.createdAt = now;
         this.updatedAt = now;
     }
+
+    /** Changes the driver's status (e.g. ACTIVE <-> SUSPENDED) and bumps updatedAt. */
+    public void changeStatus(DriverStatus newStatus, Instant now) {
+        this.status = newStatus;
+        this.updatedAt = now;
+    }
 }

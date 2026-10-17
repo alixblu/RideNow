@@ -1,4 +1,4 @@
-﻿# Local PostgreSQL for driver-service ONLY.
+# Local PostgreSQL for driver-service ONLY.
 #
 # Microservice rule: each service owns its own database. This compose file
 # lives inside driver-service on purpose - user-service, trip-service, etc.

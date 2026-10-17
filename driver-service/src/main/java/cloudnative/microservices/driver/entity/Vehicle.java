@@ -42,4 +42,19 @@ public class Vehicle {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /** Creates a new vehicle for a driver; server owns id, active=true, and timestamps. */
+    public Vehicle(UUID id, UUID driverId, String plateNumber, VehicleType vehicleType,
+                   String brand, String model, String color, Instant now) {
+        this.id = id;
+        this.driverId = driverId;
+        this.plateNumber = plateNumber;
+        this.vehicleType = vehicleType;
+        this.brand = brand;
+        this.model = model;
+        this.color = color;
+        this.active = true;
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
 }

@@ -1,0 +1,920 @@
+{
+  "pbtResults": {
+    "5.2 Write property test for enum validation": {
+      "status": "passed",
+      "lastRunTimestamp": 1792140238393
+    }
+  },
+  "executionHistory": {
+    "1. Scaffold the `frontend/` app (React + TypeScript + Vite)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139606953
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139619776
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139841105
+      }
+    ],
+    "2.1 Implement `config/appConfig.ts` and `config/pathPrefixMap.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607085
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139845860
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139977549
+      }
+    ],
+    "2.2 Write unit tests for config parsing and defaults": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607182
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139983873
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140139285
+      }
+    ],
+    "3.1 Implement `http/ApiError.ts` and `http/resolveUrl.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607265
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139846573
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139978777
+      }
+    ],
+    "3.2 Write property test for URL resolution": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607330
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139985304
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140140701
+      }
+    ],
+    "3.3 Implement `http/httpClient.ts` (fetch wrapper)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607451
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139986295
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140141643
+      }
+    ],
+    "3.4 Write property test for error sanitization": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607508
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140150628
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140387116
+      }
+    ],
+    "4.1 Implement identity types, context, hook, and dev provider": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607567
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139987165
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140143056
+      }
+    ],
+    "4.2 Write property test for identity set/get round-trip": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607688
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140151572
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140386220
+      }
+    ],
+    "4.3 Write property test for acting principal equals Current_Identity": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607744
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140152500
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142017457
+      }
+    ],
+    "5.1 Implement `domain/clientFactory.ts` and `shared/enums.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607796
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139988326
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140143783
+      }
+    ],
+    "5.2 Write property test for enum validation": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607856
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140153411
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140385346
+      }
+    ],
+    "6.1 Implement shared UI, layout, and `App.tsx` shell with routing": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139607950
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140149215
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140384402
+      }
+    ],
+    "6.2 Write property test for identity preserved across navigation": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608034
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141726333
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141902828
+      }
+    ],
+    "6.3 Write property test for unknown routes resolve to not-found": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608090
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141727188
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141901956
+      }
+    ],
+    "6.4 Write unit tests for shell navigation, active indicator, and identity prompt": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608144
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141915117
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142018275
+      }
+    ],
+    "7. Checkpoint - foundation": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608257
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142230225
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142319735
+      }
+    ],
+    "8.1 Implement `domain/driver/contract.ts` and `liveClient.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608310
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140401609
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141709751
+      }
+    ],
+    "8.2 Implement `domain/driver/mockClient.ts` and `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608366
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142026225
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142196736
+      }
+    ],
+    "8.3 Write property test for mock driver responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608421
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142330184
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142470776
+      }
+    ],
+    "9.1 Implement `domain/vehicle/contract.ts`, `liveClient.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608537
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140402895
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141705279
+      }
+    ],
+    "9.2 Write property test for mock vehicle responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608596
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142329457
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142469913
+      }
+    ],
+    "10.1 Implement `domain/user/contract.ts`, `liveClient.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608652
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140404335
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141706645
+      }
+    ],
+    "10.2 Write property test for mock user responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608721
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142328061
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142467484
+      }
+    ],
+    "11.1 Implement driver create/detail and vehicle create/list/detail screens": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608846
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142608585
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143315986
+      }
+    ],
+    "11.2 Write property test for driver detail renders all contract fields": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608908
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143558002
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143947816
+      }
+    ],
+    "11.3 Write property test for complete vehicle rendering": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139608981
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143557137
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143948719
+      }
+    ],
+    "11.4 Write property test for missing required fields block submission": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609143
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143555611
+      }
+    ],
+    "11.5 Write unit tests for driver/vehicle not-found and conflict handling": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609201
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143554783
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143950109
+      }
+    ],
+    "12.1 Implement user create and user detail screens": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609258
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142607474
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143314793
+      }
+    ],
+    "12.2 Write unit tests for user validation and not-found": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609386
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143558724
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143950891
+      }
+    ],
+    "13. Checkpoint - LIVE domains": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609441
+      }
+    ],
+    "14.1 Implement `domain/trip/contract.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609498
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140405733
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141707650
+      }
+    ],
+    "14.2 Write property test for new trip starts REQUESTED and echoes its request": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609557
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142027667
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142198138
+      }
+    ],
+    "14.3 Write property test for trip status always within the defined set": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609670
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142028618
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142199125
+      }
+    ],
+    "14.4 Write property test for trip read-back round-trip": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609725
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142030017
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142200097
+      }
+    ],
+    "14.5 Write property test for cancelling an eligible trip yields CANCELLED": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609780
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142030659
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142201161
+      }
+    ],
+    "14.6 Write property test for mock trip responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609834
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142327101
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142468384
+      }
+    ],
+    "15.1 Implement `domain/matching/contract.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609890
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140406445
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141709027
+      }
+    ],
+    "15.2 Write property test for resolved match yields assigned driver and DRIVER_ASSIGNED": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139609946
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142326204
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142471702
+      }
+    ],
+    "16.1 Implement `domain/payment/contract.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610011
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141723982
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141899631
+      }
+    ],
+    "16.2 Write property test for payment status within set and failures carry a reason": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610141
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142477483
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142598328
+      }
+    ],
+    "16.3 Write property test for mock payment responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610198
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142478512
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142599729
+      }
+    ],
+    "17.1 Implement `domain/notification/contract.ts`, `mockClient.ts`, `index.ts`": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610254
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141725389
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792141901005
+      }
+    ],
+    "17.2 Write property test for mock notification responses conform to the contract": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610309
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142479440
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142600466
+      }
+    ],
+    "18.1 Implement rider trip, matching, payment, and notifications screens": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610364
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142606585
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143316736
+      }
+    ],
+    "18.2 Write property test for payment and notification views render all contract fields": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610420
+      }
+    ],
+    "18.3 Write unit tests for matching-in-progress, payment failure, and notifications empty-state": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610479
+      }
+    ],
+    "19.1 Wire loading, client-error, and unavailable + retry handling across screens": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610599
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143323860
+      },
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143548378
+      }
+    ],
+    "19.2 Write unit tests for loading indicator and unavailable + retry": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610651
+      }
+    ],
+    "20.1 Write structural smoke tests": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610718
+      }
+    ],
+    "21. Final checkpoint - full suite": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792139610870
+      }
+    ],
+    "2. Configuration module (appConfig + Path_Prefix_Map)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140139374
+      }
+    ],
+    "5. Generic client factory and shared enums": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140385439
+      }
+    ],
+    "3. HTTP request layer (URL resolution, error type, fetch wrapper)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792140387234
+      }
+    ],
+    "4. Identity module (replaceable boundary + dev switcher)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142017559
+      }
+    ],
+    "6. App shell, routing, and shared UI primitives": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142018369
+      }
+    ],
+    "10. LIVE user domain (user-service create/get only)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142467601
+      }
+    ],
+    "14. STUBBED trip domain (contract + mock client)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142468430
+      }
+    ],
+    "9. LIVE vehicle domain (driver-service owns vehicles)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142469989
+      }
+    ],
+    "8. LIVE driver domain (contract, live + mock clients)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142470831
+      }
+    ],
+    "15. STUBBED matching domain (contract + mock client)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142471778
+      }
+    ],
+    "16. STUBBED payment domain (contract + mock client)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142599815
+      }
+    ],
+    "17. STUBBED notification domain (contract + mock client)": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792142600542
+      }
+    ],
+    "12. Admin_Console user screens": [
+      {
+        "executionId": "b0ce07aa-b7db-4fe4-8a3f-2167b1d5afa3",
+        "chatSessionId": "sess_adf6536a-c7b6-4bfb-8bc9-09976f4e4468",
+        "timestamp": 1792143950990
+      }
+    ]
+  }
+}

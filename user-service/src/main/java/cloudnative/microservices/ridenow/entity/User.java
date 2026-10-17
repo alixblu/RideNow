@@ -44,4 +44,18 @@ public class User {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /** Creates a new active user; server owns id, status, and timestamps. */
+    public User(UUID id, String cognitoSub, String email, String phone,
+                String fullName, String avatarUrl, Instant now) {
+        this.id = id;
+        this.cognitoSub = cognitoSub;
+        this.email = email;
+        this.phone = phone;
+        this.fullName = fullName;
+        this.avatarUrl = avatarUrl;
+        this.status = UserStatus.ACTIVE;
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
 }

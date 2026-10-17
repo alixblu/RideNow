@@ -1,0 +1,22 @@
+# Local PostgreSQL for user-service ONLY (database-per-service rule).
+# Host port 5434 so it coexists with driver-db (5433) and trip-db (5435).
+services:
+  user-db:
+    image: postgres:17
+    container_name: user-db
+    environment:
+      POSTGRES_DB: user_service
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: user_local
+    ports:
+      - "5434:5432"
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d user_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  user-db-data:

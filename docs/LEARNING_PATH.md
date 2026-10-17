@@ -64,46 +64,46 @@ and you can explain why the controller returns a DTO instead of the entity.
 
 ---
 
-## Stage 2 - Finish driver-service's own domain
+## Stage 2 - Finish driver-service's own domain  [DONE]
 
 Goal: make driver-service genuinely useful at its own boundary before adding more services.
 
-- [ ] Add `POST /api/drivers/{driverId}/vehicles` to register a vehicle for a driver
-- [ ] Add `GET /api/drivers/{driverId}/vehicles` to list a driver's vehicles
-- [ ] Add driver status change: `PATCH /api/drivers/{id}/status` (ACTIVE <-> SUSPENDED)
-- [ ] Validate all request DTOs; return 400 on bad input, 404 on missing driver
-- [ ] Write unit tests for the service rules (duplicate plate, unknown driver, etc.)
+- [x] Add `POST /api/drivers/{driverId}/vehicles` to register a vehicle for a driver
+- [x] Add `GET /api/drivers/{driverId}/vehicles` to list a driver's vehicles
+- [x] Add driver status change: `PATCH /api/drivers/{id}/status` (ACTIVE <-> SUSPENDED)
+- [x] Validate all request DTOs; return 400 on bad input, 404 on missing driver
+- [x] Write unit tests for the service rules (duplicate plate, unknown driver, etc.)
 
 **Definition of Done:** a driver and their vehicle(s) can be created and listed; invalid
 input is rejected with clear errors; tests cover the rules.
 
 ---
 
-## Stage 3 - A second service (user-service)
+## Stage 3 - A second service (user-service)  [DONE]
 
 Goal: repeat the Stage 1 pattern on a fresh service so the structure becomes muscle memory.
 
-- [ ] Create the layered packages: controller, dto, service, repository, entity, exception
-- [ ] Model the `users` table from the DBML as a `User` entity
-- [ ] Add its own `docker-compose.yml` Postgres on a DIFFERENT host port (e.g. 5434)
-- [ ] Wire `application.yaml`; run it on a DIFFERENT server port (e.g. 8081)
-- [ ] Add `POST /api/users` and `GET /api/users/{id}`
-- [ ] Verify end-to-end just like Stage 1
+- [x] Create the layered packages: controller, dto, service, repository, entity, exception
+- [x] Model the `users` table from the DBML as a `User` entity
+- [x] Add its own `docker-compose.yml` Postgres on a DIFFERENT host port (e.g. 5434)
+- [x] Wire `application.yaml`; run it on a DIFFERENT server port (e.g. 8081)
+- [x] Add `POST /api/users` and `GET /api/users/{id}`
+- [x] Verify end-to-end just like Stage 1
 
 **Definition of Done:** two services run at the same time on different ports, each with
 its own database, each independently startable.
 
 ---
 
-## Stage 4 - Service-to-service communication
+## Stage 4 - Service-to-service communication  [DONE]
 
 Goal: feel a real microservice boundary. driver-service needs user info it does not own.
 
-- [ ] Decide the contract: when creating a driver, verify the `userId` exists in user-service
-- [ ] Add an HTTP client in driver-service that calls `GET /api/users/{id}` on user-service
-- [ ] Handle the failure cases: user not found (reject driver creation), user-service down (fail clearly)
-- [ ] Make the user-service base URL a configuration value, not a hardcoded string
-- [ ] Observe: what happens to driver-service if user-service is stopped?
+- [x] Decide the contract: when creating a driver, verify the `userId` exists in user-service
+- [x] Add an HTTP client in driver-service that calls `GET /api/users/{id}` on user-service
+- [x] Handle the failure cases: user not found (reject driver creation), user-service down (fail clearly)
+- [x] Make the user-service base URL a configuration value, not a hardcoded string
+- [x] Observe: what happens to driver-service if user-service is stopped?
 
 **Definition of Done:** creating a driver with a non-existent userId is rejected because
 driver-service asked user-service; you can explain why this is a call, not a database join.
@@ -296,9 +296,9 @@ cluster can be recreated from code.
 # PART 5 - OBSERVABILITY, CI/CD, TESTING
 
 - [ ] CloudWatch logs and metrics; a dashboard for request errors
-- [ ] Replace `ddl-auto` with Flyway migrations (versioned SQL) in every service
+- [x] Replace `ddl-auto` with Flyway migrations (versioned SQL) in every service  [DONE - brought forward]
 - [ ] Replace DB-dependent `@SpringBootTest` with Testcontainers
-- [ ] The signature concurrency lab: prove exactly one driver wins a race for a ride
+- [x] The signature concurrency lab: prove exactly one driver wins a race for a ride  [DONE - Stage 4B]
 - [ ] CI/CD pipeline: test -> build image -> push to ECR -> deploy to EKS
 - [ ] Load test with k6; document latency, throughput, and scaling behavior
 - [ ] Failure testing: kill Pods, stop workers, duplicate messages; document recovery
@@ -315,5 +315,5 @@ Redis, SQS, EventBridge, WebSockets, Saga orchestration, Kubernetes, AWS infrast
 
 ## Known shortcuts to repay later
 
-- `ddl-auto: update` is a learning shortcut -> replace with Flyway (Stage/Part 5)
-- DB-dependent `@SpringBootTest` -> replace with Testcontainers (Part 5)
+- ~~`ddl-auto: update` -> Flyway~~  DONE: schema is Flyway `V1`, seed is `R`, `ddl-auto: validate`
+- DB-dependent `@SpringBootTest` -> replace with Testcontainers (Part 5, still open)

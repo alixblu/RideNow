@@ -1,8 +1,9 @@
 # Stage 8 - Networking (VPC)
 
 > Part: PART 3 - AWS, CONSOLE FIRST
-> Status: OUTLINE. Ask to expand this into full click-by-click detail when you reach it,
-> so the steps are verified against the current tooling/console at that time.
+> Status: OUTLINE. Ask to expand this into full click-by-click console detail when you
+> reach it, so the steps are verified against the current console at that time.
+> Guides cover CONSOLE configuration only.
 
 ## Outline of steps
 

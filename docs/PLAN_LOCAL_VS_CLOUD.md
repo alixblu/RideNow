@@ -22,7 +22,7 @@ The boundaries never change between local and cloud. Only the mechanism changes.
 | Find a nearby driver  | matching-service     | Which available drivers are closest?                | Plain Postgres query over driver locations         | Redis GEO (ElastiCache)                   |
 | Live driver location  | driver-service       | Fast-changing position, shared, not durable         | A column in Postgres, rider polls over HTTP        | Redis (shared state) + WebSockets         |
 | Notify people         | notification-worker  | Send async without blocking the trip; survive crashes | Outbox table + scheduled poller (Postgres only)  | SQS queue + worker + dead-letter queue    |
-| React to trip events  | (consumers)          | Other services react without tight coupling         | Read outbox / direct call                          | EventBridge                               |
+| React to trip events  | (consumers)          | Other services react without tight coupling         | Read outbox / direct call                          | EventBridge (fan-out; no SNS)             |
 | Take payment          | payment-service      | Charge once; retries must not double-charge         | Idempotency key + explicit status in Postgres      | Same code; RDS; (events via SQS/EventBridge) |
 | Payment can fail      | payment + trip       | A failed charge must not leave an inconsistent trip | Explicit states + compensation (Saga, in code)     | Same, coordinated via events              |
 | Run the services      | all                  | Keep them alive, scale, route traffic               | `mvn spring-boot:run`, then Docker, then local k8s | Amazon EKS (managed Kubernetes)           |
