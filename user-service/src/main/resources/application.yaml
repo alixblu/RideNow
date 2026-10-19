@@ -1,13 +1,13 @@
 server:
-  port: 8081
+  port: ${SERVER_PORT:8081}
 
 spring:
   application:
     name: user-service
   datasource:
-    url: jdbc:postgresql://localhost:5434/user_service
-    username: app_user
-    password: user_local
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5434/user_service}
+    username: ${SPRING_DATASOURCE_USERNAME:app_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:user_local}
   jpa:
     hibernate:
       ddl-auto: validate

@@ -1,0 +1,27 @@
+# Local PostgreSQL for payment-service ONLY (database-per-service rule).
+# Host port 5436 so it coexists with driver-db (5433), user-db (5434), trip-db (5435).
+#
+#   docker compose up -d     # start
+#   docker compose down      # stop (keep data)
+#   docker compose down -v   # stop and wipe data
+
+services:
+  payment-db:
+    image: postgres:17
+    container_name: payment-db
+    environment:
+      POSTGRES_DB: payment_service
+      POSTGRES_USER: payment
+      POSTGRES_PASSWORD: payment_local
+    ports:
+      - "5436:5432"
+    volumes:
+      - payment-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment -d payment_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  payment-db-data:

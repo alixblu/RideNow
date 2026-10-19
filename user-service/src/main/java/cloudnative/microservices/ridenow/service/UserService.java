@@ -26,6 +26,12 @@ public class UserService {
         if (userRepository.existsByCognitoSub(request.cognitoSub())) {
             throw new DuplicateResourceException("Identity already registered");
         }
+        // Phone is optional (nullable, unique). Only check it when one was given,
+        // so a null phone never triggers a false duplicate.
+        if (request.phone() != null && !request.phone().isBlank()
+                && userRepository.existsByPhone(request.phone())) {
+            throw new DuplicateResourceException("Phone already registered: " + request.phone());
+        }
         User user = new User(UUID.randomUUID(), request.cognitoSub(), request.email(),
                 request.phone(), request.fullName(), request.avatarUrl(), Instant.now());
         return toResponse(userRepository.save(user));

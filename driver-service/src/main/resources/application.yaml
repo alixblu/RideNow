@@ -1,3 +1,6 @@
+server:
+  port: ${SERVER_PORT:8080}
+
 spring:
   application:
     name: driver-service
@@ -5,9 +8,9 @@ spring:
   # How this service reaches ITS OWN database.
   # Host port 5433 matches the docker-compose.yml port mapping for driver-db.
   datasource:
-    url: jdbc:postgresql://localhost:5433/driver_service
-    username: driver
-    password: driver_local
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/driver_service}
+    username: ${SPRING_DATASOURCE_USERNAME:driver}
+    password: ${SPRING_DATASOURCE_PASSWORD:driver_local}
 
   jpa:
     hibernate:
@@ -34,4 +37,4 @@ management:
 # Where driver-service reaches user-service (Stage 4).
 services:
   user-service:
-    base-url: http://localhost:8081
+    base-url: ${SERVICES_USER_SERVICE_BASE_URL:http://localhost:8081}

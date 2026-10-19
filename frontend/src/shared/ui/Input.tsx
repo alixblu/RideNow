@@ -10,7 +10,7 @@ import type { InputHTMLAttributes, SelectHTMLAttributes } from "react";
 import { cn } from "./cn";
 
 const FIELD_BASE =
-  "w-full h-11 px-3.5 rounded-xl bg-surface-raised text-content placeholder:text-content-subtle " +
+  "w-full h-10 px-3 rounded-lg bg-surface-raised text-content placeholder:text-content-subtle " +
   "border border-border transition-colors focus:border-accent disabled:opacity-50";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {

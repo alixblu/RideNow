@@ -1,0 +1,166 @@
+# RideNow - whole-system local stack (Stage 6).
+#
+# Brings up all four services AND their databases together on one network with
+# ONE command, in the topology the cloud will mirror:
+#   - each service reaches its OWN database by the DB's container name (not localhost)
+#   - driver-service reaches user-service by its service name (http://user-service:8081),
+#     which is exactly how Kubernetes Service DNS will resolve it later
+#   - config is injected via environment variables (the local stand-in for
+#     ConfigMap / Secret / AWS Secrets Manager); values come from .env with
+#     safe defaults in .env.example
+#
+# Usage:
+#   cp .env.example .env         # once; then edit if you like
+#   docker compose up --build    # build images and start the whole system
+#   docker compose ps            # see health
+#   docker compose down          # stop (keep data)
+#   docker compose down -v       # stop and wipe all data
+#
+# The per-service docker-compose.yml files still exist for running a single
+# database in isolation; this root file is the full system.
+
+services:
+  # ---- Databases (one per service; database-per-service rule) ----------------
+  user-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${USER_DB_NAME:-user_service}
+      POSTGRES_USER: ${USER_DB_USERNAME:-app_user}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:-user_local}
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USERNAME:-app_user} -d ${USER_DB_NAME:-user_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  driver-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${DRIVER_DB_NAME:-driver_service}
+      POSTGRES_USER: ${DRIVER_DB_USERNAME:-driver}
+      POSTGRES_PASSWORD: ${DRIVER_DB_PASSWORD:-driver_local}
+    volumes:
+      - driver-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DRIVER_DB_USERNAME:-driver} -d ${DRIVER_DB_NAME:-driver_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  trip-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${TRIP_DB_NAME:-trip_service}
+      POSTGRES_USER: ${TRIP_DB_USERNAME:-trip}
+      POSTGRES_PASSWORD: ${TRIP_DB_PASSWORD:-trip_local}
+    volumes:
+      - trip-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TRIP_DB_USERNAME:-trip} -d ${TRIP_DB_NAME:-trip_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  payment-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${PAYMENT_DB_NAME:-payment_service}
+      POSTGRES_USER: ${PAYMENT_DB_USERNAME:-payment}
+      POSTGRES_PASSWORD: ${PAYMENT_DB_PASSWORD:-payment_local}
+    volumes:
+      - payment-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAYMENT_DB_USERNAME:-payment} -d ${PAYMENT_DB_NAME:-payment_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- Application services --------------------------------------------------
+  user-service:
+    build: ./user-service
+    depends_on:
+      user-db:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/${USER_DB_NAME:-user_service}
+      SPRING_DATASOURCE_USERNAME: ${USER_DB_USERNAME:-app_user}
+      SPRING_DATASOURCE_PASSWORD: ${USER_DB_PASSWORD:-user_local}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  driver-service:
+    build: ./driver-service
+    depends_on:
+      driver-db:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://driver-db:5432/${DRIVER_DB_NAME:-driver_service}
+      SPRING_DATASOURCE_USERNAME: ${DRIVER_DB_USERNAME:-driver}
+      SPRING_DATASOURCE_PASSWORD: ${DRIVER_DB_PASSWORD:-driver_local}
+      # Service-to-service: reach user-service by its compose service name, the
+      # local equivalent of Kubernetes Service DNS.
+      SERVICES_USER_SERVICE_BASE_URL: http://user-service:8081
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  trip-service:
+    build: ./trip-service
+    depends_on:
+      trip-db:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: jdbc:postgresql://trip-db:5432/${TRIP_DB_NAME:-trip_service}
+      SPRING_DATASOURCE_USERNAME: ${TRIP_DB_USERNAME:-trip}
+      SPRING_DATASOURCE_PASSWORD: ${TRIP_DB_PASSWORD:-trip_local}
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  payment-service:
+    build: ./payment-service
+    depends_on:
+      payment-db:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: jdbc:postgresql://payment-db:5432/${PAYMENT_DB_NAME:-payment_service}
+      SPRING_DATASOURCE_USERNAME: ${PAYMENT_DB_USERNAME:-payment}
+      SPRING_DATASOURCE_PASSWORD: ${PAYMENT_DB_PASSWORD:-payment_local}
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  user-db-data:
+  driver-db-data:
+  trip-db-data:
+  payment-db-data:

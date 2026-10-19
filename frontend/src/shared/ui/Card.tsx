@@ -14,10 +14,7 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
 export function Card({ className, children, ...rest }: CardProps) {
   return (
     <div
-      className={cn(
-        "rounded-2xl border border-border bg-surface shadow-card",
-        className,
-      )}
+      className={cn("rounded-2xl border border-border bg-surface", className)}
       {...rest}
     >
       {children}
@@ -47,7 +44,7 @@ interface CardTitleProps extends HTMLAttributes<HTMLHeadingElement> {
 
 export function CardTitle({ className, children, ...rest }: CardTitleProps) {
   return (
-    <h3 className={cn("text-base font-semibold text-content", className)} {...rest}>
+    <h3 className={cn("font-serif text-lg font-medium text-content", className)} {...rest}>
       {children}
     </h3>
   );

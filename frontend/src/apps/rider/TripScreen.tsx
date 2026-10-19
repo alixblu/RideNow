@@ -169,8 +169,8 @@ export function TripScreen({ activeTripId, onActiveTripChange }: TripScreenProps
                 </Field>
               </div>
 
-              <Button type="submit" size="lg" block disabled={requestMutation.isPending}>
-                {requestMutation.isPending ? "Requesting…" : "Request trip"}
+              <Button type="submit" size="lg" block loading={requestMutation.isPending}>
+                {requestMutation.isPending ? "Finding your ride…" : "Request ride"}
               </Button>
 
               {requestMutation.isError ? (
@@ -184,7 +184,7 @@ export function TripScreen({ activeTripId, onActiveTripChange }: TripScreenProps
       {/* Lifecycle panel. */}
       <Card className="lg:col-span-2">
         <CardHeader>
-          <CardTitle>Trip lifecycle</CardTitle>
+          <CardTitle>Your ride</CardTitle>
         </CardHeader>
         <CardBody>
           <form className="flex items-end gap-2" onSubmit={handleLookup} aria-label="Look up a trip">
@@ -204,7 +204,7 @@ export function TripScreen({ activeTripId, onActiveTripChange }: TripScreenProps
           <div className="mt-4">
             {activeTripId === null ? (
               <p className="text-sm text-content-subtle">
-                Request a trip or load one by ID to see its status.
+                Request a ride, or paste a trip ID to pick one up where you left off.
               </p>
             ) : tripQuery.isPending ? (
               <Loading label="Loading trip…" />
@@ -217,10 +217,11 @@ export function TripScreen({ activeTripId, onActiveTripChange }: TripScreenProps
                   variant="danger"
                   block
                   className="mt-4"
-                  disabled={!canCancel || cancelMutation.isPending}
+                  disabled={!canCancel}
+                  loading={cancelMutation.isPending}
                   onClick={() => cancelMutation.mutate(activeTrip.id)}
                 >
-                  {cancelMutation.isPending ? "Cancelling…" : "Cancel trip"}
+                  {cancelMutation.isPending ? "Cancelling…" : "Cancel ride"}
                 </Button>
                 {cancelMutation.isError ? (
                   <div className="mt-2">

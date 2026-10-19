@@ -14,7 +14,6 @@
  */
 import { useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { IdCard, Car } from "lucide-react";
 import { IdentityPrompt, cn } from "../../shared/ui";
 import { appConfig } from "../../config/appConfig";
 import { resolveDriverClient } from "../../domain/driver";
@@ -24,10 +23,10 @@ import { VehiclesScreen } from "./VehiclesScreen";
 
 type Tab = "create" | "lookup" | "vehicles";
 
-const TABS: { id: Tab; label: string; icon: typeof IdCard }[] = [
-  { id: "create", label: "Create driver", icon: IdCard },
-  { id: "lookup", label: "Driver lookup", icon: IdCard },
-  { id: "vehicles", label: "Vehicles", icon: Car },
+const TABS: { id: Tab; label: string }[] = [
+  { id: "create", label: "Register" },
+  { id: "lookup", label: "Look up" },
+  { id: "vehicles", label: "Vehicles" },
 ];
 
 export function DriverApp() {
@@ -51,18 +50,18 @@ function DriverAppContent({
   return (
     <section aria-label="Driver area" className="flex flex-col gap-5">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight">Driver</h2>
-        <p className="text-sm text-content-muted">
-          Register drivers, manage vehicles, and change availability.
+        <h2 className="font-serif text-3xl font-semibold tracking-tight">Driver desk</h2>
+        <p className="mt-1 text-sm text-content-muted">
+          Register drivers, keep their vehicles current, and flip availability on or off.
         </p>
       </header>
 
       <IdentityPrompt role="driver">
         <nav
           aria-label="Driver sections"
-          className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-surface p-1"
+          className="flex gap-6 overflow-x-auto border-b border-border"
         >
-          {TABS.map(({ id, label, icon: Icon }) => {
+          {TABS.map(({ id, label }) => {
             const active = tab === id;
             return (
               <button
@@ -71,20 +70,19 @@ function DriverAppContent({
                 aria-current={active ? "page" : undefined}
                 onClick={() => setTab(id)}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+                  "-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm transition-colors",
                   active
-                    ? "bg-accent text-accent-fg"
-                    : "text-content-muted hover:bg-surface-raised hover:text-content",
+                    ? "border-accent font-medium text-content"
+                    : "border-transparent text-content-subtle hover:text-content",
                 )}
               >
-                <Icon className="h-4 w-4" aria-hidden="true" />
                 {label}
               </button>
             );
           })}
         </nav>
 
-        <div className="mt-5">
+        <div className="mt-6">
           {tab === "create" && <CreateDriverScreen client={client} />}
           {tab === "lookup" && <DriverLookupScreen client={client} />}
           {tab === "vehicles" && <VehiclesScreen client={client} />}

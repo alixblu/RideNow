@@ -2,6 +2,9 @@ package cloudnative.microservices.ridenow.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,6 +13,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleResourceNotFound(
@@ -31,6 +36,25 @@ public class GlobalExceptionHandler {
                 .map(e -> e.getField() + ": " + e.getDefaultMessage())
                 .orElse("Validation failed");
         return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    // Safety net for a unique-constraint violation we did not pre-check (e.g. a
+    // race between the existence check and the insert). One handler covers every
+    // constraint; we return a generic 409 rather than leak the DB constraint name.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleDataIntegrity(
+            DataIntegrityViolationException exception, HttpServletRequest request) {
+        log.warn("Data integrity violation on {}: {}", request.getRequestURI(), exception.getMostSpecificCause().getMessage());
+        return build(HttpStatus.CONFLICT, "A resource with these details already exists", request);
+    }
+
+    // Final catch-all: anything unexpected becomes a clean 500. The real cause is
+    // logged server-side only; the client never sees a stack trace or internals.
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleUnexpected(
+            Exception exception, HttpServletRequest request) {
+        log.error("Unexpected error on {}", request.getRequestURI(), exception);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", request);
     }
 
     private ResponseEntity<ApiErrorResponse> build(

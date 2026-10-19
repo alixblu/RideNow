@@ -1,13 +1,13 @@
 server:
-  port: 8082
+  port: ${SERVER_PORT:8082}
 
 spring:
   application:
     name: trip-service
   datasource:
-    url: jdbc:postgresql://localhost:5435/trip_service
-    username: trip
-    password: trip_local
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5435/trip_service}
+    username: ${SPRING_DATASOURCE_USERNAME:trip}
+    password: ${SPRING_DATASOURCE_PASSWORD:trip_local}
   jpa:
     hibernate:
       ddl-auto: validate

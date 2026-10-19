@@ -26,38 +26,50 @@ const config: Config = {
           subtle: "rgb(var(--rn-content-subtle) / <alpha-value>)",
           inverse: "rgb(var(--rn-content-inverse) / <alpha-value>)",
         },
-        // The single bold accent (Uber-style).
+        // The single muted-emerald accent.
         accent: {
           DEFAULT: "rgb(var(--rn-accent) / <alpha-value>)",
           hover: "rgb(var(--rn-accent-hover) / <alpha-value>)",
           fg: "rgb(var(--rn-accent-fg) / <alpha-value>)",
         },
-        // Status palette for pills/badges.
+        // Warm secondary highlight.
+        sand: "rgb(var(--rn-sand) / <alpha-value>)",
+        // Status palette.
         success: "rgb(var(--rn-success) / <alpha-value>)",
         warning: "rgb(var(--rn-warning) / <alpha-value>)",
         danger: "rgb(var(--rn-danger) / <alpha-value>)",
         info: "rgb(var(--rn-info) / <alpha-value>)",
       },
       borderRadius: {
-        xl: "0.875rem",
-        "2xl": "1.25rem",
-        "3xl": "1.75rem",
+        // Tighter, less-uniform radii than the default "everything 2xl" look.
+        lg: "0.5rem",
+        xl: "0.625rem",
+        "2xl": "0.875rem",
       },
       fontFamily: {
+        // Grotesk body + serif editorial display.
         sans: [
+          "Inter Variable",
           "Inter",
           "system-ui",
           "-apple-system",
           "Segoe UI",
           "Roboto",
-          "Helvetica Neue",
-          "Arial",
           "sans-serif",
+        ],
+        serif: [
+          "Fraunces Variable",
+          "Fraunces",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "serif",
         ],
       },
       boxShadow: {
-        card: "0 1px 2px rgb(0 0 0 / 0.08), 0 8px 24px rgb(0 0 0 / 0.12)",
-        pop: "0 12px 40px rgb(0 0 0 / 0.28)",
+        // Restrained: hairline-first design leans on borders, not big shadows.
+        card: "0 1px 0 rgb(0 0 0 / 0.04)",
+        pop: "0 10px 30px rgb(0 0 0 / 0.22)",
       },
       keyframes: {
         "fade-in": {

@@ -27,8 +27,9 @@ These guides are the turn-by-turn directions (every command, file, and click).
 | 3 | `stage-03-user-service.md` | ready |
 | 4 | `stage-04-service-to-service.md` | ready |
 | 4A-4E | ride flow (trip, concurrency, matching, outbox, payment) | see `../PLAN_LOCAL_VS_CLOUD.md` + `../LEARNING_PATH.md` Part 1B |
-| 5 | `stage-05-containerize.md` | outline (expand when you reach it) |
-| 6 | `stage-06-compose-system.md` | outline |
+| 5 | `stage-05-containerize.md` | complete (see `stage-05b-cloud-migration-prep.md`) |
+| 6 | `stage-06-compose-system.md` | complete (see `stage-05b-cloud-migration-prep.md`) |
+| 5b | `stage-05b-cloud-migration-prep.md` | complete (images, env config, ECR/RDS prep) |
 | 7 | `stage-07-aws-iam.md` | outline |
   | 9 | `stage-09-aws-rds.md` | outline |
 | 10 | `stage-10-aws-ecr.md` | outline |

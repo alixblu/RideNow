@@ -118,8 +118,8 @@ export function CreateDriverScreen({ client }: CreateDriverScreenProps) {
             />
           </Field>
 
-          <Button type="submit" size="lg" disabled={createMutation.isPending}>
-            {createMutation.isPending ? "Creating…" : "Create driver"}
+          <Button type="submit" size="lg" loading={createMutation.isPending}>
+            {createMutation.isPending ? "Registering…" : "Register driver"}
           </Button>
         </form>
 

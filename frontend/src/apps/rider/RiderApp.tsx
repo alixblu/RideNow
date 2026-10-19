@@ -16,7 +16,6 @@
  * nav keeps `aria-label="Rider screens"`.
  */
 import { useState } from "react";
-import { MapPin, Search, CreditCard, Bell } from "lucide-react";
 import { IdentityPrompt, cn } from "../../shared/ui";
 import { TripScreen } from "./TripScreen";
 import { MatchingScreen } from "./MatchingScreen";
@@ -25,11 +24,11 @@ import { NotificationsScreen } from "./NotificationsScreen";
 
 type RiderTab = "trip" | "matching" | "payment" | "notifications";
 
-const TABS: readonly { id: RiderTab; label: string; icon: typeof MapPin }[] = [
-  { id: "trip", label: "Trip", icon: MapPin },
-  { id: "matching", label: "Matching", icon: Search },
-  { id: "payment", label: "Payment", icon: CreditCard },
-  { id: "notifications", label: "Notifications", icon: Bell },
+const TABS: readonly { id: RiderTab; label: string }[] = [
+  { id: "trip", label: "Trip" },
+  { id: "matching", label: "Matching" },
+  { id: "payment", label: "Payment" },
+  { id: "notifications", label: "Notifications" },
 ];
 
 export function RiderApp() {
@@ -37,21 +36,21 @@ export function RiderApp() {
   const [activeTripId, setActiveTripId] = useState<string | null>(null);
 
   return (
-    <section aria-label="Rider area" className="flex flex-col gap-5">
+    <section aria-label="Rider area" className="flex flex-col gap-6">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight">Rider</h2>
-        <p className="text-sm text-content-muted">
-          Request a ride and follow it from pickup to payment.
+        <h2 className="font-serif text-3xl font-semibold tracking-tight">Book a ride</h2>
+        <p className="mt-1 text-sm text-content-muted">
+          Set your pickup and drop-off, then track it through to payment.
         </p>
       </header>
 
       <IdentityPrompt role="rider">
+        {/* Understated underline tabs rather than a filled pill group. */}
         <nav
           aria-label="Rider screens"
-          className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-surface p-1"
+          className="flex gap-6 overflow-x-auto border-b border-border"
         >
           {TABS.map((entry) => {
-            const Icon = entry.icon;
             const active = tab === entry.id;
             return (
               <button
@@ -60,20 +59,19 @@ export function RiderApp() {
                 aria-current={active ? "page" : undefined}
                 onClick={() => setTab(entry.id)}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+                  "-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm transition-colors",
                   active
-                    ? "bg-accent text-accent-fg"
-                    : "text-content-muted hover:bg-surface-raised hover:text-content",
+                    ? "border-accent font-medium text-content"
+                    : "border-transparent text-content-subtle hover:text-content",
                 )}
               >
-                <Icon className="h-4 w-4" aria-hidden="true" />
                 {entry.label}
               </button>
             );
           })}
         </nav>
 
-        <div className="mt-5">
+        <div>
           {tab === "trip" ? (
             <TripScreen
               activeTripId={activeTripId}

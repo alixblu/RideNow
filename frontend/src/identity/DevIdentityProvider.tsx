@@ -89,11 +89,11 @@ function IdentitySwitcher({ identities, onSet }: IdentitySwitcherProps) {
   return (
     <section
       aria-label="Development identity switcher"
-      className="border-b border-border bg-surface"
+      className="bg-surface/60"
     >
-      <div className="mx-auto flex max-w-5xl flex-wrap items-end gap-3 px-4 py-2.5">
-        <span className="mr-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-content-subtle">
-          <UserCog className="h-4 w-4" aria-hidden="true" />
+      <div className="mx-auto flex max-w-5xl flex-wrap items-end gap-3 px-5 py-2">
+        <span className="mr-1 flex items-center gap-1.5 text-xs uppercase tracking-wide text-content-subtle">
+          <UserCog className="h-3.5 w-3.5" aria-hidden="true" />
           Acting as
         </span>
 

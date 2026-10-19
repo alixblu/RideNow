@@ -35,7 +35,7 @@ No cloud yet. Everything runs on your laptop. This part teaches what a microserv
 - [x] Docker Desktop installed and daemon running (`docker info`)
 - [x] JDK 25 installed (`java -version`)
 - [x] Maven wrapper works in a service (`.\mvnw.cmd -version`)
-- [ ] You can open the repo in your IDE and see all service folders
+- [x] You can open the repo in your IDE and see all service folders
 
 **Definition of Done:** all four checks above pass.
 
@@ -170,39 +170,56 @@ using ONLY Postgres. This is the local stand-in for SQS. No message broker, no R
 **Definition of Done:** completing a trip reliably produces a notification via the outbox,
 and you can explain how this maps directly onto SQS + DLQ in the cloud (Stage 11).
 
-## Stage 4E - Payment with idempotency (payment-service)
+## Stage 4E - Payment with idempotency (payment-service)  [PARTIAL - core built]
 
 Goal: charge once; a retried request must not double-charge.
 
-- [ ] `POST /api/payments` with an idempotency key (DBML `payments.idempotency_key`)
-- [ ] A duplicate request with the same key returns the original result, no second charge
-- [ ] Model PENDING -> PROCESSING -> PAID / FAILED; handle failure with explicit state
+- [x] `POST /api/payments` with an idempotency key (DBML `payments.idempotency_key`)
+- [x] A duplicate request with the same key returns the original result, no second charge
+- [x] Model PENDING -> PROCESSING -> PAID / FAILED; handle failure with explicit state
 - [ ] On failure, the trip is reconciled by compensation (the Saga idea), not a cross-service transaction
 
-**Definition of Done:** paying twice with the same key charges once; failures leave consistent state.
+**Definition of Done:** core MET - paying twice with the same key charges once (verified in
+the running system: the replay returns the same payment id). The charge runs behind a
+`PaymentGateway` interface; the only implementation today is `SimulatedPaymentGateway`
+(approves every charge), leaving a clean seam for a real provider (e.g. a
+`PayPalPaymentGateway`) with no change to the service, controller, or schema. `PAYPAL` was
+added to the `PaymentMethod` enum and the DBML `payments.method` note.
+STILL OPEN: cross-service compensation/Saga between payment and trip (needs the trip<->payment
+event contract, deferred with the rest of async messaging).
 
 ---
 # PART 2 - CONTAINERIZATION (the bridge to the cloud)
 
 Now package the services themselves as containers, not just their databases.
 
-## Stage 5 - Containerize one service
+## Stage 5 - Containerize one service  [DONE]
 
-- [ ] Write a `Dockerfile` for driver-service (multi-stage: build with Maven, run on JRE)
-- [ ] Build the image (`docker build`) and run the container locally
-- [ ] Connect the containerized app to its Postgres (container networking, not localhost)
-- [ ] Verify the same create/read loop works against the containerized service
+- [x] Write a `Dockerfile` for driver-service (multi-stage: build with Maven, run on JRE)
+- [x] Build the image (`docker build`) and run the container locally
+- [x] Connect the containerized app to its Postgres (container networking, not localhost)
+- [x] Verify the same create/read loop works against the containerized service
 
-**Definition of Done:** driver-service runs as a container image and still passes its
-end-to-end loop.
+**Definition of Done:** MET - all four services have a multi-stage Dockerfile
+(`eclipse-temurin:25-jdk` build stage -> `eclipse-temurin:25-jre-alpine` runtime,
+non-root). `docker build -t driver-service:local ./driver-service` produces a working
+image; the create/read loop passes against the containerized service using container
+networking (the DB host is the DB container name, not localhost).
 
-## Stage 6 - Run the whole local system with Compose
+## Stage 6 - Run the whole local system with Compose  [DONE]
 
-- [ ] Extend compose to run app + database together as one `docker compose up`
-- [ ] Add healthchecks and startup ordering (app waits for DB healthy)
-- [ ] Bring up driver-service + user-service + their DBs together
+- [x] Extend compose to run app + database together as one `docker compose up`
+- [x] Add healthchecks and startup ordering (app waits for DB healthy)
+- [x] Bring up driver-service + user-service + their DBs together (all four services, actually)
 
-**Definition of Done:** `docker compose up` starts the local system; `down` stops it cleanly.
+**Definition of Done:** MET - the root `docker-compose.yml` brings up all four services +
+their four databases with one `docker compose up --build`. Apps wait for their DB via
+`depends_on: condition: service_healthy` and expose an actuator-based healthcheck; all
+eight containers reach `healthy`. The cross-service flow works entirely inside Compose
+(creating a driver verifies the user via `http://user-service:8081`), and `docker compose
+down` stops everything cleanly. Config is injected via environment variables (`.env` /
+`.env.example`), the local stand-in for ConfigMap/Secret/Secrets Manager. See
+`guides/stage-05b-cloud-migration-prep.md`.
 
 ---
 
@@ -313,7 +330,21 @@ Per the project rules, these are later goals, not prerequisites. Introduce the s
 version only when a feature needs it:
 Redis, SQS, EventBridge, WebSockets, Saga orchestration, Kubernetes, AWS infrastructure.
 
+## Configuration decision (recorded)
+
+Connection details are externalized as environment variables with local defaults,
+`${VAR:default}` (e.g. `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`,
+`SPRING_DATASOURCE_PASSWORD`, `SERVER_PORT`, `SERVICES_USER_SERVICE_BASE_URL`). There are
+NO `dev`/`staging`/`prod` profile files: one image is promoted unchanged across
+environments, and the environment supplies the differences (laptop defaults -> Compose
+`.env` -> ConfigMap/Secret/Secrets Manager in the cloud). This is the twelve-factor
+"config in the environment" rule and makes the RDS move a one-variable change. Details:
+`guides/stage-05b-cloud-migration-prep.md`.
+
 ## Known shortcuts to repay later
 
 - ~~`ddl-auto: update` -> Flyway~~  DONE: schema is Flyway `V1`, seed is `R`, `ddl-auto: validate`
 - DB-dependent `@SpringBootTest` -> replace with Testcontainers (Part 5, still open)
+- user-service maps a DB unique-constraint violation (e.g. duplicate phone) to a raw 500
+  instead of a clean 409 - its `@RestControllerAdvice` only covers validation/not-found.
+  A small hardening task, out of scope for the containerization pass.

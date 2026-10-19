@@ -130,7 +130,7 @@ describe("Feature: ridenow-frontend, Task 11.5: driver/vehicle not-found and con
     fireEvent.change(screen.getByLabelText("License number"), {
       target: { value: "LIC-123" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create driver" }));
+    fireEvent.click(screen.getByRole("button", { name: /register driver/i }));
 
     // The curated conflict message is rendered via ErrorBanner (role="alert").
     const banner = await screen.findByRole("alert");

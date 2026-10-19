@@ -12,52 +12,49 @@
  * Restyled Uber-style on the Tailwind kit.
  */
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { UserPlus, Search } from "lucide-react";
 import { IdentityPrompt, cn } from "../../shared/ui";
 import { CreateUserScreen } from "./CreateUserScreen";
 import { UserDetailScreen } from "./UserDetailScreen";
 
 const SUBNAV = [
-  { to: "users/new", label: "Create user", icon: UserPlus },
-  { to: "users/lookup", label: "Find user", icon: Search },
+  { to: "users/new", label: "New account" },
+  { to: "users/lookup", label: "Look up" },
 ] as const;
 
 export function AdminConsole() {
   return (
-    <section aria-label="Admin area" className="flex flex-col gap-5">
+    <section aria-label="Admin area" className="flex flex-col gap-6">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight">Admin</h2>
-        <p className="text-sm text-content-muted">Register and inspect user accounts.</p>
+        <h2 className="font-serif text-3xl font-semibold tracking-tight">Accounts</h2>
+        <p className="mt-1 text-sm text-content-muted">
+          Create rider and user accounts, and pull up a record when you need it.
+        </p>
       </header>
 
       <IdentityPrompt role="admin">
         <nav
           aria-label="Admin screens"
-          className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-surface p-1"
+          className="flex gap-6 overflow-x-auto border-b border-border"
         >
-          {SUBNAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    "flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
-                    isActive
-                      ? "bg-accent text-accent-fg"
-                      : "text-content-muted hover:bg-surface-raised hover:text-content",
-                  )
-                }
-              >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                {item.label}
-              </NavLink>
-            );
-          })}
+          {SUBNAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  "-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm transition-colors",
+                  isActive
+                    ? "border-accent font-medium text-content"
+                    : "border-transparent text-content-subtle hover:text-content",
+                )
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
         </nav>
 
-        <div className="mt-5">
+        <div className="mt-6">
           <Routes>
             <Route index element={<Navigate to="users/new" replace />} />
             <Route path="users/new" element={<CreateUserScreen />} />

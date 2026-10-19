@@ -104,7 +104,8 @@ export function DriverDetailView({
           <Button
             variant="secondary"
             size="sm"
-            disabled={changing || selected === driver.status}
+            disabled={selected === driver.status}
+            loading={changing}
             onClick={() => onChangeStatus(selected)}
           >
             {changing ? "Updating…" : "Apply"}

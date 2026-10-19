@@ -153,8 +153,8 @@ export function CreateUserScreen() {
           {errorMessage && <ErrorBanner message={errorMessage} />}
           {mutation.isPending && <Loading label="Creating user…" />}
 
-          <Button type="submit" size="lg" disabled={mutation.isPending}>
-            Create user
+          <Button type="submit" size="lg" loading={mutation.isPending}>
+            {mutation.isPending ? "Creating…" : "Create user"}
           </Button>
         </form>
       </CardBody>

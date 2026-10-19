@@ -221,7 +221,7 @@ export function VehiclesScreen({ client }: VehiclesScreenProps) {
                   </Field>
                 </div>
 
-                <Button type="submit" disabled={addMutation.isPending}>
+                <Button type="submit" loading={addMutation.isPending}>
                   {addMutation.isPending ? "Adding…" : "Add vehicle"}
                 </Button>
               </form>
@@ -259,7 +259,7 @@ export function VehiclesScreen({ client }: VehiclesScreenProps) {
                 )}
                 {listQuery.data &&
                   (listQuery.data.length === 0 ? (
-                    <EmptyState message="This driver has no vehicles yet." />
+                    <EmptyState message="No vehicles on file for this driver." />
                   ) : (
                     <div className="overflow-x-auto rounded-xl border border-border">
                       <table className="w-full text-sm">

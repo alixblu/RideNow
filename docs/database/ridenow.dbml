@@ -229,7 +229,8 @@ Table payments {
 
   method varchar [not null, note: '''
     CASH,
-    SIMULATED_CARD
+    SIMULATED_CARD,
+    PAYPAL
   ''']
 
   status varchar [not null, default: 'PENDING', note: '''

@@ -1,3 +1,29 @@
+server:
+  port: ${SERVER_PORT:8083}
+
 spring:
   application:
     name: payment-service
+
+  # How this service reaches ITS OWN database. Values are env-overridable with
+  # local defaults: bare `mvnw spring-boot:run` uses the defaults; Compose/EKS
+  # inject SPRING_DATASOURCE_* so the same image runs anywhere. Host port 5436
+  # matches the docker-compose.yml mapping for payment-db.
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5436/payment_service}
+    username: ${SPRING_DATASOURCE_USERNAME:payment}
+    password: ${SPRING_DATASOURCE_PASSWORD:payment_local}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema; Hibernate only validates that entities match it.
+      ddl-auto: validate
+    show-sql: false
+
+# Actuator exposes /actuator/health so Compose and later Kubernetes can probe
+# readiness/liveness without hitting business endpoints.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

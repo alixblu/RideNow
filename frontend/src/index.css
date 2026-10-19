@@ -1,62 +1,71 @@
+/* Self-hosted variable fonts (no external request; works offline and in tests). */
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/inter";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /**
- * RideNow design tokens.
+ * RideNow design tokens — warm editorial, dark-first.
  *
- * Uber-like visual language: near-black surfaces, crisp white text, a single bold
- * accent. Tokens are RGB channel triples so Tailwind's `rgb(var(--token) / <alpha>)`
- * color definitions can apply opacity. Dark is the default (`:root`); the light
- * variant is applied when <html data-theme="light"> is set. The ThemeToggle writes
- * data-theme and persists the choice; dark is the fallback.
+ * Deliberately NOT the cold slate-blue-on-black default: the dark theme is a warm
+ * charcoal/brown ink with warm off-white "paper" text and a single muted emerald
+ * accent (a restrained nod to Grab's green, not a neon). The light theme is warm
+ * paper with near-black ink. Tokens are RGB channel triples so Tailwind's
+ * `rgb(var(--token) / <alpha>)` colors can apply opacity. Dark is the default
+ * (`:root`); the light variant applies under <html data-theme="light">.
  */
 
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --rn-bg: 8 9 12; /* near-black page */
-  --rn-surface: 18 20 25; /* cards */
-  --rn-surface-raised: 28 31 38; /* raised cards / inputs */
-  --rn-border: 44 48 57;
+  --rn-bg: 20 18 16; /* warm near-black (brown-charcoal) */
+  --rn-surface: 28 25 22; /* panels */
+  --rn-surface-raised: 36 32 28; /* inputs / raised */
+  --rn-border: 58 52 46; /* warm hairline */
 
-  --rn-content: 247 248 250; /* primary text (near white) */
-  --rn-content-muted: 165 171 183;
-  --rn-content-subtle: 118 124 136;
-  --rn-content-inverse: 8 9 12; /* text on accent */
+  --rn-content: 240 234 224; /* warm paper text */
+  --rn-content-muted: 173 164 150;
+  --rn-content-subtle: 124 116 104;
+  --rn-content-inverse: 20 18 16; /* text on accent */
 
-  --rn-accent: 76 110 245; /* bold blue accent */
-  --rn-accent-hover: 98 128 250;
-  --rn-accent-fg: 255 255 255;
+  --rn-accent: 42 157 108; /* muted emerald */
+  --rn-accent-hover: 54 176 123;
+  --rn-accent-fg: 247 244 238; /* warm paper on accent */
 
-  --rn-success: 46 204 113;
-  --rn-warning: 240 180 41;
-  --rn-danger: 240 83 80;
-  --rn-info: 76 150 245;
+  --rn-sand: 206 170 120; /* warm secondary highlight */
+
+  --rn-success: 61 166 110;
+  --rn-warning: 211 161 74;
+  --rn-danger: 206 94 79;
+  --rn-info: 122 150 142;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --rn-bg: 247 248 250;
-  --rn-surface: 255 255 255;
-  --rn-surface-raised: 255 255 255;
-  --rn-border: 224 227 233;
+  --rn-bg: 245 241 232; /* warm paper */
+  --rn-surface: 252 249 243;
+  --rn-surface-raised: 255 253 249;
+  --rn-border: 223 214 198;
 
-  --rn-content: 16 18 23;
-  --rn-content-muted: 90 97 110;
-  --rn-content-subtle: 134 141 153;
-  --rn-content-inverse: 255 255 255;
+  --rn-content: 28 24 20; /* ink */
+  --rn-content-muted: 92 84 73;
+  --rn-content-subtle: 140 130 116;
+  --rn-content-inverse: 250 247 241;
 
-  --rn-accent: 54 90 240;
-  --rn-accent-hover: 40 76 226;
-  --rn-accent-fg: 255 255 255;
+  --rn-accent: 24 122 83; /* deeper emerald for contrast on paper */
+  --rn-accent-hover: 18 104 70;
+  --rn-accent-fg: 250 247 241;
 
-  --rn-success: 23 162 92;
-  --rn-warning: 196 141 16;
-  --rn-danger: 214 54 51;
-  --rn-info: 40 110 220;
+  --rn-sand: 160 120 68;
+
+  --rn-success: 24 122 83;
+  --rn-warning: 169 122 38;
+  --rn-danger: 183 66 52;
+  --rn-info: 90 110 102;
 }
 
 @layer base {
@@ -74,21 +83,28 @@
     @apply bg-bg text-content font-sans antialiased;
   }
 
-  /* Consistent, visible focus ring for keyboard users across the app. */
+  /* Editorial headings default to the serif display face. */
+  h1,
+  h2,
+  h3 {
+    @apply font-serif;
+  }
+
+  /* A quiet, warm focus ring. */
   :focus-visible {
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
   }
 }
 
 @layer components {
-  /* A subtle map-style grid backdrop used behind the rider location panel. The
-     rider trip screen is deliberately input-driven (live-location is deferred), so
-     this is a static decorative placeholder, not a real map. */
+  /* A faint map-style grid backdrop behind the rider location panel. The rider trip
+     screen is input-driven (live-location is deferred), so this is a static
+     decorative placeholder, not a real map. */
   .rn-map-grid {
-    background-color: rgb(var(--rn-surface-raised));
+    background-color: rgb(var(--rn-surface));
     background-image:
-      linear-gradient(rgb(var(--rn-border) / 0.6) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(var(--rn-border) / 0.6) 1px, transparent 1px);
-    background-size: 28px 28px;
+      linear-gradient(rgb(var(--rn-border) / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--rn-border) / 0.5) 1px, transparent 1px);
+    background-size: 32px 32px;
   }
 }

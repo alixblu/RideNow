@@ -9,12 +9,13 @@ import { cn } from "./cn";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
-const TONE_CLASS: Record<Tone, string> = {
-  neutral: "bg-content/10 text-content-muted",
-  info: "bg-info/15 text-info",
-  success: "bg-success/15 text-success",
-  warning: "bg-warning/15 text-warning",
-  danger: "bg-danger/15 text-danger",
+// The dot carries the tone; the label stays in muted ink. Quieter than a filled pill.
+const DOT_CLASS: Record<Tone, string> = {
+  neutral: "bg-content-subtle",
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
 };
 
 // Status -> tone. Covers Trip_Status, Payment_Status, and Driver/Vehicle states.
@@ -53,12 +54,11 @@ export function StatusPill({ status, className }: StatusPillProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
-        TONE_CLASS[tone],
+        "inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-content-muted",
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+      <span className={cn("h-2 w-2 rounded-full", DOT_CLASS[tone])} aria-hidden="true" />
       {humanize(status)}
     </span>
   );
