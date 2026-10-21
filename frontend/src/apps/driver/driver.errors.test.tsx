@@ -41,6 +41,9 @@ function makeStubClient(
   return {
     createDriver: vi.fn(() => Promise.reject(ApiError.unavailable())),
     getDriver: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    listDrivers: vi.fn(() =>
+      Promise.resolve({ items: [], total: 0, limit: 20, offset: 0 }),
+    ),
     addVehicle: vi.fn(() => Promise.reject(ApiError.unavailable())),
     listVehicles: vi.fn(() => Promise.resolve([])),
     changeStatus: vi.fn(() => Promise.reject(ApiError.unavailable())),

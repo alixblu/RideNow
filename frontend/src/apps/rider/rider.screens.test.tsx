@@ -104,9 +104,12 @@ describe("Feature: ridenow-frontend, Task 18.3: rider matching / payment-failure
       currency: "VND",
       method: "SIMULATED_CARD",
       status: "FAILED",
+      idempotencyKey: "idem-trip-1",
       failureReason: "Payment declined by the card issuer.",
       createdAt: "2024-01-01T00:00:00.000Z",
       updatedAt: "2024-01-01T00:00:00.000Z",
+      paidAt: null,
+      failedAt: "2024-01-01T00:00:00.000Z",
     });
 
     renderRider(<PaymentScreen activeTripId="trip-1" />);

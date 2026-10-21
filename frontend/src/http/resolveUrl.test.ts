@@ -34,13 +34,14 @@ const LIVE_PREFIXES: ReadonlyArray<{ prefix: string; origin: string }> = [
   { prefix: "/api/drivers", origin: "http://localhost:8080" },
   { prefix: "/api/vehicles", origin: "http://localhost:8080" },
   { prefix: "/api/users", origin: "http://localhost:8081" },
+  { prefix: "/api/trips", origin: "http://localhost:8082" },
+  { prefix: "/api/trip-offers", origin: "http://localhost:8082" },
+  { prefix: "/api/payments", origin: "http://localhost:8083" },
 ];
 
 // Documented null-placeholder prefixes: matched in fallback mode but with no origin.
 const NULL_PREFIXES: ReadonlyArray<string> = [
-  "/api/trips",
   "/api/matching",
-  "/api/payments",
   "/api/notifications",
 ];
 

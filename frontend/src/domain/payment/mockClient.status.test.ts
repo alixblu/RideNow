@@ -23,12 +23,23 @@ const PAYMENT_STATUSES = PAYMENT_STATUS_VALUES as readonly string[];
 // Non-empty tripIds (the client keys everything off the id; empty is out of scope).
 const tripId: fc.Arbitrary<string> = fc.string({ minLength: 1 });
 
+/** A minimal, valid create request for the given trip id. */
+function createReq(tripId: string) {
+  return {
+    tripId,
+    amount: 100_000,
+    currency: "VND",
+    method: "CASH" as const,
+    idempotencyKey: `idem-${tripId}`,
+  };
+}
+
 describe("Feature: ridenow-frontend, Property 18: Payment status within set, and failures carry a reason", () => {
   it("every payment's status is within PAYMENT_STATUS_VALUES and failureReason tracks FAILED", async () => {
     await fc.assert(
       fc.asyncProperty(tripId, async (id) => {
         const client = createPaymentMockClient();
-        const payment = await client.getPaymentForTrip(id);
+        const payment = await client.createPayment(createReq(id));
 
         // Status is always one of the defined Payment_Status values.
         expect(PAYMENT_STATUSES.includes(payment.status)).toBe(true);
@@ -52,7 +63,7 @@ describe("Feature: ridenow-frontend, Property 18: Payment status within set, and
     // failure branch above is not vacuously satisfied.
     const ids = Array.from({ length: 200 }, (_, i) => `trip-${i}`);
     const statuses = await Promise.all(
-      ids.map(async (id) => (await client.getPaymentForTrip(id)).status),
+      ids.map(async (id) => (await client.createPayment(createReq(id))).status),
     );
 
     expect(statuses.some((s) => s === "FAILED")).toBe(true);

@@ -6,9 +6,9 @@
  * "no gateway" — the request layer falls back to the Path_Prefix_Map (Req 3.3).
  *
  * Per-domain modes default by domain classification: LIVE domains (driver,
- * vehicle, user) default to `live`; STUBBED domains (trip, matching, payment,
- * notification) default to `mock`. An env override (`VITE_CLIENT_<DOMAIN>`) wins
- * when it is a recognized mode.
+ * vehicle, user, trip, payment) default to `live`; the remaining STUBBED domains
+ * (matching, notification) have no backend service yet and default to `mock`. An
+ * env override (`VITE_CLIENT_<DOMAIN>`) wins when it is a recognized mode.
  */
 
 /** Every backend domain the frontend reaches through a Service_Client. */
@@ -40,9 +40,10 @@ const DEFAULT_MODES: Record<DomainKey, ClientMode> = {
   driver: "live",
   vehicle: "live",
   user: "live",
-  trip: "mock",
+  trip: "live",
+  payment: "live",
+  // No backend service exists yet — these stay mock-only.
   matching: "mock",
-  payment: "mock",
   notification: "mock",
 };
 

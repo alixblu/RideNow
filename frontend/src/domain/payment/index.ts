@@ -3,19 +3,20 @@
  * re-exports the public contract so screens import a single stable module (Req 4.2,
  * 11.4).
  *
- * The payment domain is STUBBED: no payment-service exists, so the live thunk cannot
- * build a real client. It throws a clear "not implemented" error, which the generic
- * `resolveClient` only ever invokes if the payment domain were explicitly configured
- * `live` — the default is `mock`, so the mock thunk runs and returns the in-memory
- * client. When a payment-service lands, this live thunk is the one place that becomes a
- * `createPaymentLiveClient()` call; no screen changes.
+ * `resolvePaymentClient` delegates to the generic `resolveClient` factory, passing the
+ * per-domain mode (`config.clients.payment.mode`) and lazy thunks for the live and mock
+ * implementations. Only the selected implementation is constructed, so switching the
+ * payment domain between live and mock is purely a configuration change — no screen
+ * touches this decision.
  */
 import type { AppConfig } from "../../config/appConfig";
 import { resolveClient } from "../clientFactory";
 import type { PaymentServiceClient } from "./contract";
+import { createPaymentLiveClient } from "./liveClient";
 import { createPaymentMockClient } from "./mockClient";
 
 export type {
+  CreatePaymentRequest,
   PaymentMethod,
   PaymentResponse,
   PaymentServiceClient,
@@ -25,15 +26,12 @@ export type {
  * Resolve the payment `Service_Client` for the given config.
  *
  * @param config the resolved app configuration
- * @returns the payment Mock_Client (default), or throws if forced to `live` while the
- *          payment-service does not yet exist.
+ * @returns a `PaymentServiceClient` — live or mock per `config.clients.payment.mode`
  */
 export function resolvePaymentClient(config: AppConfig): PaymentServiceClient {
   return resolveClient(
     config.clients.payment.mode,
-    () => {
-      throw new Error("payment live client not implemented");
-    },
-    () => createPaymentMockClient(),
+    createPaymentLiveClient,
+    createPaymentMockClient,
   );
 }

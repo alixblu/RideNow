@@ -21,7 +21,7 @@ import { PAYMENT_STATUS_VALUES } from "../../shared/enums";
  */
 
 // The payment-owned method union, mirrored for runtime checking.
-const PAYMENT_METHOD_VALUES = ["CASH", "SIMULATED_CARD"] as const;
+const PAYMENT_METHOD_VALUES = ["CASH", "SIMULATED_CARD", "PAYPAL"] as const;
 
 // A non-empty trip identifier.
 const tripIdArb = fc.string({ minLength: 1, maxLength: 64 });
@@ -58,9 +58,12 @@ function assertConformsToContract(
     "currency",
     "method",
     "status",
+    "idempotencyKey",
     "failureReason",
     "createdAt",
     "updatedAt",
+    "paidAt",
+    "failedAt",
   ].sort();
   expect(Object.keys(payment).sort()).toEqual(expectedKeys);
 
@@ -90,14 +93,22 @@ function assertConformsToContract(
     (PAYMENT_STATUS_VALUES as readonly string[]).includes(payment.status as string),
   ).toBe(true);
 
-  // failureReason: string or null.
+  // idempotencyKey is a non-empty string.
+  expect(typeof payment.idempotencyKey).toBe("string");
+  expect((payment.idempotencyKey as string).length).toBeGreaterThan(0);
+
+  // failureReason: string or null (non-empty exactly when FAILED).
   expect(
     payment.failureReason === null || typeof payment.failureReason === "string",
   ).toBe(true);
 
-  // Timestamps are ISO-8601 strings.
+  // Required timestamps are ISO-8601 strings.
   expect(isIsoTimestamp(payment.createdAt)).toBe(true);
   expect(isIsoTimestamp(payment.updatedAt)).toBe(true);
+
+  // paidAt / failedAt: ISO-8601 string or null.
+  expect(payment.paidAt === null || isIsoTimestamp(payment.paidAt)).toBe(true);
+  expect(payment.failedAt === null || isIsoTimestamp(payment.failedAt)).toBe(true);
 }
 
 describe("Feature: ridenow-frontend, Property 11: Mock responses conform to the shared contract", () => {
@@ -107,8 +118,18 @@ describe("Feature: ridenow-frontend, Property 11: Mock responses conform to the 
         // Fresh client per run keeps each run isolated.
         const client = createPaymentMockClient();
 
-        const payment = await client.getPaymentForTrip(tripId);
+        const payment = await client.createPayment({
+          tripId,
+          amount: 100_000,
+          currency: "VND",
+          method: "CASH",
+          idempotencyKey: `idem-${tripId}`,
+        });
         assertConformsToContract(payment, tripId);
+
+        // The stored payment reads back identically via getPaymentForTrip.
+        const readBack = await client.getPaymentForTrip(tripId);
+        assertConformsToContract(readBack, tripId);
       }),
       { numRuns: 100 },
     );

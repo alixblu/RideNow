@@ -86,12 +86,15 @@ const paymentArb: fc.Arbitrary<PaymentResponse> = fc.record({
   tripId: fc.string({ minLength: 1 }).map((s) => "trip-" + s.replace(/\s/g, "")),
   amount: fc.integer({ min: 0, max: 5_000_000 }),
   currency: fc.constantFrom("VND", "USD", "EUR"),
-  method: fc.constantFrom("CASH", "SIMULATED_CARD"),
-  // Use PAID so the FAILED-only failureReason branch is not required here.
+  method: fc.constantFrom("CASH", "SIMULATED_CARD", "PAYPAL"),
+  // Use a non-FAILED status so the FAILED-only failureReason branch is not required here.
   status: fc.constantFrom(...PAYMENT_STATUS_VALUES.filter((s) => s !== "FAILED")),
+  idempotencyKey: fc.string({ minLength: 1 }).map((s) => "idem-" + s.replace(/\s/g, "")),
   failureReason: fc.constant(null),
   createdAt: fc.constant("2024-01-01T00:00:00.000Z"),
   updatedAt: fc.constant("2024-01-01T00:00:00.000Z"),
+  paidAt: fc.constant(null),
+  failedAt: fc.constant(null),
 });
 
 describe("Feature: ridenow-frontend, Property 9: Payment and notification views render all contract fields", () => {

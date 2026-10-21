@@ -10,7 +10,17 @@
  * `ApiError.notFound`, matching what the request layer produces for a 404.
  */
 import { ApiError } from "../../http/ApiError";
-import type { CreateUserRequest, UserResponse, UserServiceClient } from "./contract";
+import type { Page } from "../../shared/page";
+import type {
+  CreateUserRequest,
+  ListUsersParams,
+  UserResponse,
+  UserServiceClient,
+} from "./contract";
+
+/** Default/maximum window sizes for listUsers, mirroring the backend semantics. */
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
 
 /** A tiny, dependency-free UUID-ish id generator for mock records. */
 function mockId(): string {
@@ -52,6 +62,18 @@ export function createUserMockClient(): UserServiceClient {
         return Promise.reject(ApiError.notFound());
       }
       return Promise.resolve(user);
+    },
+
+    listUsers(params: ListUsersParams): Promise<Page<UserResponse>> {
+      const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 0), MAX_LIMIT);
+      const offset = Math.max(params.offset ?? 0, 0);
+
+      // Most recently created first.
+      const all = [...store.values()].sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      );
+      const items = all.slice(offset, offset + limit);
+      return Promise.resolve({ items, total: all.length, limit, offset });
     },
   };
 }

@@ -53,6 +53,9 @@ function makeSpyClient(): DriverServiceClient {
   return {
     createDriver: vi.fn((): Promise<DriverResponse> => new Promise(() => {})),
     getDriver: vi.fn((): Promise<DriverResponse> => new Promise(() => {})),
+    listDrivers: vi.fn(() =>
+      Promise.resolve({ items: [], total: 0, limit: 20, offset: 0 }),
+    ),
     addVehicle: vi.fn((): Promise<VehicleResponse> => new Promise(() => {})),
     listVehicles: vi.fn((): Promise<VehicleResponse[]> => Promise.resolve([])),
     changeStatus: vi.fn((): Promise<DriverResponse> => new Promise(() => {})),

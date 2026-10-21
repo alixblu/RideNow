@@ -14,11 +14,13 @@
  */
 import { httpRequest } from "../../http/httpClient";
 import type { DriverStatus } from "../../shared/enums";
+import type { Page } from "../../shared/page";
 import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract";
 import type {
   CreateDriverRequest,
   DriverResponse,
   DriverServiceClient,
+  ListDriversParams,
 } from "./contract";
 
 /**
@@ -39,6 +41,23 @@ export function createDriverLiveClient(): DriverServiceClient {
 
     getDriver(id: string): Promise<DriverResponse> {
       return httpRequest<DriverResponse>(`/api/drivers/${encodeURIComponent(id)}`);
+    },
+
+    listDrivers(params: ListDriversParams): Promise<Page<DriverResponse>> {
+      const query = new URLSearchParams();
+      if (params.limit !== undefined) {
+        query.set("limit", String(params.limit));
+      }
+      if (params.offset !== undefined) {
+        query.set("offset", String(params.offset));
+      }
+      if (params.status !== undefined) {
+        query.set("status", params.status);
+      }
+      const qs = query.toString();
+      return httpRequest<Page<DriverResponse>>(
+        `/api/drivers${qs.length > 0 ? `?${qs}` : ""}`,
+      );
     },
 
     addVehicle(

@@ -17,7 +17,9 @@ export type {
   CreateDriverRequest,
   DriverResponse,
   DriverServiceClient,
+  ListDriversParams,
 } from "./contract";
+export type { Page } from "../../shared/page";
 
 /**
  * Resolve the driver Service_Client for the given config. The chosen implementation is

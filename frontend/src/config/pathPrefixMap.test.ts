@@ -13,15 +13,19 @@ describe("PATH_PREFIX_MAP — LIVE service origins (Req 3.3)", () => {
   it("maps /api/users to the user-service origin", () => {
     expect(PATH_PREFIX_MAP["/api/users"]).toBe("http://localhost:8081");
   });
+
+  it("maps /api/trips and /api/trip-offers to the trip-service origin", () => {
+    expect(PATH_PREFIX_MAP["/api/trips"]).toBe("http://localhost:8082");
+    expect(PATH_PREFIX_MAP["/api/trip-offers"]).toBe("http://localhost:8082");
+  });
+
+  it("maps /api/payments to the payment-service origin", () => {
+    expect(PATH_PREFIX_MAP["/api/payments"]).toBe("http://localhost:8083");
+  });
 });
 
 describe("PATH_PREFIX_MAP — documented placeholders (Req 3.4)", () => {
-  const PLACEHOLDER_PREFIXES = [
-    "/api/trips",
-    "/api/matching",
-    "/api/payments",
-    "/api/notifications",
-  ] as const;
+  const PLACEHOLDER_PREFIXES = ["/api/matching", "/api/notifications"] as const;
 
   it("defines a null placeholder entry for each future domain", () => {
     for (const prefix of PLACEHOLDER_PREFIXES) {
@@ -36,6 +40,9 @@ describe("PATH_PREFIX_MAP — documented placeholders (Req 3.4)", () => {
         "/api/drivers",
         "/api/vehicles",
         "/api/users",
+        "/api/trips",
+        "/api/trip-offers",
+        "/api/payments",
         ...PLACEHOLDER_PREFIXES,
       ].sort(),
     );

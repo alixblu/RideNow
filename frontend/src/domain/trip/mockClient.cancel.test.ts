@@ -9,7 +9,7 @@ import type { CreateTripRequest } from "./contract";
  *
  * Validates: Requirements 9.4.
  *
- * A freshly requested trip is in a cancellation-eligible state (REQUESTED). For any
+ * A freshly requested trip is in a cancellation-eligible state (SEARCHING). For any
  * such trip, cancelTrip(trip.id) resolves to the same trip id with status CANCELLED,
  * and the stored state is updated so a subsequent getTrip(id) also reflects CANCELLED.
  *
@@ -35,8 +35,8 @@ describe("Feature: ridenow-frontend, Property 16: Cancelling an eligible trip yi
         const client = createTripMockClient();
 
         const created = await client.requestTrip(req);
-        // Precondition: a new trip is in the cancellation-eligible REQUESTED state.
-        expect(created.status).toBe("REQUESTED");
+        // Precondition: a new trip is in the cancellation-eligible SEARCHING state.
+        expect(created.status).toBe("SEARCHING");
 
         const cancelled = await client.cancelTrip(created.id);
 

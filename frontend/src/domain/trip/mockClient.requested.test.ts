@@ -5,16 +5,16 @@ import type { CreateTripRequest } from "./contract";
 import { VEHICLE_TYPE_VALUES } from "../../shared/enums";
 
 /**
- * Property 13: New trip starts REQUESTED and echoes its request.
+ * Property 13: New trip starts SEARCHING and echoes its request.
  *
  * Validates: Requirements 9.1.
  *
- * Tag: Feature: ridenow-frontend, Property 13: New trip starts REQUESTED and echoes its request
+ * Tag: Feature: ridenow-frontend, Property 13: New trip starts SEARCHING and echoes its request
  *
  * For any valid CreateTripRequest, `requestTrip` returns a trip that starts with
- * Trip_Status REQUESTED and echoes the submitted pickup/destination coordinates,
- * ride type, and passenger id exactly. A fresh Mock_Client is created per run so
- * each assertion is isolated and deterministic.
+ * Trip_Status SEARCHING (the trip-service immediately begins matching) and echoes the
+ * submitted pickup/destination coordinates, ride type, and passenger id exactly. A
+ * fresh Mock_Client is created per run so each assertion is isolated and deterministic.
  */
 
 // A valid ride type: one of the two allowed Vehicle_Type values.
@@ -41,8 +41,8 @@ const createTripRequest: fc.Arbitrary<CreateTripRequest> = fc.record({
   destinationLng: coordinate,
 });
 
-describe("Feature: ridenow-frontend, Property 13: New trip starts REQUESTED and echoes its request", () => {
-  it("returns a REQUESTED trip that echoes the submitted request exactly", async () => {
+describe("Feature: ridenow-frontend, Property 13: New trip starts SEARCHING and echoes its request", () => {
+  it("returns a SEARCHING trip that echoes the submitted request exactly", async () => {
     await fc.assert(
       fc.asyncProperty(createTripRequest, async (req) => {
         // Fresh client per run keeps each resolved store isolated.
@@ -50,8 +50,8 @@ describe("Feature: ridenow-frontend, Property 13: New trip starts REQUESTED and 
 
         const trip = await client.requestTrip(req);
 
-        // A new trip always starts REQUESTED (Req 9.1).
-        expect(trip.status).toBe("REQUESTED");
+        // A new trip always starts SEARCHING (Req 9.1).
+        expect(trip.status).toBe("SEARCHING");
 
         // The submitted facts are echoed back unchanged.
         expect(trip.passengerId).toBe(req.passengerId);

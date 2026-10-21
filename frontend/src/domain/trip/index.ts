@@ -2,20 +2,22 @@
  * Trip domain entry — resolves the trip `Service_Client` from configuration and
  * re-exports the public contract so screens import a single stable module (Req 4.2).
  *
- * The trip domain is STUBBED: no trip-service exists, so the live thunk cannot build a
- * real client. It throws a clear "not implemented" error, which the generic
- * `resolveClient` only ever invokes if the trip domain were explicitly configured
- * `live` — the default is `mock`, so the mock thunk runs and returns the in-memory
- * client. When a trip-service lands, this live thunk is the one place that becomes a
- * `createTripLiveClient()` call; no screen changes (Req 9.5).
+ * `resolveTripClient` delegates to the generic `resolveClient` factory, passing the
+ * per-domain mode (`config.clients.trip.mode`) and lazy thunks for the live and mock
+ * implementations. Only the selected implementation is constructed, so switching the
+ * trip domain between live and mock is purely a configuration change — no screen
+ * touches this decision (Req 9.5).
  */
 import type { AppConfig } from "../../config/appConfig";
 import { resolveClient } from "../clientFactory";
 import type { TripServiceClient } from "./contract";
+import { createTripLiveClient } from "./liveClient";
 import { createTripMockClient } from "./mockClient";
 
 export type {
   CreateTripRequest,
+  ListTripsParams,
+  Page,
   TripResponse,
   TripServiceClient,
 } from "./contract";
@@ -24,15 +26,12 @@ export type {
  * Resolve the trip `Service_Client` for the given config.
  *
  * @param config the resolved app configuration
- * @returns the trip Mock_Client (default), or throws if forced to `live` while the
- *          trip-service does not yet exist.
+ * @returns a `TripServiceClient` — live or mock per `config.clients.trip.mode`
  */
 export function resolveTripClient(config: AppConfig): TripServiceClient {
   return resolveClient(
     config.clients.trip.mode,
-    () => {
-      throw new Error("trip live client not implemented");
-    },
-    () => createTripMockClient(),
+    createTripLiveClient,
+    createTripMockClient,
   );
 }

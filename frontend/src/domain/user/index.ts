@@ -18,6 +18,8 @@ import { createUserMockClient } from "./mockClient";
 
 export type {
   CreateUserRequest,
+  ListUsersParams,
+  Page,
   UserResponse,
   UserServiceClient,
   UserStatus,

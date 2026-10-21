@@ -19,6 +19,7 @@
  * the two live clients speak the same vehicle shapes (driver-service owns vehicles).
  */
 import type { DriverStatus } from "../../shared/enums";
+import type { Page } from "../../shared/page";
 import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract";
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,13 @@ export interface DriverResponse {
   updatedAt: string;
 }
 
+/** Query parameters for listing drivers (`GET /api/drivers`). */
+export interface ListDriversParams {
+  limit?: number;
+  offset?: number;
+  status?: DriverStatus;
+}
+
 // ---------------------------------------------------------------------------
 // Service_Client contract — identical for Live_Client and Mock_Client.
 // ---------------------------------------------------------------------------
@@ -58,6 +66,8 @@ export interface DriverResponse {
 export interface DriverServiceClient {
   /** `POST /api/drivers` → 201 `DriverResponse`. */
   createDriver(req: CreateDriverRequest): Promise<DriverResponse>;
+  /** `GET /api/drivers` → `Page<DriverResponse>` (filtered/paginated). */
+  listDrivers(params: ListDriversParams): Promise<Page<DriverResponse>>;
   /** `GET /api/drivers/{id}` → `DriverResponse` (404 → ApiError.notFound). */
   getDriver(id: string): Promise<DriverResponse>;
   /** `POST /api/drivers/{driverId}/vehicles` → 201 `VehicleResponse`. */

@@ -73,12 +73,20 @@ function assertConformsToContract(value: unknown): asserts value is TripResponse
     "status",
     "pickupLat",
     "pickupLng",
+    "pickupAddress",
     "destinationLat",
     "destinationLng",
+    "destinationAddress",
     "estimatedFare",
     "finalFare",
     "cancellationReason",
+    "version",
     "requestedAt",
+    "acceptedAt",
+    "arrivedAt",
+    "startedAt",
+    "completedAt",
+    "cancelledAt",
     "createdAt",
     "updatedAt",
   ].sort();
@@ -113,10 +121,26 @@ function assertConformsToContract(value: unknown): asserts value is TripResponse
     trip.cancellationReason === null || typeof trip.cancellationReason === "string",
   ).toBe(true);
 
-  // Timestamps are ISO-8601 strings.
+  // Addresses: string or null.
+  expect(trip.pickupAddress === null || typeof trip.pickupAddress === "string").toBe(
+    true,
+  );
+  expect(
+    trip.destinationAddress === null || typeof trip.destinationAddress === "string",
+  ).toBe(true);
+
+  // Optimistic-lock version is a number.
+  expect(typeof trip.version).toBe("number");
+
+  // Required timestamps are ISO-8601 strings.
   expect(isIsoTimestamp(trip.requestedAt)).toBe(true);
   expect(isIsoTimestamp(trip.createdAt)).toBe(true);
   expect(isIsoTimestamp(trip.updatedAt)).toBe(true);
+
+  // Lifecycle timestamps: ISO-8601 string or null.
+  for (const key of ["acceptedAt", "arrivedAt", "startedAt", "completedAt", "cancelledAt"]) {
+    expect(trip[key] === null || isIsoTimestamp(trip[key])).toBe(true);
+  }
 }
 
 describe("Feature: ridenow-frontend, Property 11: Mock responses conform to the shared contract", () => {

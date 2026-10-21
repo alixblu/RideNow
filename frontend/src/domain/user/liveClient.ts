@@ -11,7 +11,13 @@
  * It is confined to create + get only (Req 8.5); no other surfaces exist here.
  */
 import { httpRequest } from "../../http/httpClient";
-import type { CreateUserRequest, UserResponse, UserServiceClient } from "./contract";
+import type { Page } from "../../shared/page";
+import type {
+  CreateUserRequest,
+  ListUsersParams,
+  UserResponse,
+  UserServiceClient,
+} from "./contract";
 
 /** Base path for the user-service users resource (resolved by the request layer). */
 const USERS_PATH = "/api/users";
@@ -31,6 +37,20 @@ export function createUserLiveClient(): UserServiceClient {
 
     getUser(id: string): Promise<UserResponse> {
       return httpRequest<UserResponse>(`${USERS_PATH}/${encodeURIComponent(id)}`);
+    },
+
+    listUsers(params: ListUsersParams): Promise<Page<UserResponse>> {
+      const query = new URLSearchParams();
+      if (params.limit !== undefined) {
+        query.set("limit", String(params.limit));
+      }
+      if (params.offset !== undefined) {
+        query.set("offset", String(params.offset));
+      }
+      const qs = query.toString();
+      return httpRequest<Page<UserResponse>>(
+        `${USERS_PATH}${qs.length > 0 ? `?${qs}` : ""}`,
+      );
     },
   };
 }

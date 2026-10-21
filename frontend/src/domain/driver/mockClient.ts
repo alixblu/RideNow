@@ -16,13 +16,19 @@
  */
 import { ApiError } from "../../http/ApiError";
 import type { DriverStatus } from "../../shared/enums";
+import type { Page } from "../../shared/page";
 import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract";
 import { createVehicleMockClient } from "../vehicle/mockClient";
 import type {
   CreateDriverRequest,
   DriverResponse,
   DriverServiceClient,
+  ListDriversParams,
 } from "./contract";
+
+/** Default/maximum window sizes for listDrivers, mirroring the backend semantics. */
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
 
 /** Best-effort UUID generation with a deterministic fallback for older runtimes. */
 function newId(): string {
@@ -74,6 +80,21 @@ export function createDriverMockClient(): DriverServiceClient {
         return Promise.reject(ApiError.notFound());
       }
       return Promise.resolve(driver);
+    },
+
+    listDrivers(params: ListDriversParams): Promise<Page<DriverResponse>> {
+      const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 0), MAX_LIMIT);
+      const offset = Math.max(params.offset ?? 0, 0);
+
+      const matched = [...store.values()]
+        .filter((driver) =>
+          params.status === undefined ? true : driver.status === params.status,
+        )
+        // Most recently created first.
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      const items = matched.slice(offset, offset + limit);
+      return Promise.resolve({ items, total: matched.length, limit, offset });
     },
 
     changeStatus(driverId: string, status: DriverStatus): Promise<DriverResponse> {

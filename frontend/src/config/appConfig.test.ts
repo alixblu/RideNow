@@ -23,13 +23,8 @@ function env(overrides: Record<string, string> = {}): ImportMetaEnv {
   } as unknown as ImportMetaEnv;
 }
 
-const LIVE_DOMAINS: DomainKey[] = ["driver", "vehicle", "user"];
-const STUBBED_DOMAINS: DomainKey[] = [
-  "trip",
-  "matching",
-  "payment",
-  "notification",
-];
+const LIVE_DOMAINS: DomainKey[] = ["driver", "vehicle", "user", "trip", "payment"];
+const STUBBED_DOMAINS: DomainKey[] = ["matching", "notification"];
 const ALL_DOMAINS: DomainKey[] = [...LIVE_DOMAINS, ...STUBBED_DOMAINS];
 
 describe("buildConfig — API base URL parsing (Req 3.1)", () => {
@@ -68,14 +63,14 @@ describe("buildConfig — API base URL parsing (Req 3.1)", () => {
 });
 
 describe("buildConfig — per-domain mode defaults (Req 3.4)", () => {
-  it("defaults LIVE domains (driver, vehicle, user) to 'live'", () => {
+  it("defaults LIVE domains (driver, vehicle, user, trip, payment) to 'live'", () => {
     const config = buildConfig(env());
     for (const domain of LIVE_DOMAINS) {
       expect(config.clients[domain].mode).toBe("live");
     }
   });
 
-  it("defaults STUBBED domains (trip, matching, payment, notification) to 'mock'", () => {
+  it("defaults STUBBED domains (matching, notification) to 'mock'", () => {
     const config = buildConfig(env());
     for (const domain of STUBBED_DOMAINS) {
       expect(config.clients[domain].mode).toBe("mock");
@@ -89,18 +84,18 @@ describe("buildConfig — per-domain mode defaults (Req 3.4)", () => {
 
   it("applies a recognized VITE_CLIENT_<DOMAIN> override", () => {
     const config = buildConfig(
-      env({ VITE_CLIENT_DRIVER: "mock", VITE_CLIENT_TRIP: "live" }),
+      env({ VITE_CLIENT_DRIVER: "mock", VITE_CLIENT_MATCHING: "live" }),
     );
     expect(config.clients.driver.mode).toBe("mock");
-    expect(config.clients.trip.mode).toBe("live");
+    expect(config.clients.matching.mode).toBe("live");
   });
 
   it("ignores an unrecognized override and keeps the domain default", () => {
     const config = buildConfig(
-      env({ VITE_CLIENT_DRIVER: "bogus", VITE_CLIENT_PAYMENT: "" }),
+      env({ VITE_CLIENT_DRIVER: "bogus", VITE_CLIENT_NOTIFICATION: "" }),
     );
     expect(config.clients.driver.mode).toBe("live");
-    expect(config.clients.payment.mode).toBe("mock");
+    expect(config.clients.notification.mode).toBe("mock");
   });
 });
 

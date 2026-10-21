@@ -19,6 +19,9 @@
  * stay implementation-agnostic and a live/mock swap is a configuration change only
  * (Req 4.1, 4.3).
  */
+import type { Page } from "../../shared/page";
+
+export type { Page } from "../../shared/page";
 
 /**
  * User account status — a user-owned enum (mirrors user-service `UserStatus`).
@@ -70,4 +73,12 @@ export interface UserServiceClient {
   createUser(req: CreateUserRequest): Promise<UserResponse>;
   /** Fetch a user by id. Maps to `GET /api/users/{id}` (404 if missing). */
   getUser(id: string): Promise<UserResponse>;
+  /** List users. Maps to `GET /api/users` → `Page<UserResponse>` (paginated). */
+  listUsers(params: ListUsersParams): Promise<Page<UserResponse>>;
+}
+
+/** Query parameters for listing users (`GET /api/users`). */
+export interface ListUsersParams {
+  limit?: number;
+  offset?: number;
 }
