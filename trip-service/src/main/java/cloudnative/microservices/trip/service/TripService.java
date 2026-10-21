@@ -1,14 +1,17 @@
 package cloudnative.microservices.trip.service;
 
 import cloudnative.microservices.trip.dto.request.CreateTripRequest;
+import cloudnative.microservices.trip.dto.response.PageResponse;
 import cloudnative.microservices.trip.dto.response.TripOfferResponse;
 import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.Trip;
 import cloudnative.microservices.trip.entity.TripOffer;
+import cloudnative.microservices.trip.entity.TripStatus;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.repository.TripOfferRepository;
 import cloudnative.microservices.trip.repository.TripRepository;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -62,6 +65,52 @@ public class TripService {
     public TripResponse getTrip(UUID id) {
         Trip trip = tripRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip", id));
+        return toResponse(trip);
+    }
+
+    /**
+     * Lists trips newest-first, optionally filtered by passenger and/or status.
+     * The matching finder/count pair is chosen by which filters are present.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<TripResponse> listTrips(
+            UUID passengerIdOrNull, TripStatus statusOrNull, int limit, int offset) {
+        int effectiveLimit = limit <= 0 ? 20 : Math.min(limit, 100);
+        int effectiveOffset = Math.max(offset, 0);
+
+        List<Trip> all;
+        long total;
+        if (passengerIdOrNull != null && statusOrNull != null) {
+            all = tripRepository.findByPassengerIdAndStatusOrderByRequestedAtDesc(passengerIdOrNull, statusOrNull);
+            total = tripRepository.countByPassengerIdAndStatus(passengerIdOrNull, statusOrNull);
+        } else if (passengerIdOrNull != null) {
+            all = tripRepository.findByPassengerIdOrderByRequestedAtDesc(passengerIdOrNull);
+            total = tripRepository.countByPassengerId(passengerIdOrNull);
+        } else if (statusOrNull != null) {
+            all = tripRepository.findByStatusOrderByRequestedAtDesc(statusOrNull);
+            total = tripRepository.countByStatus(statusOrNull);
+        } else {
+            all = tripRepository.findAllByOrderByRequestedAtDesc();
+            total = tripRepository.count();
+        }
+
+        List<TripResponse> items;
+        if (effectiveOffset >= all.size()) {
+            items = List.of();
+        } else {
+            int end = Math.min(effectiveOffset + effectiveLimit, all.size());
+            items = all.subList(effectiveOffset, end).stream()
+                    .map(this::toResponse)
+                    .toList();
+        }
+        return new PageResponse<>(items, total, effectiveLimit, effectiveOffset);
+    }
+
+    @Transactional
+    public TripResponse cancelTrip(UUID tripId, String reason) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
+        trip.cancel(reason, Instant.now());
         return toResponse(trip);
     }
 

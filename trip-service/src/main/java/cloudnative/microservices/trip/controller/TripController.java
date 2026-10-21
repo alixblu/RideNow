@@ -1,14 +1,18 @@
 package cloudnative.microservices.trip.controller;
 
 import cloudnative.microservices.trip.dto.request.CreateTripRequest;
+import cloudnative.microservices.trip.dto.response.PageResponse;
 import cloudnative.microservices.trip.dto.response.TripOfferResponse;
 import cloudnative.microservices.trip.dto.response.TripResponse;
+import cloudnative.microservices.trip.entity.TripStatus;
 import cloudnative.microservices.trip.service.TripService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import java.net.URI;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,7 +24,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
+@Validated
 public class TripController {
+
+    private static final String DEFAULT_CANCELLATION_REASON = "Cancelled by rider";
 
     private final TripService tripService;
 
@@ -36,9 +43,24 @@ public class TripController {
         return tripService.acceptTrip(id, driverId);
     }
 
+    @GetMapping("/trips")
+    public PageResponse<TripResponse> listTrips(
+            @RequestParam(required = false) UUID passengerId,
+            @RequestParam(required = false) TripStatus status,
+            @RequestParam(defaultValue = "20") @Min(0) int limit,
+            @RequestParam(defaultValue = "0") @Min(0) int offset) {
+        return tripService.listTrips(passengerId, status, limit, offset);
+    }
+
     @GetMapping("/trips/{id}")
     public TripResponse getTrip(@PathVariable UUID id) {
         return tripService.getTrip(id);
+    }
+
+    // The rider cancels this trip.
+    @PostMapping("/trips/{id}/cancel")
+    public TripResponse cancelTrip(@PathVariable UUID id) {
+        return tripService.cancelTrip(id, DEFAULT_CANCELLATION_REASON);
     }
 
     @GetMapping("/trip-offers/{id}")

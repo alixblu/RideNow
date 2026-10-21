@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
 import cloudnative.microservices.trip.exception.TripNotAcceptableException;
+import cloudnative.microservices.trip.exception.TripNotCancellableException;
 import lombok.NoArgsConstructor;
 
 @Entity
@@ -141,6 +142,20 @@ public class Trip {
         this.driverId = driverId;
         this.status = TripStatus.DRIVER_ASSIGNED;
         this.acceptedAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * Cancels this trip. A trip may be cancelled from any non-terminal status;
+     * a trip that is already COMPLETED or CANCELLED cannot be cancelled again.
+     */
+    public void cancel(String reason, Instant now) {
+        if (this.status == TripStatus.COMPLETED || this.status == TripStatus.CANCELLED) {
+            throw new TripNotCancellableException(this.id, this.status);
+        }
+        this.status = TripStatus.CANCELLED;
+        this.cancellationReason = reason;
+        this.cancelledAt = now;
         this.updatedAt = now;
     }
 }
