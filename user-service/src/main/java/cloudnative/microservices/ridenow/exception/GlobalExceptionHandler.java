@@ -1,6 +1,7 @@
 package cloudnative.microservices.ridenow.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,18 @@ public class GlobalExceptionHandler {
         String message = exception.getBindingResult().getFieldErrors().stream()
                 .findFirst()
                 .map(e -> e.getField() + ": " + e.getDefaultMessage())
+                .orElse("Validation failed");
+        return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    // A @Min/@Max etc. violation on a @RequestParam (via @Validated) surfaces here
+    // rather than as MethodArgumentNotValidException. Treat it as a 400 client error.
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleConstraintViolation(
+            ConstraintViolationException exception, HttpServletRequest request) {
+        String message = exception.getConstraintViolations().stream()
+                .findFirst()
+                .map(v -> v.getMessage())
                 .orElse("Validation failed");
         return build(HttpStatus.BAD_REQUEST, message, request);
     }

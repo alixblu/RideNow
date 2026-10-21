@@ -114,4 +114,29 @@ class PaymentServiceTest {
         assertThatThrownBy(() -> paymentService.getPayment(id))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
+
+    @Test
+    void getPaymentForTripReturnsMappedResponse() {
+        UUID tripId = UUID.randomUUID();
+        Payment payment = new Payment(UUID.randomUUID(), tripId, new BigDecimal("45000.00"),
+                "VND", PaymentMethod.CASH, "idem-4", Instant.now());
+        payment.markProcessing(Instant.now());
+        payment.markPaid(Instant.now());
+        when(paymentRepository.findByTripId(tripId)).thenReturn(Optional.of(payment));
+
+        PaymentResponse result = paymentService.getPaymentForTrip(tripId);
+
+        assertThat(result.id()).isEqualTo(payment.getId());
+        assertThat(result.tripId()).isEqualTo(tripId);
+        assertThat(result.status()).isEqualTo(PaymentStatus.PAID);
+    }
+
+    @Test
+    void getPaymentForUnknownTripThrowsNotFound() {
+        UUID tripId = UUID.randomUUID();
+        when(paymentRepository.findByTripId(tripId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> paymentService.getPaymentForTrip(tripId))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
 }

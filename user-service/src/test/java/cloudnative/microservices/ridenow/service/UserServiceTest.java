@@ -8,9 +8,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import cloudnative.microservices.ridenow.dto.request.CreateUserRequest;
+import cloudnative.microservices.ridenow.dto.response.PageResponse;
+import cloudnative.microservices.ridenow.dto.response.UserResponse;
 import cloudnative.microservices.ridenow.entity.User;
 import cloudnative.microservices.ridenow.exception.DuplicateResourceException;
 import cloudnative.microservices.ridenow.repository.UserRepository;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -80,5 +86,66 @@ class UserServiceTest {
         // Phone existence must NOT be queried when no phone was supplied.
         verify(userRepository, never()).existsByPhone(any());
         verify(userRepository).save(any(User.class));
+    }
+
+    // --- listUsers paging rules ---------------------------------------------
+
+    /** Builds n users with distinct ids/emails in the order the repository returns them. */
+    private List<User> users(int n) {
+        Instant now = Instant.now();
+        return IntStream.range(0, n)
+                .mapToObj(i -> new User(UUID.randomUUID(), "sub-" + i, "u" + i + "@ridenow.test",
+                        null, "User " + i, null, now))
+                .toList();
+    }
+
+    @Test
+    void listUsersAppliesDefaultLimitWhenLimitNotPositive() {
+        when(userRepository.findAllByOrderByCreatedAtDesc()).thenReturn(users(5));
+        when(userRepository.count()).thenReturn(5L);
+
+        PageResponse<UserResponse> page = userService.listUsers(0, 0);
+
+        assertThat(page.limit()).isEqualTo(20);
+        assertThat(page.items()).hasSize(5);
+        assertThat(page.total()).isEqualTo(5L);
+    }
+
+    @Test
+    void listUsersClampsLimitToHundred() {
+        when(userRepository.findAllByOrderByCreatedAtDesc()).thenReturn(users(150));
+        when(userRepository.count()).thenReturn(150L);
+
+        PageResponse<UserResponse> page = userService.listUsers(500, 0);
+
+        assertThat(page.limit()).isEqualTo(100);
+        assertThat(page.items()).hasSize(100);
+        assertThat(page.total()).isEqualTo(150L);
+    }
+
+    @Test
+    void listUsersReturnsCorrectWindowInRepositoryOrder() {
+        List<User> all = users(10);
+        when(userRepository.findAllByOrderByCreatedAtDesc()).thenReturn(all);
+        when(userRepository.count()).thenReturn(10L);
+
+        PageResponse<UserResponse> page = userService.listUsers(3, 4);
+
+        assertThat(page.offset()).isEqualTo(4);
+        assertThat(page.limit()).isEqualTo(3);
+        // Window [4, 7) in the repository's returned order (newest-first).
+        assertThat(page.items()).extracting(UserResponse::id)
+                .containsExactly(all.get(4).getId(), all.get(5).getId(), all.get(6).getId());
+    }
+
+    @Test
+    void listUsersReturnsEmptyWhenOffsetBeyondSize() {
+        when(userRepository.findAllByOrderByCreatedAtDesc()).thenReturn(users(3));
+        when(userRepository.count()).thenReturn(3L);
+
+        PageResponse<UserResponse> page = userService.listUsers(20, 50);
+
+        assertThat(page.items()).isEmpty();
+        assertThat(page.total()).isEqualTo(3L);
     }
 }

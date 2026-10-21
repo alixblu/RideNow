@@ -28,6 +28,13 @@ public class PaymentService {
         return toResponse(payment);
     }
 
+    @Transactional(readOnly = true)
+    public PaymentResponse getPaymentForTrip(UUID tripId) {
+        Payment payment = paymentRepository.findByTripId(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment for trip", tripId));
+        return toResponse(payment);
+    }
+
     /**
      * Charge a trip, exactly once per idempotency key.
      *

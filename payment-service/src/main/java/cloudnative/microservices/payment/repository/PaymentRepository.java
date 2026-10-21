@@ -18,4 +18,10 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
      * Used to reject a second charge for the same trip under a different key.
      */
     boolean existsByTripId(UUID tripId);
+
+    /**
+     * Look up the single payment for a trip (DBML: payments.trip_id is unique,
+     * so at most one). Used by the payment-lookup-by-trip endpoint.
+     */
+    Optional<Payment> findByTripId(UUID tripId);
 }
