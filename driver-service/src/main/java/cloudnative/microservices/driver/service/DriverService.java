@@ -4,6 +4,7 @@ import cloudnative.microservices.driver.client.UserServiceClient;
 import cloudnative.microservices.driver.dto.request.CreateDriverRequest;
 import cloudnative.microservices.driver.dto.request.CreateVehicleRequest;
 import cloudnative.microservices.driver.dto.response.DriverResponse;
+import cloudnative.microservices.driver.dto.response.PageResponse;
 import cloudnative.microservices.driver.dto.response.VehicleResponse;
 import cloudnative.microservices.driver.entity.Driver;
 import cloudnative.microservices.driver.entity.DriverStatus;
@@ -32,6 +33,32 @@ public class DriverService {
         Driver driver = driverRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Driver", id));
         return toResponse(driver);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<DriverResponse> listDrivers(int limit, int offset, DriverStatus statusOrNull) {
+        // Clamp the page size to a sane range and keep offset non-negative so a
+        // caller can never ask for an unbounded result or a negative window.
+        int safeLimit = limit <= 0 ? 20 : Math.min(limit, 100);
+        int safeOffset = Math.max(offset, 0);
+
+        List<Driver> all;
+        long total;
+        if (statusOrNull != null) {
+            all = driverRepository.findByStatusOrderByCreatedAtDesc(statusOrNull);
+            total = driverRepository.countByStatus(statusOrNull);
+        } else {
+            all = driverRepository.findAllByOrderByCreatedAtDesc();
+            total = driverRepository.count();
+        }
+
+        // Slice [offset, offset + limit) defensively: an offset past the end
+        // yields an empty page instead of an exception.
+        int from = Math.min(safeOffset, all.size());
+        int to = Math.min(from + safeLimit, all.size());
+        List<DriverResponse> items = all.subList(from, to).stream().map(this::toResponse).toList();
+
+        return new PageResponse<>(items, total, safeLimit, safeOffset);
     }
 
     @Transactional
