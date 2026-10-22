@@ -1,32 +1,57 @@
 /**
- * Unit tests for Task 12.2 — Admin_Console user validation and not-found.
+ * Unit tests for the Admin_Console directory-first experience.
  *
- * Tag: Feature: ridenow-frontend, Task 12.2: user validation and not-found
+ * Feature: ridenow-frontend — Admin area (directory browse + create + lookup).
  *
- * Covers two requirement clauses:
- *   - Req 8.2 (field-level validation): CreateUserScreen must block submission and
- *     surface a field-level message for each blank required field, and must reject an
- *     obviously malformed email before issuing any request. These assertions are pure
- *     client-side behaviour and need no backend.
- *   - Req 8.4 (user not-found view): UserDetailScreen must render a user-facing
- *     not-found message when a lookup yields a 404. Both admin screens resolve their
- *     user Service_Client internally via `resolveUserClient(appConfig)` (not through a
- *     prop), so we cannot inject a rejecting client. In this repo the user domain
- *     defaults to `live` mode (config/appConfig.ts: DEFAULT_MODES.user === "live") and
- *     `/api/users` maps to a real origin, so a lookup reaches `fetch`. To exercise the
- *     real 404 path deterministically with no backend, we stub the global `fetch` to
- *     return a 404; `httpClient` then normalizes it to `ApiError.notFound` and the
- *     screen shows "No user found" (Req 8.4).
+ * Covers the reworked admin surfaces (Req 8.1–8.5, 12.4, 13.1–13.3):
+ *   - Directory (primary): lists users from the live list endpoint and opens a user's
+ *     full record on selection; empty, loading, and unavailable states are handled.
+ *   - CreateUserScreen (secondary): client-side validation blocks submission and shows
+ *     a field-level message for each blank required field, and rejects an obviously
+ *     malformed email before any request (Req 8.2). On success it refetches the
+ *     directory so the new account appears.
+ *   - UserDetailScreen (secondary look-up): a 404 lookup surfaces a not-found message
+ *     (Req 8.4).
  *
- * Each test renders inside its own fresh QueryClientProvider so query/mutation state
- * never leaks between cases. Retries are disabled so an error state settles promptly.
+ * The user Service_Client is resolved internally by the screens via
+ * `resolveUserClient(appConfig)`, so we replace the whole `../../domain/user` module
+ * with a hoisted mock and drive `listUsers` / `createUser` / `getUser` directly. Each
+ * test renders inside a fresh QueryClientProvider (retries off) + MemoryRouter, and the
+ * full-console tests mount DevIdentityProvider with an admin identity set through the
+ * real switcher so the identity guard passes.
  */
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+  within,
+} from "@testing-library/react";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import type { ReactElement } from "react";
+import { ApiError } from "../../http/ApiError";
+import type { Page, UserResponse } from "../../domain/user";
+import { DevIdentityProvider } from "../../identity/DevIdentityProvider";
+import { AdminConsole } from "./AdminConsole";
 import { CreateUserScreen } from "./CreateUserScreen";
 import { UserDetailScreen } from "./UserDetailScreen";
+import { UserDirectory } from "./UserDirectory";
+
+// --- Hoisted mock of the user domain -------------------------------------------------
+// The mock client's methods are vi.fns we can configure per test. resolveUserClient
+// always returns the same object so every screen shares the configured behaviour.
+const userClientMock = vi.hoisted(() => ({
+  createUser: vi.fn(),
+  getUser: vi.fn(),
+  listUsers: vi.fn(),
+}));
+
+vi.mock("../../domain/user", () => ({
+  resolveUserClient: () => userClientMock,
+}));
 
 /** A QueryClient with retries off so error states appear without delay in tests. */
 function newQueryClient(): QueryClient {
@@ -38,32 +63,133 @@ function newQueryClient(): QueryClient {
   });
 }
 
-/** Render a screen wrapped in a brand-new QueryClientProvider (isolated per test). */
+/** Render a screen wrapped in a fresh QueryClientProvider + MemoryRouter (isolated). */
 function renderWithClient(ui: ReactElement) {
-  return render(<QueryClientProvider client={newQueryClient()}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={newQueryClient()}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
+
+/** Render the full AdminConsole with an admin identity established via the switcher. */
+function renderConsole() {
+  const result = render(
+    <QueryClientProvider client={newQueryClient()}>
+      <MemoryRouter>
+        <DevIdentityProvider>
+          <AdminConsole />
+        </DevIdentityProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  const switcher = within(screen.getByLabelText("Development identity switcher"));
+  fireEvent.change(switcher.getByLabelText("Role"), { target: { value: "admin" } });
+  fireEvent.change(switcher.getByLabelText("Identifier"), {
+    target: { value: "admin-1" },
+  });
+  fireEvent.click(switcher.getByRole("button", { name: "Set identity" }));
+  return result;
+}
+
+/** Build a UserResponse with sensible defaults. */
+function makeUser(overrides: Partial<UserResponse> = {}): UserResponse {
+  return {
+    id: "u-1",
+    cognitoSub: "sub-1",
+    email: "ada@example.com",
+    phone: null,
+    fullName: "Ada Lovelace",
+    avatarUrl: null,
+    status: "ACTIVE",
+    createdAt: "2024-01-01T00:00:00Z",
+    updatedAt: "2024-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+/** Build a one-page Page<UserResponse> around the given items. */
+function page(items: UserResponse[]): Page<UserResponse> {
+  return { items, total: items.length, limit: 20, offset: 0 };
+}
+
+beforeEach(() => {
+  userClientMock.createUser.mockReset();
+  userClientMock.getUser.mockReset();
+  userClientMock.listUsers.mockReset();
+});
 
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
 });
 
-describe("Feature: ridenow-frontend, Task 12.2: user validation and not-found", () => {
+describe("Admin area — directory, create, and lookup", () => {
+  describe("UserDirectory (Req 8.3, 13.1–13.3)", () => {
+    it("lists users and opens the full record when a row is selected", async () => {
+      const users = [
+        makeUser({ id: "u-1", fullName: "Ada Lovelace", email: "ada@example.com" }),
+        makeUser({
+          id: "u-2",
+          fullName: "Alan Turing",
+          email: "alan@example.com",
+          cognitoSub: "sub-2",
+          status: "SUSPENDED",
+        }),
+      ];
+      userClientMock.listUsers.mockResolvedValue(page(users));
+
+      renderWithClient(<UserDirectory />);
+
+      // Both users render in the directory table once the list resolves.
+      const table = await screen.findByRole("table", { name: /users/i });
+      expect(within(table).getByText("Ada Lovelace")).toBeInTheDocument();
+      expect(within(table).getByText("Alan Turing")).toBeInTheDocument();
+
+      // No detail shown until a row is selected.
+      expect(screen.queryByLabelText("User detail")).toBeNull();
+
+      // Selecting Alan opens his full record (browse-and-open, no second request).
+      fireEvent.click(within(table).getByText("Alan Turing"));
+
+      const detail = await screen.findByLabelText("User detail");
+      expect(within(detail).getByText("sub-2")).toBeInTheDocument();
+      expect(within(detail).getByText("alan@example.com")).toBeInTheDocument();
+      // Opening a row uses the already-loaded data — getUser is not called.
+      expect(userClientMock.getUser).not.toHaveBeenCalled();
+    });
+
+    it("shows the empty state when there are no users", async () => {
+      userClientMock.listUsers.mockResolvedValue(page([]));
+
+      renderWithClient(<UserDirectory />);
+
+      expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
+    });
+
+    it("shows Unavailable with a Retry action when the list endpoint is down", async () => {
+      userClientMock.listUsers.mockRejectedValue(ApiError.unavailable());
+
+      renderWithClient(<UserDirectory />);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(/unavailable/i);
+      expect(within(alert).getByRole("button", { name: /retry/i })).toBeInTheDocument();
+    });
+  });
+
   describe("CreateUserScreen field-level validation (Req 8.2)", () => {
     it("blocks submission and shows a message for each blank required field", () => {
       renderWithClient(<CreateUserScreen />);
 
-      // Submit the form with every required field left blank.
       fireEvent.submit(screen.getByRole("form", { name: /create user/i }));
 
-      // A field-level alert is shown for each required field.
-      const alerts = screen.getAllByRole("alert");
-      const messages = alerts.map((a) => a.textContent ?? "");
+      const messages = screen.getAllByRole("alert").map((a) => a.textContent ?? "");
       expect(messages).toContain("Cognito sub is required.");
       expect(messages).toContain("Email is required.");
       expect(messages).toContain("Full name is required.");
 
-      // Submission was blocked: no request issued, so the success view is absent.
+      // Submission was blocked: no request issued, no success view.
+      expect(userClientMock.createUser).not.toHaveBeenCalled();
       expect(screen.queryByText("User created.")).toBeNull();
       expect(screen.queryByRole("status")).toBeNull();
     });
@@ -71,7 +197,6 @@ describe("Feature: ridenow-frontend, Task 12.2: user validation and not-found", 
     it("rejects an invalid email with a field-level 'valid email' message", () => {
       renderWithClient(<CreateUserScreen />);
 
-      // Fill the other required fields validly, but give a malformed email.
       fireEvent.change(screen.getByLabelText(/cognito sub/i), {
         target: { value: "sub-123" },
       });
@@ -84,57 +209,84 @@ describe("Feature: ridenow-frontend, Task 12.2: user validation and not-found", 
 
       fireEvent.submit(screen.getByRole("form", { name: /create user/i }));
 
-      // Only the email field should report an error, and it must be the format message.
-      const alerts = screen.getAllByRole("alert");
-      const messages = alerts.map((a) => a.textContent ?? "");
+      const messages = screen.getAllByRole("alert").map((a) => a.textContent ?? "");
       expect(messages).toContain("Enter a valid email address.");
       expect(messages).not.toContain("Cognito sub is required.");
       expect(messages).not.toContain("Full name is required.");
 
-      // Still blocked — no success view.
+      expect(userClientMock.createUser).not.toHaveBeenCalled();
       expect(screen.queryByText("User created.")).toBeNull();
+    });
+  });
+
+  describe("Create success refetches the directory (Req 8.1)", () => {
+    it("creates an account from the console and shows it in the directory", async () => {
+      const created = makeUser({
+        id: "u-9",
+        fullName: "Grace Hopper",
+        email: "grace@example.com",
+        cognitoSub: "sub-9",
+      });
+      // Directory is empty first; after create it returns the new account.
+      userClientMock.listUsers
+        .mockResolvedValueOnce(page([]))
+        .mockResolvedValue(page([created]));
+      userClientMock.createUser.mockResolvedValue(created);
+
+      renderConsole();
+
+      // Directory is the primary surface; it starts empty.
+      expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
+
+      // Go to the secondary create action and fill valid fields.
+      fireEvent.click(screen.getByRole("button", { name: "New account" }));
+
+      fireEvent.change(screen.getByLabelText(/cognito sub/i), {
+        target: { value: "sub-9" },
+      });
+      fireEvent.change(screen.getByLabelText(/^email/i), {
+        target: { value: "grace@example.com" },
+      });
+      fireEvent.change(screen.getByLabelText(/full name/i), {
+        target: { value: "Grace Hopper" },
+      });
+
+      fireEvent.submit(screen.getByRole("form", { name: /create user/i }));
+
+      // The create request was issued with the trimmed required fields.
+      await waitFor(() => {
+        expect(userClientMock.createUser).toHaveBeenCalledWith({
+          cognitoSub: "sub-9",
+          email: "grace@example.com",
+          fullName: "Grace Hopper",
+        });
+      });
+
+      // Back on the directory, the refetched list now includes the new account.
+      fireEvent.click(screen.getByRole("button", { name: "Directory" }));
+      const table = await screen.findByRole("table", { name: /users/i });
+      expect(within(table).getByText("Grace Hopper")).toBeInTheDocument();
+      // The directory was refetched: two list calls (initial empty + post-create).
+      expect(userClientMock.listUsers.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
   describe("UserDetailScreen not-found view (Req 8.4)", () => {
     it("shows the not-found message when a lookup yields a 404", async () => {
-      // Stub fetch so the live user client's getUser resolves to a 404, which the
-      // request layer normalizes to ApiError.notFound. This drives the real 404 path
-      // deterministically with no backend.
-      const notFoundBody = JSON.stringify({
-        status: 404,
-        error: "Not Found",
-        message: "User not found.",
-      });
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(() =>
-          Promise.resolve(
-            new Response(notFoundBody, {
-              status: 404,
-              headers: { "Content-Type": "application/json" },
-            }),
-          ),
-        ),
-      );
+      userClientMock.getUser.mockRejectedValue(ApiError.notFound());
 
       renderWithClient(<UserDetailScreen />);
 
-      // Type an unknown id and submit the lookup.
       fireEvent.change(screen.getByLabelText(/user id/i), {
-        target: { value: "unknown-id-" + Math.random().toString(16).slice(2) },
+        target: { value: "unknown-id" },
       });
       fireEvent.submit(screen.getByRole("form", { name: /look up user/i }));
 
-      // The not-found message appears once the query settles.
       await waitFor(() => {
-        const alerts = screen.getAllByRole("alert");
-        const messages = alerts.map((a) => a.textContent ?? "");
+        const messages = screen.getAllByRole("alert").map((a) => a.textContent ?? "");
         expect(messages.some((m) => /no user found/i.test(m))).toBe(true);
       });
-
-      // The lookup was attempted (fetch was called).
-      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(userClientMock.getUser).toHaveBeenCalledWith("unknown-id");
     });
   });
 });

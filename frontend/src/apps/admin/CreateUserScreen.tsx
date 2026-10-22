@@ -8,12 +8,14 @@
  * validation passes is the create request issued (Req 8.2).
  *
  * The request runs through the user Service_Client via TanStack Query `useMutation`. On
- * success the created user is rendered through the shared `UserDetail` (Req 8.1).
- * Confined to create only (Req 8.5). Restyled on the Tailwind kit; the form keeps
- * `aria-label="Create user"` and its field labels.
+ * success the created user is rendered through the shared `UserDetail` (Req 8.1), a
+ * success toast is shown, and the user directory query is invalidated so the new
+ * account appears in the primary list. This is the SECONDARY admin action — the
+ * primary surface is the directory. Confined to create only (Req 8.5). Restyled on the
+ * Tailwind kit; the form keeps `aria-label="Create user"` and its field labels.
  */
 import { useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2 } from "lucide-react";
 import { resolveUserClient } from "../../domain/user";
 import type { CreateUserRequest, UserResponse } from "../../domain/user";
@@ -53,6 +55,7 @@ function validate(form: { cognitoSub: string; email: string; fullName: string })
 export function CreateUserScreen() {
   const client = useMemo(() => resolveUserClient(appConfig), []);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [cognitoSub, setCognitoSub] = useState("");
   const [email, setEmail] = useState("");
@@ -63,7 +66,11 @@ export function CreateUserScreen() {
 
   const mutation = useMutation<UserResponse, Error, CreateUserRequest>({
     mutationFn: (req) => client.createUser(req),
-    onSuccess: () => toast("User created.", "success"),
+    onSuccess: () => {
+      toast("User created.", "success");
+      // Refetch the directory so the new account shows up in the primary list.
+      void queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
   });
 
   const errorMessage =
