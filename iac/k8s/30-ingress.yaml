@@ -1,0 +1,49 @@
+# Ingress: one internet-facing ALB fronting all four services by path.
+#
+# Requires the AWS Load Balancer Controller installed in the cluster and using
+# the AlbControllerRoleArn exported by stack 07-eks-addons. The controller reads
+# these annotations and provisions an ALB in the PUBLIC subnets (discovered via
+# the kubernetes.io/role/elb subnet tags set in the network stack).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ridenow
+  namespace: ridenow
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/users
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8081
+          - path: /api/drivers
+            pathType: Prefix
+            backend:
+              service:
+                name: driver-service
+                port:
+                  number: 8080
+          - path: /api/trips
+            pathType: Prefix
+            backend:
+              service:
+                name: trip-service
+                port:
+                  number: 8082
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 8083

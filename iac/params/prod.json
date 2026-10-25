@@ -1,0 +1,44 @@
+{
+  "01-iam": {
+    "Environment": "prod"
+  },
+  "02-network": {
+    "Environment": "prod",
+    "VpcCidr": "10.30.0.0/16",
+    "AzCount": "3",
+    "SingleNatGateway": "false"
+  },
+  "03-ecr": {
+    "Environment": "prod",
+    "MaxImageCount": "50",
+    "UntaggedExpireDays": "14"
+  },
+  "04-data": {
+    "Environment": "prod",
+    "DbInstanceClass": "db.r6g.large",
+    "DbAllocatedStorage": "100",
+    "MultiAz": "true",
+    "BackupRetentionDays": "30",
+    "DeletionProtection": "true",
+    "EngineVersion": "17.4"
+  },
+  "05-messaging": {
+    "Environment": "prod",
+    "EnableMessaging": "true",
+    "EnableRedis": "true",
+    "RedisNodeType": "cache.r6g.large"
+  },
+  "06-eks-cluster": {
+    "Environment": "prod",
+    "KubernetesVersion": "1.31",
+    "NodeInstanceType": "m6i.large",
+    "NodeMinSize": "3",
+    "NodeDesiredSize": "4",
+    "NodeMaxSize": "12"
+  },
+  "07-eks-addons": {
+    "Environment": "prod",
+    "EnableAddons": "true",
+    "OidcProviderId": ""
+  }
+}

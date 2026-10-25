@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow messaging layer (05) - PROVISIONED AHEAD OF ITS CONSUMERS, GATED OFF
+  BY DEFAULT. SQS work queue + dead-letter queue (the cloud home of the outbox
+  pattern), an EventBridge custom bus (trip events fan-out), and an ElastiCache
+  Redis replication group (driver GEO / live state). No RideNow service consumes
+  these yet (matching-service and notification-worker are not built), so every
+  resource sits behind a condition and dev leaves them OFF. Turn a capability on
+  only when the feature that uses it lands.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+  EnableMessaging:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Create the SQS queues and EventBridge bus.
+
+  EnableRedis:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Create the ElastiCache Redis replication group.
+
+  RedisNodeType:
+    Type: String
+    Default: cache.t4g.micro
+    Description: ElastiCache node type (sized per environment).
+
+Conditions:
+  MessagingOn: !Equals [!Ref EnableMessaging, "true"]
+  RedisOn: !Equals [!Ref EnableRedis, "true"]
+
+Resources:
+  # ---- SQS: notification work queue + DLQ ----------------------------------
+  NotificationDlq:
+    Type: AWS::SQS::Queue
+    Condition: MessagingOn
+    Properties:
+      QueueName: !Sub "ridenow-${Environment}-notifications-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Condition: MessagingOn
+    Properties:
+      QueueName: !Sub "ridenow-${Environment}-notifications"
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDlq.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- EventBridge: trip events fan-out bus --------------------------------
+  TripEventBus:
+    Type: AWS::Events::EventBus
+    Condition: MessagingOn
+    Properties:
+      Name: !Sub "ridenow-${Environment}-events"
+
+  # ---- ElastiCache Redis (driver GEO / live state) -------------------------
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Condition: RedisOn
+    Properties:
+      CacheSubnetGroupName: !Sub "ridenow-${Environment}-redis-subnets"
+      Description: !Sub "ridenow-${Environment} Redis private subnets"
+      SubnetIds: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: RedisOn
+    Properties:
+      GroupDescription: !Sub "ridenow-${Environment} Redis (private)"
+      VpcId: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-network-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !ImportValue
+            Fn::Sub: "ridenow-${Environment}-network-NodeSecurityGroupId"
+          Description: Redis 6379 from EKS nodes only.
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-redis-sg"
+
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Condition: RedisOn
+    Properties:
+      ReplicationGroupId: !Sub "ridenow-${Environment}-redis"
+      ReplicationGroupDescription: !Sub "ridenow-${Environment} driver GEO / live state"
+      Engine: redis
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheClusters: 2
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  NotificationQueueUrl:
+    Condition: MessagingOn
+    Value: !Ref NotificationQueue
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-NotificationQueueUrl"
+
+  NotificationQueueArn:
+    Condition: MessagingOn
+    Value: !GetAtt NotificationQueue.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-NotificationQueueArn"
+
+  TripEventBusName:
+    Condition: MessagingOn
+    Value: !Ref TripEventBus
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusName"
+
+  RedisPrimaryEndpoint:
+    Condition: RedisOn
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-RedisPrimaryEndpoint"

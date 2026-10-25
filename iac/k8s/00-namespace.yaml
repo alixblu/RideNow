@@ -1,0 +1,9 @@
+# RideNow application namespace.
+#
+# All service workloads live here. Apply this first.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ridenow
+  labels:
+    app.kubernetes.io/part-of: ridenow

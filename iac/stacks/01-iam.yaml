@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow IAM layer (01). Roles and policies for the EKS cluster and its managed
+  node group, plus a scoped application policy (ECR pull, Secrets Manager read,
+  and gated SQS/EventBridge access) that IRSA roles attach to later. Exported
+  role ARNs are imported by the EKS cluster stack (06).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment; used in export names and resource tags.
+
+Resources:
+  # ---- EKS control-plane role ----------------------------------------------
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-eks-cluster-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- EKS managed node group role -----------------------------------------
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-eks-node-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        # Broad ECR read on nodes is standard so the kubelet can pull any image;
+        # fine-grained, app-level ECR access is on the scoped policy below.
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- Scoped application policy (attached by IRSA roles in 07) -------------
+  # Least privilege: ECR limited to ridenow/* repos, Secrets to ridenow-<env>-*,
+  # messaging to ridenow-<env>-* queues/buses. No resource wildcards where a
+  # scoped ARN is possible.
+  AppAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-app-access"
+      Description: >
+        Scoped runtime access for RideNow pods via IRSA: pull images, read DB
+        secrets, and (where present) use the environment's queues and event bus.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ECR auth token is account-wide by API design (no resource scoping).
+          - Sid: EcrAuthToken
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Sid: EcrPullRideNow
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: !Sub "arn:aws:ecr:*:${AWS::AccountId}:repository/ridenow/*"
+          - Sid: ReadRideNowSecrets
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource: !Sub "arn:aws:secretsmanager:*:${AWS::AccountId}:secret:ridenow-${Environment}-*"
+          - Sid: UseRideNowQueues
+            Effect: Allow
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:GetQueueUrl
+            Resource: !Sub "arn:aws:sqs:*:${AWS::AccountId}:ridenow-${Environment}-*"
+          - Sid: UseRideNowEventBus
+            Effect: Allow
+            Action: events:PutEvents
+            Resource: !Sub "arn:aws:events:*:${AWS::AccountId}:event-bus/ridenow-${Environment}-*"
+
+Outputs:
+  ClusterRoleArn:
+    Value: !GetAtt ClusterRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-ClusterRoleArn"
+
+  NodeRoleArn:
+    Value: !GetAtt NodeRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-NodeRoleArn"
+
+  AppAccessPolicyArn:
+    Value: !Ref AppAccessPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-AppAccessPolicyArn"

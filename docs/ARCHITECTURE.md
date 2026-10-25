@@ -143,18 +143,21 @@ This refines the proposal's roadmap around the local-first idea. Phases map to
 `LEARNING_PATH.md` stages.
 
 1. **Working two-service system, HTTP only.** user + driver, each with its own DB, talking
-   over HTTP. (You are here - Stages 1-4.)
+   over HTTP. (Done - Stages 1-4.)
 2. **Trip lifecycle in trip-service.** A state machine (REQUESTED -> ... -> COMPLETED),
-   transactions, validation. Still just HTTP + Postgres.
+   transactions, validation. Still just HTTP + Postgres. (Done - trip-service is built.)
 3. **The concurrency lab.** Two drivers accept one ride; prove exactly one wins using
    optimistic/pessimistic locking. Pure Postgres + Java. This is the project's signature
-   problem and needs NO queue, NO Redis, NO cloud.
+   problem and needs NO queue, NO Redis, NO cloud. (Done - optimistic lock built & proven.)
 4. **Matching, the boring way.** matching-service finds a driver with a Postgres query.
-   Feel why that is slow/awkward -> THEN introduce Redis GEO as the fix.
+   Feel why that is slow/awkward -> THEN introduce Redis GEO as the fix. (Next up -
+   matching-service does not exist yet.)
 5. **Async notifications.** Add the outbox table + poller (Postgres only). Feel its limits
-   -> THEN (in the cloud phase) publish from the outbox to SQS, with a worker + DLQ.
+   -> THEN (in the cloud phase) publish from the outbox to SQS, with a worker + DLQ. (Not
+   started - notification-worker does not exist yet.)
 6. **Payment + failure handling.** Payment can fail; handle it with explicit state and
-   compensation (the Saga idea) instead of a cross-service transaction.
+   compensation (the Saga idea) instead of a cross-service transaction. (Done -
+   payment-service is built with idempotency and explicit states.)
 7. **Events.** Where a direct call is too tight a coupling, publish an event. Local first,
    EventBridge later.
 8. **Containerize** every service (Docker). The system runs as images.
@@ -186,10 +189,12 @@ fix that before adding anything new.
 
 ## 7. What this means for the next step
 
-You are at the end of the HTTP-only two-service system. The next concept that teaches the
-most, with zero new infrastructure, is the **trip lifecycle + the concurrency lab** - the
-heart of the whole project - all on Postgres you already run. Messaging, Redis, and
-Kubernetes come after, each when a feature finally needs it.
+The HTTP-only two-service system, the trip lifecycle, the concurrency lab (the heart of the
+whole project), and payment with explicit states are all built - on Postgres you already
+run. The next concept that teaches the most is **matching**: start with the boring Postgres
+query in a new matching-service, feel its limits, then earn Redis GEO as the fix. Async
+notifications (outbox, then SQS), the remaining Redis roles, and Kubernetes come after, each
+when a feature finally needs it.
 
 
 ---

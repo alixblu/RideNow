@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow compute layer (06). EKS control plane with KMS secrets envelope
+  encryption and a managed node group on the PRIVATE subnets. OIDC is enabled so
+  pods assume scoped IRSA roles (07) instead of relying on node-wide IAM. Roles
+  come from the IAM stack (01); subnets and the node SG come from the network
+  stack (02).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+  KubernetesVersion:
+    Type: String
+    Default: "1.31"
+    Description: EKS Kubernetes version.
+
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: Worker node EC2 instance type (sized per environment).
+
+  NodeMinSize:
+    Type: Number
+    Default: 1
+  NodeDesiredSize:
+    Type: Number
+    Default: 2
+  NodeMaxSize:
+    Type: Number
+    Default: 3
+
+Resources:
+  # ---- KMS key for Kubernetes secrets envelope encryption ------------------
+  ClusterKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "ridenow-${Environment} EKS secrets encryption key"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  Cluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Sub "ridenow-${Environment}"
+      Version: !Ref KubernetesVersion
+      RoleArn: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-ClusterRoleArn"
+      ResourcesVpcConfig:
+        # Control plane ENIs land in the private subnets; endpoint is reachable
+        # both privately (pods) and publicly (kubectl from an operator laptop).
+        SubnetIds: !Split
+          - ","
+          - !ImportValue
+            Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+        SecurityGroupIds:
+          - !ImportValue
+            Fn::Sub: "ridenow-${Environment}-network-NodeSecurityGroupId"
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+      EncryptionConfig:
+        - Provider:
+            KeyArn: !GetAtt ClusterKmsKey.Arn
+          Resources:
+            - secrets
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodegroupName: !Sub "ridenow-${Environment}-nodes"
+      NodeRole: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-NodeRoleArn"
+      # Workers run in the private subnets only; egress is via the NAT gateways.
+      Subnets: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      ScalingConfig:
+        MinSize: !Ref NodeMinSize
+        DesiredSize: !Ref NodeDesiredSize
+        MaxSize: !Ref NodeMaxSize
+      Tags:
+        Environment: !Ref Environment
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-ClusterName"
+
+  ClusterEndpoint:
+    Value: !GetAtt Cluster.Endpoint
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-ClusterEndpoint"
+
+  # Full OIDC issuer URL, e.g. https://oidc.eks.<region>.amazonaws.com/id/XXXX
+  OidcIssuerUrl:
+    Value: !GetAtt Cluster.OpenIdConnectIssuerUrl
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-OidcIssuerUrl"

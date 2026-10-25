@@ -1,0 +1,209 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow registry layer (03). One ECR repository per built service. Repository
+  names are EXACTLY ridenow/<service> to match scripts/push-to-ecr.sh
+  (SERVICES array) and the EKS image references in k8s/. Scan-on-push, KMS
+  encryption, and a lifecycle policy that prunes old/untagged images.
+
+  NOTE: ECR repositories are account/region-global, not per-environment. This
+  stack is deployed ONCE (e.g. with the dev run); all environments pull the same
+  images. The Environment parameter only tags the stack and names the exports so
+  other stacks can import consistently.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Used in export names and tags. ECR repos themselves are shared.
+
+  MaxImageCount:
+    Type: Number
+    Default: 20
+    Description: Keep at most this many tagged images per repository.
+
+  UntaggedExpireDays:
+    Type: Number
+    Default: 7
+    Description: Expire untagged images after this many days.
+
+Resources:
+  UserServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ridenow/user-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedExpireDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxImageCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  DriverServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ridenow/driver-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedExpireDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxImageCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  TripServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ridenow/trip-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedExpireDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxImageCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  PaymentServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ridenow/payment-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedExpireDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxImageCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  UserServiceRepoUri:
+    Value: !GetAtt UserServiceRepo.RepositoryUri
+    Export:
+      Name: !Sub "ridenow-${Environment}-ecr-UserServiceRepoUri"
+
+  DriverServiceRepoUri:
+    Value: !GetAtt DriverServiceRepo.RepositoryUri
+    Export:
+      Name: !Sub "ridenow-${Environment}-ecr-DriverServiceRepoUri"
+
+  TripServiceRepoUri:
+    Value: !GetAtt TripServiceRepo.RepositoryUri
+    Export:
+      Name: !Sub "ridenow-${Environment}-ecr-TripServiceRepoUri"
+
+  PaymentServiceRepoUri:
+    Value: !GetAtt PaymentServiceRepo.RepositoryUri
+    Export:
+      Name: !Sub "ridenow-${Environment}-ecr-PaymentServiceRepoUri"

@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow EKS add-on IAM layer (07), GATED. Registers the cluster OIDC provider
+  as an IAM identity provider, then creates IRSA roles that in-cluster add-ons
+  assume via their Kubernetes service accounts: the AWS Load Balancer Controller
+  (fronts Ingress with an ALB) and External Secrets (syncs the RDS Secrets
+  Manager secrets into Kubernetes Secrets the pods mount). Trust is scoped to the
+  cluster OIDC provider and the specific service account for each add-on.
+
+  Depends on the EKS cluster stack (06) for the OIDC issuer URL.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+  EnableAddons:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Create the OIDC provider and add-on IRSA roles.
+
+  # The OIDC issuer ID is the last path segment of the issuer URL exported by
+  # stack 06 (OIDC provider ARN/URL cannot be derived purely inside CFN, so the
+  # deploy script passes it in). Example: EXAMPLED539D4633E53DE1B716D3041E.
+  OidcProviderId:
+    Type: String
+    Default: ""
+    Description: OIDC issuer id (last segment of the cluster OIDC issuer URL).
+
+  OidcThumbprint:
+    Type: String
+    Default: "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+    Description: Root CA thumbprint for the EKS OIDC endpoint.
+
+Conditions:
+  AddonsOn: !And
+    - !Equals [!Ref EnableAddons, "true"]
+    - !Not [!Equals [!Ref OidcProviderId, ""]]
+
+Resources:
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: AddonsOn
+    Properties:
+      Url: !Sub "https://oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - !Ref OidcThumbprint
+
+  # ---- AWS Load Balancer Controller IRSA role ------------------------------
+  AlbControllerRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-alb-controller"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- External Secrets IRSA role (reads RideNow RDS secrets) --------------
+  ExternalSecretsRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-external-secrets"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:external-secrets:external-secrets",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      Policies:
+        - PolicyName: read-ridenow-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub "arn:aws:secretsmanager:*:${AWS::AccountId}:secret:ridenow-${Environment}-*"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  AlbControllerRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt AlbControllerRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-AlbControllerRoleArn"
+
+  ExternalSecretsRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt ExternalSecretsRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-ExternalSecretsRoleArn"

@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow data layer (04). One encrypted PostgreSQL RDS instance PER SERVICE
+  (database-per-service rule: four isolated databases, no shared instance, no
+  cross-service access). Master credentials are generated and stored by RDS in
+  Secrets Manager - no plaintext password ever appears here. Instances live in
+  the private subnets and are reachable only from the EKS node SG (both imported
+  from the network stack, 02).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    Description: RDS instance class (sized per environment).
+
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage in GiB per instance.
+
+  MultiAz:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Multi-AZ standby for failover (true in staging/prod).
+
+  BackupRetentionDays:
+    Type: Number
+    Default: 1
+    Description: Automated backup retention window in days.
+
+  DeletionProtection:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Block accidental deletion (true in staging/prod).
+
+  EngineVersion:
+    Type: String
+    Default: "17.4"
+    Description: PostgreSQL engine version (match local Postgres 17).
+
+Resources:
+  # ---- Shared subnet group (private subnets from the network stack) --------
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "ridenow-${Environment} RDS private subnets"
+      SubnetIds: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- KMS key for encryption at rest (shared across the four instances) ---
+  DbKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "ridenow-${Environment} RDS encryption key"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  DbKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/ridenow-${Environment}-rds"
+      TargetKeyId: !Ref DbKmsKey
+
+  # ---- user-service database ----------------------------------------------
+  UserDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-user-db"
+      DBName: user_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: app_user
+      # RDS generates the password and manages it in Secrets Manager.
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-user-db"
+        - Key: Service
+          Value: user-service
+
+  # ---- driver-service database --------------------------------------------
+  DriverDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-driver-db"
+      DBName: driver_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: driver
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-driver-db"
+        - Key: Service
+          Value: driver-service
+
+  # ---- trip-service database ----------------------------------------------
+  TripDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-trip-db"
+      DBName: trip_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: trip
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-trip-db"
+        - Key: Service
+          Value: trip-service
+
+  # ---- payment-service database -------------------------------------------
+  PaymentDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-payment-db"
+      DBName: payment_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: payment
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-payment-db"
+        - Key: Service
+          Value: payment-service
+
+Outputs:
+  UserDbEndpoint:
+    Value: !GetAtt UserDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-UserDbEndpoint"
+  UserDbSecretArn:
+    Value: !GetAtt UserDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-UserDbSecretArn"
+
+  DriverDbEndpoint:
+    Value: !GetAtt DriverDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-DriverDbEndpoint"
+  DriverDbSecretArn:
+    Value: !GetAtt DriverDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-DriverDbSecretArn"
+
+  TripDbEndpoint:
+    Value: !GetAtt TripDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-TripDbEndpoint"
+  TripDbSecretArn:
+    Value: !GetAtt TripDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-TripDbSecretArn"
+
+  PaymentDbEndpoint:
+    Value: !GetAtt PaymentDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-PaymentDbEndpoint"
+  PaymentDbSecretArn:
+    Value: !GetAtt PaymentDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-PaymentDbSecretArn"

@@ -1,0 +1,411 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow network layer (02). VPC with public + private subnets across multiple
+  AZs, Internet Gateway, NAT gateway(s), route tables, and base security groups.
+  Exports are consumed by the data (04), messaging (05), and EKS (06) stacks.
+
+# ---------------------------------------------------------------------------
+# Parameters (supplied per environment via params/<env>.json)
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment; used in export names and resource tags.
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC.
+
+  AzCount:
+    Type: Number
+    AllowedValues: [2, 3]
+    Default: 2
+    Description: Number of Availability Zones to spread subnets across.
+
+  SingleNatGateway:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: >
+      true  = one shared NAT gateway (cheaper, dev).
+      false = one NAT gateway per AZ (resilient, prod).
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  UseThreeAzs: !Equals [!Ref AzCount, 3]
+  OneNatGateway: !Equals [!Ref SingleNatGateway, "true"]
+  # Second/third NAT only created when NOT sharing a single NAT.
+  CreateNat2: !Not [!Condition OneNatGateway]
+  CreateNat3: !And
+    - !Not [!Condition OneNatGateway]
+    - !Condition UseThreeAzs
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-vpc"
+        - Key: Environment
+          Value: !Ref Environment
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-igw"
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ---- Public subnets (one per AZ) -----------------------------------------
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-public-1"
+        # EKS discovers public subnets for internet-facing load balancers.
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-public-2"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: UseThreeAzs
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-public-3"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  # ---- Private subnets (one per AZ) ----------------------------------------
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-1"
+        # EKS discovers private subnets for internal load balancers.
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [4, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-2"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: UseThreeAzs
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Select [5, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-3"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  # ---- Public routing ------------------------------------------------------
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-public-rt"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseThreeAzs
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  # ---- NAT gateways (egress for private subnets) ---------------------------
+  NatEip1:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-eip-1"
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip1.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-1"
+
+  NatEip2:
+    Type: AWS::EC2::EIP
+    Condition: CreateNat2
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-eip-2"
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNat2
+    Properties:
+      AllocationId: !GetAtt NatEip2.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-2"
+
+  NatEip3:
+    Type: AWS::EC2::EIP
+    Condition: CreateNat3
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-eip-3"
+
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNat3
+    Properties:
+      AllocationId: !GetAtt NatEip3.AllocationId
+      SubnetId: !Ref PublicSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-nat-3"
+
+  # ---- Private routing (each private subnet -> its AZ's NAT, or the shared one)
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-rt-1"
+
+  PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-rt-2"
+
+  PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      # Shared single NAT -> NatGateway1; per-AZ NAT -> NatGateway2.
+      NatGatewayId: !If [OneNatGateway, !Ref NatGateway1, !Ref NatGateway2]
+
+  PrivateSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Condition: UseThreeAzs
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-private-rt-3"
+
+  PrivateDefaultRoute3:
+    Type: AWS::EC2::Route
+    Condition: UseThreeAzs
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [OneNatGateway, !Ref NatGateway1, !Ref NatGateway3]
+
+  PrivateSubnet3RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseThreeAzs
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable3
+
+  # ---- Security groups -----------------------------------------------------
+  # Shared SG for EKS worker nodes / application pods.
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "ridenow-${Environment} EKS nodes / application pods"
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all egress (NAT to internet, RDS, etc.)
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-node-sg"
+
+  # Nodes may talk to each other freely (pod-to-pod, kubelet, etc.).
+  NodeSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref NodeSecurityGroup
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      Description: Allow all traffic between nodes in this SG.
+
+  # DB SG: Postgres reachable ONLY from the node SG. No public access, ever.
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "ridenow-${Environment} RDS PostgreSQL (private)"
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all egress.
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-db-sg"
+
+  DbIngressFromNodes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      Description: Postgres 5432 from EKS nodes only.
+
+# ---------------------------------------------------------------------------
+# Outputs (cross-stack exports: ridenow-<env>-network-<resource>)
+# ---------------------------------------------------------------------------
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-VpcId"
+
+  VpcCidr:
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-VpcCidr"
+
+  PublicSubnetIds:
+    Description: Comma-separated public subnet ids.
+    Value: !If
+      - UseThreeAzs
+      - !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+      - !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-PublicSubnetIds"
+
+  PrivateSubnetIds:
+    Description: Comma-separated private subnet ids (workloads + data).
+    Value: !If
+      - UseThreeAzs
+      - !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+      - !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-PrivateSubnetIds"
+
+  NodeSecurityGroupId:
+    Value: !Ref NodeSecurityGroup
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-NodeSecurityGroupId"
+
+  DbSecurityGroupId:
+    Value: !Ref DbSecurityGroup
+    Export:
+      Name: !Sub "ridenow-${Environment}-network-DbSecurityGroupId"
