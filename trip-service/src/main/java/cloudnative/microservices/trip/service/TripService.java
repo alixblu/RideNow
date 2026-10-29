@@ -7,6 +7,7 @@ import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.Trip;
 import cloudnative.microservices.trip.entity.TripOffer;
 import cloudnative.microservices.trip.entity.TripStatus;
+import cloudnative.microservices.trip.event.TripEvents;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.repository.TripOfferRepository;
 import cloudnative.microservices.trip.repository.TripRepository;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,7 @@ public class TripService {
 
     private final TripRepository tripRepository;
     private final TripOfferRepository tripOfferRepository;
+    private final ApplicationEventPublisher events;
 
     /**
      * Creates a trip already in SEARCHING, ready to be offered to drivers.
@@ -58,7 +61,37 @@ public class TripService {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
         trip.acceptBy(driverId, Instant.now());
+        events.publishEvent(TripEvents.driverAccepted(trip));
         return toResponse(trip); // flushed on commit; version checked there
+    }
+
+    /** Driver has reached the pickup point. Legal only from DRIVER_ASSIGNED. */
+    @Transactional
+    public TripResponse arriveTrip(UUID tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
+        trip.arrive(Instant.now());
+        events.publishEvent(TripEvents.driverArrived(trip));
+        return toResponse(trip);
+    }
+
+    /** Passenger is aboard; the trip begins. Legal only from DRIVER_ARRIVED. */
+    @Transactional
+    public TripResponse startTrip(UUID tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
+        trip.start(Instant.now());
+        return toResponse(trip);
+    }
+
+    /** Trip is driven and done. Legal only from IN_PROGRESS. */
+    @Transactional
+    public TripResponse completeTrip(UUID tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
+        trip.complete(Instant.now());
+        events.publishEvent(TripEvents.tripCompleted(trip));
+        return toResponse(trip);
     }
 
     @Transactional(readOnly = true)
@@ -111,6 +144,7 @@ public class TripService {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
         trip.cancel(reason, Instant.now());
+        events.publishEvent(TripEvents.tripCancelled(trip));
         return toResponse(trip);
     }
 

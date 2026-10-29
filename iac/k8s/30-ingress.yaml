@@ -47,3 +47,13 @@ spec:
                 name: payment-service
                 port:
                   number: 8083
+          # matching-service is internal (ClusterIP), reached in-cluster by other
+          # services - not exposed publicly by default. Uncomment to make its API
+          # reachable through the ALB (e.g. for testing the match endpoint).
+          # - path: /api/matching
+          #   pathType: Prefix
+          #   backend:
+          #     service:
+          #       name: matching-service
+          #       port:
+          #         number: 8085

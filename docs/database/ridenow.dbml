@@ -213,6 +213,44 @@ Table trip_offers {
 
 
 // ============================================================
+// MATCHING SERVICE
+// ============================================================
+//
+// matching-service owns the matching decision and its state. It persists the
+// offers it makes (trip_offers, above) and - for the LOCAL-FIRST "boring Postgres
+// nearby query" step - a table of candidate driver positions it has been told
+// about via an explicit handoff from driver-service.
+//
+// IMPORTANT: live driver location is PRIMARILY Redis state owned by
+// driver-service (see note at the top of this file). This table is NOT that
+// primary store: it is matching-service's own working copy, fed by driver-service
+// pushing updates (never by reading driver-service's Redis/DB directly). Once
+// matching moves to Redis GEO, this table becomes a fallback/debugging aid; the
+// GEO index (Redis) is the query path. Positions are scalar values, not FKs.
+
+Table matching_driver_positions {
+  // The driver this position belongs to (logical reference to Driver Service).
+  driver_id uuid [primary key]
+
+  vehicle_type varchar [not null, note: '''
+    MOTORBIKE,
+    CAR
+  ''']
+
+  lat decimal(9,6) [not null]
+  lng decimal(9,6) [not null]
+
+  // When driver-service last pushed this position; stale rows can be pruned.
+  reported_at timestamp [not null]
+
+  indexes {
+    vehicle_type
+    reported_at
+  }
+}
+
+
+// ============================================================
 // PAYMENT SERVICE
 // ============================================================
 

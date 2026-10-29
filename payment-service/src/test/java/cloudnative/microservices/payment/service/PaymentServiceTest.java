@@ -36,6 +36,7 @@ class PaymentServiceTest {
 
     @Mock private PaymentRepository paymentRepository;
     @Mock private PaymentGateway paymentGateway;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @InjectMocks private PaymentService paymentService;
 
@@ -58,6 +59,12 @@ class PaymentServiceTest {
         assertThat(result.status()).isEqualTo(PaymentStatus.PAID);
         assertThat(result.paidAt()).isNotNull();
         verify(paymentRepository).save(any(Payment.class));
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.payment.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.payment.event.DomainEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.payment.event.PaymentEvents.PAYMENT_SUCCEEDED);
     }
 
     @Test
@@ -73,9 +80,10 @@ class PaymentServiceTest {
 
         assertThat(result.id()).isEqualTo(original.getId());
         assertThat(result.status()).isEqualTo(PaymentStatus.PAID);
-        // No second charge, no second save.
+        // No second charge, no second save, and no event on an idempotent replay.
         verify(paymentGateway, never()).charge(any(), any(), anyString());
         verify(paymentRepository, never()).save(any(Payment.class));
+        verify(events, never()).publishEvent(any());
     }
 
     @Test
@@ -92,6 +100,12 @@ class PaymentServiceTest {
         assertThat(result.status()).isEqualTo(PaymentStatus.FAILED);
         assertThat(result.failureReason()).isEqualTo("Insufficient funds");
         assertThat(result.failedAt()).isNotNull();
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.payment.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.payment.event.DomainEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.payment.event.PaymentEvents.PAYMENT_FAILED);
     }
 
     @Test

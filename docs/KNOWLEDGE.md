@@ -7,8 +7,8 @@ short description, and how it applies in RideNow.
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Microservices | Small, independently deployable services, each owning its own data | user / driver / trip (+ matching, payment, notification-worker later), each its own Spring Boot app and its own Postgres DB |
-| Database-per-service | Each service owns its database; no shared tables, no cross-service joins | driver-db (5433), user-db (5434), trip-db (5435) - separate Postgres containers; services never read another service's tables |
+| Microservices | Small, independently deployable services, each owning its own data | user / driver / trip / payment / matching / notification-worker - each its own Spring Boot app and its own Postgres DB (notification-worker has no business HTTP API, only a health endpoint) |
+| Database-per-service | Each service owns its database; no shared tables, no cross-service joins | one Postgres per service (user / driver / trip / payment / matching / notification), each a separate container; services never read another service's tables. matching-service gets driver positions via an explicit ingest handoff, not by reading driver-service's store |
 | Cross-service reference by ID | Store another service's identifier as a plain value, not a FK/JPA relationship | `drivers.user_id`, `trips.passenger_id`/`driver_id` are UUID columns, not `@ManyToOne` joins |
 | Layered architecture | controller -> service -> repository -> entity, each with one job | Every service: thin controller, business rules in service, persistence in repository, JPA entity for rows |
 | DTO at the boundary | Expose request/response DTOs, never entities, at the API edge | `CreateDriverRequest` in, `DriverResponse` out; entity stays internal |
@@ -31,22 +31,22 @@ short description, and how it applies in RideNow.
 |-----------|-------------------|-------------------------------|
 | Synchronous HTTP (request/response) | Caller needs an answer now; direct call | driver-service calls user-service `GET /api/users/{id}` to verify a user exists before creating a driver (Spring `RestClient`) |
 | Service discovery | Reach a service by name; the platform's DNS resolves it to an instance | local: `localhost:8081` (config); Docker: `http://user-service`; Kubernetes: Service DNS + load-balancing. URL is config, code unchanged |
-| Asynchronous messaging | Producer hands off work; consumer processes later, decoupled | notifications, payment side-effects (planned). Local = outbox table + poller; cloud = SQS |
-| Message queue (SQS) | Durable work queue: one producer -> one consumer group; retries + DLQ | Reasons: async, decoupling, buffering, reliability. Notifications/payments - must-not-lose async work |
-| Outbox pattern | Write the message as a DB row in the same transaction as the change; a poller publishes it | Local stand-in for SQS: avoids the dual-write problem; swaps to SQS publish in the cloud with no business-code change |
-| Fan-out (pub/sub) | One event delivered to many independent consumers | EventBridge (planned) when one event (e.g. "trip completed") needs multiple reactors (notifications + analytics + payment) |
+| Asynchronous messaging | Producer hands off work; consumer processes later, decoupled | BUILT: trip/payment lifecycle events -> EventBridge -> SQS -> notification-worker. Local-first on LocalStack; cloud is config-only |
+| Message queue (SQS) | Durable work queue: one producer -> one consumer group; retries + DLQ | BUILT: `ridenow-local-notifications` (+ DLQ, maxReceiveCount 5). notification-worker consumes idempotently; a poisoned message dead-letters |
+| Outbox pattern | Write the message as a DB row in the same transaction as the change; a poller publishes it | Concept noted; leapfrogged in practice. Instead the publish fires AFTER the DB commit via a `@TransactionalEventListener`, so a rollback publishes nothing - same safety goal without a poller |
+| Fan-out (pub/sub) | One event delivered to many independent consumers | BUILT: trip/payment events land on an EventBridge bus; a rule routes `ridenow.*` to the notifications queue. Adding another consumer is another rule/target, no producer change |
 | EventBridge vs SNS | Both do fan-out; pick ONE | DECISION: SQS + EventBridge; SNS not used (EventBridge already covers fan-out) |
-| Publisher behind an interface | Hide the transport behind an interface so it can be swapped | `NotificationPublisher` (planned): outbox impl locally -> SQS impl in cloud; business logic unchanged |
+| Publisher behind an interface | Hide the transport behind an interface so it can be swapped | BUILT: `DomainEventPublisher` in trip/payment services - a logging impl by default, an `EventBridgeDomainEventPublisher` under the `eventbridge` profile; business logic unchanged |
 
 ## Redis
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Redis as primary store | Redis is the ONLY home of some data (not a cache of the DB) | Live driver location/availability lives ONLY in Redis - never in Postgres (DBML says so); ephemeral, re-reported by the app |
-| Redis GEO | Geospatial radius queries in-memory | matching-service (planned): "find available drivers near this pickup" - the headline reason Redis is in the architecture |
-| Redis Pub/Sub | Fire-and-forget real-time fan-out; NOT durable | Backend side of live tracking: a driver's GPS update is published on a channel so the passenger's connection can receive it. Loss-tolerant, latest-value-wins; NOT a replacement for SQS |
-| WebSockets | Persistent two-way connection pushing updates to the client in real time | Delivery channel for live driver location: Redis Pub/Sub -> backend -> WebSocket -> passenger map. The open socket lets the backend push each new position without the client polling (planned, with Redis Pub/Sub) |
-| Cache-aside (caching) | Store a disposable copy of slow/hot DB data with a TTL | Optional, secondary: e.g. driver/user profile. Rule: off by default; cache only a proven read-heavy, staleness-tolerant endpoint; NEVER the accept-ride read |
+| Redis as primary store | Redis is the ONLY home of some data (not a cache of the DB) | BUILT: driver-service keeps live availability + location in a Redis hash (`ridenow:driver:live:{id}`, TTL), never in Postgres (DBML says so); ephemeral, re-reported by the app |
+| Redis GEO | Geospatial radius queries in-memory | BUILT: matching-service owns a Redis GEO index and answers "drivers near this pickup" via GEOSEARCH. A swappable `NearbyDriverFinder` has a boring Postgres-scan impl and this Redis GEO impl - the headline reason Redis is in the architecture |
+| Redis Pub/Sub | Fire-and-forget real-time fan-out; NOT durable | BUILT (backend side): a driver's location update is published on `ridenow:driver:locations` for a future WebSocket layer. Loss-tolerant, latest-value-wins; NOT a replacement for SQS |
+| WebSockets | Persistent two-way connection pushing updates to the client in real time | Delivery channel for live driver location: Redis Pub/Sub -> backend -> WebSocket -> passenger map. The backend publish side is built; the WebSocket layer itself is still deferred |
+| Cache-aside (caching) | Store a disposable copy of slow/hot DB data with a TTL | BUILT (scoped): driver-service caches the driver PROFILE read in Redis with a TTL and evicts on profile writes. Off by default everywhere else; NEVER the accept-ride read |
 
 ## Security (defense in depth)
 
@@ -92,7 +92,8 @@ short description, and how it applies in RideNow.
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Dead-letter queue (DLQ) | Messages that keep failing go to a side queue for inspection | SQS consumers (notifications): failed messages land in a DLQ instead of being lost |
+| Dead-letter queue (DLQ) | Messages that keep failing go to a side queue for inspection | BUILT: notification-worker leaves a failing message on the queue; after maxReceiveCount (5) SQS moves it to `ridenow-local-notifications-dlq` instead of losing it |
+| Idempotent consumer | A repeated delivery produces no duplicate effect | BUILT: notification-worker records each handled event id in `processed_notifications`; a duplicate SQS delivery (at-least-once) is a no-op |
 | Retries + backoff | Re-attempt a failed operation, waiting longer each time | Queue consumers and upstream HTTP calls |
 | Timeouts | Bound how long to wait on a dependency | HTTP calls to other services (so a slow user-service can't hang driver-service) |
 | Circuit breaker | Stop calling a failing dependency for a while to let it recover | Planned resilience step for service-to-service calls |

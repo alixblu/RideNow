@@ -18,7 +18,7 @@ The settled choices, each with a one-line reason. Details follow in later sectio
 | Async work queue (do-it-later, one consumer) | **SQS** | Durable, retries, DLQ; the messaging workhorse |
 | Event fan-out (one event, many consumers) | **EventBridge** | Proposal commits to it; pick ONE fan-out tool |
 | SNS | **Not used** | EventBridge already covers fan-out; two tools, one job |
-| Local messaging (before cloud) | Outbox table + poller (Postgres) | Learn the concept with no broker; swap to SQS later |
+| Local messaging (before cloud) | EventBridge + SQS on **LocalStack**, behind a `DomainEventPublisher` interface | Built: real AWS SDK v2 against a local stand-in; the outbox stand-in was leapfrogged but the transport is still a swap |
 | Live driver location | **Redis = primary store, NOT in Postgres** | Ephemeral, high-write, geo-queried; DBML says keep it out of the DB |
 | Find nearby drivers | Postgres query first, then **Redis GEO** | Feel the limit before adding Redis |
 | Live location to rider | Redis Pub/Sub + WebSockets | Real-time, loss-tolerant stream |
@@ -28,8 +28,16 @@ The settled choices, each with a one-line reason. Details follow in later sectio
 | Durable data | Postgres per service (RDS in cloud) | Database-per-service rule |
 | Running services | `mvn run` -> Docker -> local k8s -> EKS | Local-first, migrate last |
 
-Deferred until a feature needs them: SQS, EventBridge, Redis, WebSockets, Saga,
-Docker images for the apps, Kubernetes, all AWS. Do not adopt early.
+Deferred until a feature needs them: WebSockets, Saga, Kubernetes, all AWS
+*provisioning*. Do not adopt early.
+
+**Now built (local-first, against LocalStack + a Redis container):** async
+messaging (SQS + EventBridge) with a `notification-worker` consumer, and all four
+Redis roles (live driver state, Redis GEO matching in a new `matching-service`,
+cache-aside on the driver profile, and Pub/Sub for live location). These use the
+real AWS SDK v2 / Spring Data Redis against local stand-ins, so the move to real
+AWS (ElastiCache, SQS, EventBridge) is config-only. See
+`guides/stage-11a-local-async-messaging.md` for the messaging flow.
 
 ---
 
@@ -150,16 +158,21 @@ This refines the proposal's roadmap around the local-first idea. Phases map to
    optimistic/pessimistic locking. Pure Postgres + Java. This is the project's signature
    problem and needs NO queue, NO Redis, NO cloud. (Done - optimistic lock built & proven.)
 4. **Matching, the boring way.** matching-service finds a driver with a Postgres query.
-   Feel why that is slow/awkward -> THEN introduce Redis GEO as the fix. (Next up -
-   matching-service does not exist yet.)
-5. **Async notifications.** Add the outbox table + poller (Postgres only). Feel its limits
-   -> THEN (in the cloud phase) publish from the outbox to SQS, with a worker + DLQ. (Not
-   started - notification-worker does not exist yet.)
+   Feel why that is slow/awkward -> THEN introduce Redis GEO as the fix. (Done -
+   matching-service is built: a swappable `NearbyDriverFinder` with a Postgres scan
+   impl and a Redis GEO impl matching-service owns; positions arrive via an explicit
+   ingest handoff.)
+5. **Async notifications.** (Done, local-first against LocalStack.) trip-service and
+   payment-service publish domain events to EventBridge after commit; a rule routes
+   them to an SQS queue; `notification-worker` consumes them idempotently with retry
+   and a DLQ. The architecture's outbox stand-in was leapfrogged: the publisher sits
+   behind a `DomainEventPublisher` interface (logging default, EventBridge impl), so
+   the transport is still a swap, and the move to real AWS is config-only.
 6. **Payment + failure handling.** Payment can fail; handle it with explicit state and
    compensation (the Saga idea) instead of a cross-service transaction. (Done -
    payment-service is built with idempotency and explicit states.)
-7. **Events.** Where a direct call is too tight a coupling, publish an event. Local first,
-   EventBridge later.
+7. **Events.** Where a direct call is too tight a coupling, publish an event. (Done -
+   trip/payment events fan out through EventBridge, local-first via LocalStack.)
 8. **Containerize** every service (Docker). The system runs as images.
 9. **Local Kubernetes.** Run the images as Deployments/Services on Docker Desktop k8s or
    kind. Learn Pods, probes, scaling - for free.
@@ -190,11 +203,15 @@ fix that before adding anything new.
 ## 7. What this means for the next step
 
 The HTTP-only two-service system, the trip lifecycle, the concurrency lab (the heart of the
-whole project), and payment with explicit states are all built - on Postgres you already
-run. The next concept that teaches the most is **matching**: start with the boring Postgres
-query in a new matching-service, feel its limits, then earn Redis GEO as the fix. Async
-notifications (outbox, then SQS), the remaining Redis roles, and Kubernetes come after, each
-when a feature finally needs it.
+whole project), payment with explicit states, **async notifications** (EventBridge -> SQS ->
+notification-worker), and **all four Redis roles** (matching-service's Redis GEO, live driver
+state, cache-aside, Pub/Sub) are all built and run locally - against a Redis container and
+LocalStack, so the cloud move is config-only.
+
+The remaining work is the cloud/platform phase: Docker images (done), local Kubernetes, then
+AWS (console first, then CloudFormation) and EKS, followed by observability, CI/CD, and
+load/failure testing. Each still follows the same rule - the mechanism behind each boundary
+is swapped, the boundary itself does not move.
 
 
 ---
@@ -289,3 +306,82 @@ slower, buggier (two copies of the truth that can disagree), and wastes RAM.
 
 Default = no cache; serve reads from Postgres. Add a cache to ONE specific endpoint only
 when it is a proven read-heavy, staleness-tolerant hot path.
+
+---
+
+## 9. Production-readiness review
+
+A review of the architecture against two bars: (a) its stated goal as a local-first
+learning/portfolio project, and (b) enterprise production-level readiness. Both verdicts
+are given because both are fair questions, and they differ.
+
+**Framing:** RideNow is explicitly a local-first learning project (AGENTS.md, this doc,
+and the proposal all say so). Judged against that goal it is well-built. Judged as an
+enterprise production system it is a solid foundation with several hard blockers. The
+boundaries are clean enough that each blocker can be closed as a *mechanism swap* rather
+than a redesign - which is the whole point of the design.
+
+### 9.1 What is strong (and would hold up in production)
+
+- **Clean service boundaries.** Database-per-service is enforced: no shared tables, no
+  cross-service joins, cross-service references stored as scalar IDs, services talk only
+  over HTTP or events. This is the most important thing to get right in microservices, and
+  it is right here.
+- **Idiomatic, consistent layering.** Every service follows controller -> service ->
+  repository -> entity with constructor injection, DTOs at the boundary, and a focused
+  `@RestControllerAdvice`. Low onboarding cost.
+- **Correct concurrency model.** trip-service uses `@Version` optimistic locking for
+  accept-ride, with a dedicated race test (`AcceptTripConcurrencyTest`). The
+  exactly-one-winner guarantee is real, not hand-waved.
+- **Thoughtful async pipeline.** `@TransactionalEventListener(AFTER_COMMIT)` ->
+  EventBridge -> SQS -> worker, with an idempotency ledger (`ProcessedNotification`) and a
+  DLQ via redelivery. The publisher sits behind a `DomainEventPublisher` interface with
+  profile-selected impls, so the cloud swap is config-only.
+- **Credible platform story.** K8s manifests set resource requests/limits, readiness and
+  liveness probes, and HPA on the HTTP services; secrets come from AWS Secrets Manager via
+  the External Secrets Operator and IRSA (no static keys); CloudFormation is staged per
+  environment. Well above typical hobby-project quality.
+
+### 9.2 Production blockers (must fix before "enterprise")
+
+1. **No security, anywhere.** No `spring-boot-starter-security` in any pom, no auth filter,
+   no JWT, no `@PreAuthorize`, no service-to-service auth. The ALB ingress exposes
+   `/api/users`, `/api/drivers`, `/api/trips`, `/api/payments` unauthenticated, and
+   user-service does not hash credentials. For a ride-hailing app handling payments and PII
+   this alone makes it non-production. It is marked "planned" in the docs, consistent with
+   the learning stage, but it is non-negotiable for enterprise.
+2. **No edge TLS.** The ingress is HTTP:80 only (no HTTPS listener) and is a bare
+   path-router with no auth or rate limiting. Combined with (1), the edge is wide open.
+3. **No sync-call resilience.** The one cross-service call (`UserServiceClient`) uses a
+   `RestClient` built with no connect/read timeout, no retry, and no circuit breaker. A
+   slow or hung user-service ties up driver-service threads unbounded. No
+   resilience4j/spring-retry anywhere.
+4. **No true transactional outbox.** The after-commit publish is deliberate and better than
+   publishing inside the transaction, but it is not at-least-once on the producer side: if
+   the process dies between DB commit and the after-commit publish, the event is silently
+   lost. For payment events this is the kind of gap that bites in production. The docs are
+   honest that the outbox was "leapfrogged."
+5. **Thin observability.** Actuator exposes `health` only. No Micrometer/Prometheus
+   metrics, no distributed tracing (OTel/Zipkin), no correlation IDs across the
+   HTTP -> EventBridge -> SQS chain, no structured logging. Flying blind during an incident.
+
+### 9.3 Lower-severity gaps
+
+- Liveness and readiness both point at `/actuator/health`; they should be split so a lost
+  DB connection gates traffic (readiness) without triggering pod restarts (liveness).
+- No `NetworkPolicy`, `PodDisruptionBudget`, or resource quotas.
+- `notification-worker` scales on nothing (replicas:1, no KEDA/SQS-depth autoscaling).
+- Payment is a `SimulatedPaymentGateway` - expected at this stage, not production.
+
+### 9.4 Verdict
+
+As a **local-first learning architecture**, it is well-designed: stable, correct
+boundaries; real swap-the-mechanism discipline; and the hard problem (concurrency) handled
+properly. As an **enterprise production system**, it is not there yet - chiefly the total
+absence of authentication/authorization and TLS, plus missing sync-call resilience, no real
+outbox, and near-zero observability. None are architectural dead-ends; the clean boundaries
+mean each can be added as a mechanism swap, which is exactly what this design optimizes for.
+
+Suggested hardening order when the project reaches that phase: security -> observability ->
+sync-call resilience -> transactional outbox, each introduced as the smallest change that
+fits the existing service and data boundaries.

@@ -45,6 +45,16 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, exception.getMessage(), request);
     }
 
+    // The business guard: an arrive/start/complete transition was illegal from
+    // the trip's current status.
+    @ExceptionHandler(TripTransitionException.class)
+    public ResponseEntity<ApiErrorResponse> handleIllegalTransition(
+            TripTransitionException exception,
+            HttpServletRequest request
+    ) {
+        return build(HttpStatus.CONFLICT, exception.getMessage(), request);
+    }
+
     // A @Valid request body failed bean validation. Report the first field error
     // as `field: message` and return a 400 client error.
     @ExceptionHandler(MethodArgumentNotValidException.class)

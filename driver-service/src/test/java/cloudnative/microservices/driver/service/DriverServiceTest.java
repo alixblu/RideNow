@@ -32,6 +32,7 @@ class DriverServiceTest {
     @Mock private DriverRepository driverRepository;
     @Mock private VehicleRepository vehicleRepository;
     @Mock private UserServiceClient userServiceClient;
+    @Mock private cloudnative.microservices.driver.cache.DriverProfileCache profileCache;
 
     @InjectMocks private DriverService driverService;
 
@@ -129,5 +130,43 @@ class DriverServiceTest {
 
         assertThat(page.items().get(0).id()).isEqualTo(newest.getId());
         assertThat(page.items().get(1).id()).isEqualTo(oldest.getId());
+    }
+
+    // --- cache-aside on getDriver -------------------------------------------
+
+    @Test
+    void getDriverCacheHitSkipsRepository() {
+        Driver d = driver();
+        DriverResponse cached = new DriverResponse(d.getId(), d.getUserId(), d.getLicenseNumber(),
+                DriverStatus.ACTIVE, null, 0L, Instant.now(), Instant.now());
+        when(profileCache.get(d.getId())).thenReturn(java.util.Optional.of(cached));
+
+        DriverResponse result = driverService.getDriver(d.getId());
+
+        assertThat(result.id()).isEqualTo(d.getId());
+        verify(driverRepository, never()).findById(d.getId());
+    }
+
+    @Test
+    void getDriverCacheMissReadsRepositoryAndPopulatesCache() {
+        Driver d = driver();
+        when(profileCache.get(d.getId())).thenReturn(java.util.Optional.empty());
+        when(driverRepository.findById(d.getId())).thenReturn(java.util.Optional.of(d));
+
+        DriverResponse result = driverService.getDriver(d.getId());
+
+        assertThat(result.id()).isEqualTo(d.getId());
+        verify(driverRepository).findById(d.getId());
+        verify(profileCache).put(result);
+    }
+
+    @Test
+    void changeStatusEvictsCachedProfile() {
+        Driver d = driver();
+        when(driverRepository.findById(d.getId())).thenReturn(java.util.Optional.of(d));
+
+        driverService.changeStatus(d.getId(), DriverStatus.SUSPENDED);
+
+        verify(profileCache).evict(d.getId());
     }
 }

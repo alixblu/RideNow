@@ -43,6 +43,24 @@ public class TripController {
         return tripService.acceptTrip(id, driverId);
     }
 
+    // The assigned driver has arrived at the pickup point.
+    @PostMapping("/trips/{id}/arrive")
+    public TripResponse arriveTrip(@PathVariable UUID id) {
+        return tripService.arriveTrip(id);
+    }
+
+    // The trip begins (passenger aboard).
+    @PostMapping("/trips/{id}/start")
+    public TripResponse startTrip(@PathVariable UUID id) {
+        return tripService.startTrip(id);
+    }
+
+    // The trip is finished.
+    @PostMapping("/trips/{id}/complete")
+    public TripResponse completeTrip(@PathVariable UUID id) {
+        return tripService.completeTrip(id);
+    }
+
     @GetMapping("/trips")
     public PageResponse<TripResponse> listTrips(
             @RequestParam(required = false) UUID passengerId,

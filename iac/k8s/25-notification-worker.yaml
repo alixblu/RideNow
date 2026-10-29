@@ -1,0 +1,85 @@
+# notification-worker: Deployment only (no Service/Ingress - it has no business
+# HTTP API, just an actuator health endpoint for probes).
+#
+# It consumes the SQS notifications queue, so it needs the queue URL and AWS
+# region, plus permission to read SQS. Permission comes via IRSA: the service
+# account below is annotated with an IAM role ARN that grants SQS access (no
+# static keys). Until the queue exists (later op), the worker idles.
+#
+# Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <NOTIFICATION_DB_ENDPOINT>
+#               <NOTIFICATIONS_QUEUE_URL> <NOTIFICATION_WORKER_ROLE_ARN>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: notification-worker
+  namespace: ridenow
+  annotations:
+    # IRSA: the IAM role that grants sqs:ReceiveMessage/DeleteMessage/
+    # GetQueueAttributes on the notifications queue (see localfile/aws/08-...).
+    eks.amazonaws.com/role-arn: "<NOTIFICATION_WORKER_ROLE_ARN>"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-worker
+  namespace: ridenow
+  labels:
+    app: notification-worker
+spec:
+  # A single consumer is fine; the queue decouples throughput. Scale up only if
+  # the backlog grows (SQS supports multiple competing consumers).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-worker
+  template:
+    metadata:
+      labels:
+        app: notification-worker
+    spec:
+      serviceAccountName: notification-worker
+      containers:
+        - name: notification-worker
+          image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/ridenow/notification-worker:<IMAGE_TAG>
+          ports:
+            - containerPort: 8084
+          env:
+            - name: SERVER_PORT
+              value: "8084"
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://<NOTIFICATION_DB_ENDPOINT>:5432/notification_service"
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notification-db-credentials
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-db-credentials
+                  key: password
+            # SQS consumer config. With IRSA, no static AWS keys are needed -
+            # the default credentials chain uses the service account's role.
+            - name: RIDENOW_NOTIFICATIONS_QUEUE_URL
+              value: "<NOTIFICATIONS_QUEUE_URL>"
+            - name: AWS_REGION
+              value: "<REGION>"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 60
+            periodSeconds: 15

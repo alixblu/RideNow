@@ -5,12 +5,15 @@ import cloudnative.microservices.payment.dto.response.PaymentResponse;
 import cloudnative.microservices.payment.entity.Payment;
 import cloudnative.microservices.payment.exception.DuplicateResourceException;
 import cloudnative.microservices.payment.exception.ResourceNotFoundException;
+import cloudnative.microservices.payment.entity.PaymentStatus;
+import cloudnative.microservices.payment.event.PaymentEvents;
 import cloudnative.microservices.payment.gateway.PaymentGateway;
 import cloudnative.microservices.payment.repository.PaymentRepository;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +23,7 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentGateway paymentGateway;
+    private final ApplicationEventPublisher events;
 
     @Transactional(readOnly = true)
     public PaymentResponse getPayment(UUID id) {
@@ -79,7 +83,18 @@ public class PaymentService {
             payment.markFailed(result.failureReason(), Instant.now());
         }
 
-        return toResponse(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+
+        // Announce the outcome so downstream consumers (notifications) can react.
+        // Published after commit via the DomainEventListener; a failed publish
+        // never undoes the committed payment.
+        if (saved.getStatus() == PaymentStatus.PAID) {
+            events.publishEvent(PaymentEvents.paymentSucceeded(saved));
+        } else if (saved.getStatus() == PaymentStatus.FAILED) {
+            events.publishEvent(PaymentEvents.paymentFailed(saved));
+        }
+
+        return toResponse(saved);
     }
 
     private PaymentResponse toResponse(Payment payment) {

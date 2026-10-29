@@ -14,6 +14,7 @@ import cloudnative.microservices.trip.entity.Trip;
 import cloudnative.microservices.trip.entity.TripStatus;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.exception.TripNotCancellableException;
+import cloudnative.microservices.trip.exception.TripTransitionException;
 import cloudnative.microservices.trip.repository.TripOfferRepository;
 import cloudnative.microservices.trip.repository.TripRepository;
 import java.math.BigDecimal;
@@ -38,6 +39,7 @@ class TripServiceTest {
 
     @Mock private TripRepository tripRepository;
     @Mock private TripOfferRepository tripOfferRepository;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @InjectMocks private TripService tripService;
 
@@ -192,5 +194,131 @@ class TripServiceTest {
         assertThatThrownBy(() -> tripService.cancelTrip(tripId, "Cancelled by rider"))
                 .isInstanceOf(ResourceNotFoundException.class);
         verifyNoInteractions(tripOfferRepository);
+    }
+
+    // --- lifecycle transitions: arrive / start / complete --------------------
+
+    /** Drives a fresh trip through accept so it is DRIVER_ASSIGNED. */
+    private Trip assignedTrip() {
+        Trip trip = searchingTrip(UUID.randomUUID(), Instant.now());
+        trip.acceptBy(UUID.randomUUID(), Instant.now());
+        return trip;
+    }
+
+    @Test
+    void arriveFromAssignedSetsArrivedState() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(assignedTrip()));
+
+        TripResponse response = tripService.arriveTrip(tripId);
+
+        assertThat(response.status()).isEqualTo(TripStatus.DRIVER_ARRIVED);
+        assertThat(response.arrivedAt()).isNotNull();
+    }
+
+    @Test
+    void arriveRaisesDriverArrivedEvent() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(assignedTrip()));
+
+        tripService.arriveTrip(tripId);
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.trip.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.trip.event.DomainEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.trip.event.TripEvents.DRIVER_ARRIVED);
+    }
+
+    @Test
+    void completeRaisesTripCompletedEvent() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = assignedTrip();
+        trip.arrive(Instant.now());
+        trip.start(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        tripService.completeTrip(tripId);
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.trip.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.trip.event.DomainEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.trip.event.TripEvents.TRIP_COMPLETED);
+    }
+
+    @Test
+    void illegalTransitionRaisesNoEvent() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(searchingTrip(UUID.randomUUID(), Instant.now())));
+
+        assertThatThrownBy(() -> tripService.arriveTrip(tripId))
+                .isInstanceOf(TripTransitionException.class);
+        verify(events, never()).publishEvent(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void arriveFromSearchingThrows() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(searchingTrip(UUID.randomUUID(), Instant.now())));
+
+        assertThatThrownBy(() -> tripService.arriveTrip(tripId))
+                .isInstanceOf(TripTransitionException.class);
+    }
+
+    @Test
+    void startFromArrivedSetsInProgressState() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = assignedTrip();
+        trip.arrive(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        TripResponse response = tripService.startTrip(tripId);
+
+        assertThat(response.status()).isEqualTo(TripStatus.IN_PROGRESS);
+        assertThat(response.startedAt()).isNotNull();
+    }
+
+    @Test
+    void startBeforeArriveThrows() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(assignedTrip()));
+
+        assertThatThrownBy(() -> tripService.startTrip(tripId))
+                .isInstanceOf(TripTransitionException.class);
+    }
+
+    @Test
+    void completeFromInProgressSetsCompletedState() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = assignedTrip();
+        trip.arrive(Instant.now());
+        trip.start(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        TripResponse response = tripService.completeTrip(tripId);
+
+        assertThat(response.status()).isEqualTo(TripStatus.COMPLETED);
+        assertThat(response.completedAt()).isNotNull();
+    }
+
+    @Test
+    void completeBeforeStartThrows() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = assignedTrip();
+        trip.arrive(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        assertThatThrownBy(() -> tripService.completeTrip(tripId))
+                .isInstanceOf(TripTransitionException.class);
+    }
+
+    @Test
+    void arriveOnMissingIdThrowsResourceNotFound() {
+        UUID tripId = UUID.randomUUID();
+        when(tripRepository.findById(tripId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> tripService.arriveTrip(tripId))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 }

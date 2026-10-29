@@ -16,6 +16,7 @@ import cloudnative.microservices.trip.entity.TripStatus;
 import cloudnative.microservices.trip.exception.GlobalExceptionHandler;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.exception.TripNotCancellableException;
+import cloudnative.microservices.trip.exception.TripTransitionException;
 import cloudnative.microservices.trip.service.TripService;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -116,5 +117,46 @@ class TripControllerTest {
         mockMvc.perform(post("/api/trips/{id}/cancel", id))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void arriveTripReturnsTrip() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(tripService.arriveTrip(eq(id))).thenReturn(sampleTrip(TripStatus.DRIVER_ARRIVED));
+
+        mockMvc.perform(post("/api/trips/{id}/arrive", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DRIVER_ARRIVED"));
+    }
+
+    @Test
+    void startTripReturnsTrip() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(tripService.startTrip(eq(id))).thenReturn(sampleTrip(TripStatus.IN_PROGRESS));
+
+        mockMvc.perform(post("/api/trips/{id}/start", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+    }
+
+    @Test
+    void completeTripReturnsTrip() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(tripService.completeTrip(eq(id))).thenReturn(sampleTrip(TripStatus.COMPLETED));
+
+        mockMvc.perform(post("/api/trips/{id}/complete", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    void startTripSurfacesConflictOnIllegalTransition() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(tripService.startTrip(eq(id)))
+                .thenThrow(new TripTransitionException(id, TripStatus.DRIVER_ASSIGNED, "started"));
+
+        mockMvc.perform(post("/api/trips/{id}/start", id))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409));
     }
 }

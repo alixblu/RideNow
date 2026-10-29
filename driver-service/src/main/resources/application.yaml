@@ -26,6 +26,15 @@ spring:
         format_sql: true
     show-sql: true
 
+  # Redis connection (Spring Data Redis / Lettuce). Config-driven host/port so
+  # the same code points at a local redis container or Amazon ElastiCache by env
+  # only. Redis is the PRIMARY store for live driver location/availability - that
+  # state is deliberately NOT in Postgres (see docs/database/ridenow.dbml).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
 # Actuator exposes a /actuator/health endpoint so you (and later Kubernetes)
 # can ask "is this service healthy?" without hitting business endpoints.
 management:

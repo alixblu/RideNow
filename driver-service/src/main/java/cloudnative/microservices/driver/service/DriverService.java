@@ -11,6 +11,7 @@ import cloudnative.microservices.driver.entity.DriverStatus;
 import cloudnative.microservices.driver.entity.Vehicle;
 import cloudnative.microservices.driver.exception.DuplicateResourceException;
 import cloudnative.microservices.driver.exception.ResourceNotFoundException;
+import cloudnative.microservices.driver.cache.DriverProfileCache;
 import cloudnative.microservices.driver.repository.DriverRepository;
 import cloudnative.microservices.driver.repository.VehicleRepository;
 import java.time.Instant;
@@ -27,12 +28,23 @@ public class DriverService {
     private final DriverRepository driverRepository;
     private final VehicleRepository vehicleRepository;
     private final UserServiceClient userServiceClient;
+    private final DriverProfileCache profileCache;
 
+    /**
+     * Reads a driver profile, cache-aside: serve from Redis on a hit; on a miss
+     * read Postgres (the source of truth) and populate the cache. The profile is
+     * a good cache candidate - read often, changes rarely - and any write evicts
+     * the entry, so staleness is bounded by writes and the TTL.
+     */
     @Transactional(readOnly = true)
     public DriverResponse getDriver(UUID id) {
-        Driver driver = driverRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Driver", id));
-        return toResponse(driver);
+        return profileCache.get(id).orElseGet(() -> {
+            Driver driver = driverRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Driver", id));
+            DriverResponse response = toResponse(driver);
+            profileCache.put(response);
+            return response;
+        });
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +118,8 @@ public class DriverService {
         Driver driver = driverRepository.findById(driverId)
                 .orElseThrow(() -> new ResourceNotFoundException("Driver", driverId));
         driver.changeStatus(newStatus, Instant.now());
+        // Invalidate the cached profile so the next read reflects the change.
+        profileCache.evict(driverId);
         return toResponse(driver);
     }
 

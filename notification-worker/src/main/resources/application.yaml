@@ -1,0 +1,31 @@
+server:
+  port: ${SERVER_PORT:8084}
+
+spring:
+  application:
+    name: notification-worker
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5438/notification_service}
+    username: ${SPRING_DATASOURCE_USERNAME:notification}
+    password: ${SPRING_DATASOURCE_PASSWORD:notification_local}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+# SQS consumer configuration. The queue URL and AWS endpoint/region are injected
+# by the environment (LocalStack locally; real AWS later - same code).
+ridenow:
+  notifications:
+    # When blank, the SQS consumer stays disabled (e.g. plain unit test runs).
+    queue-url: ${RIDENOW_NOTIFICATIONS_QUEUE_URL:}
+    poll:
+      # Long-poll wait and how many messages to pull per receive.
+      wait-seconds: 10
+      max-messages: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

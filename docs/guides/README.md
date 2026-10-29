@@ -27,6 +27,7 @@ These guides are the turn-by-turn directions (every command, file, and click).
 | 3 | `stage-03-user-service.md` | ready |
 | 4 | `stage-04-service-to-service.md` | ready |
 | 4A-4E | ride flow (trip, concurrency, matching, outbox, payment) | see `../PLAN_LOCAL_VS_CLOUD.md` + `../LEARNING_PATH.md` Part 1B |
+| 11A | `stage-11a-local-async-messaging.md` - local SQS+EventBridge build (LocalStack) | complete |
 | 5 | `stage-05-containerize.md` | complete (see `stage-05b-cloud-migration-prep.md`) |
 | 6 | `stage-06-compose-system.md` | complete (see `stage-05b-cloud-migration-prep.md`) |
 | 5b | `stage-05b-cloud-migration-prep.md` | complete (images, env config, ECR/RDS prep) |
@@ -53,3 +54,12 @@ These are intentionally left as outlines. The AWS Console UI and exact button la
 change over time, and the right steps depend on choices you make in earlier stages.
 When you reach one of these stages, ask for it to be expanded into full click-by-click
 console detail verified against the current console.
+
+## Hands-on AWS console walkthrough (backend -> EKS)
+
+A full click-by-click, console-first path to run the RideNow backend on EKS lives in
+`../../localfile/aws/` (IAM -> VPC -> ECR -> RDS/Secrets -> EKS -> deploy, plus
+ElastiCache and SQS/EventBridge as later ops). It is the console counterpart to the
+CloudFormation in `../../iac/` and matches the services as built (ports, image names,
+and the SQS/EventBridge/Redis env the code reads). Start at
+`../../localfile/aws/README.md`.

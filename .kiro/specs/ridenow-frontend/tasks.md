@@ -174,7 +174,7 @@ with mocked `fetch`; no backend is required.
     - **Property 8: Vehicle rendering is complete**
     - **Validates: Requirements 6.4, 6.5**
 
-  - [-] 11.4 Write property test for missing required fields block submission
+  - [ ] 11.4 Write property test for missing required fields block submission
     - **Property 5: Missing required fields block submission** (driver and vehicle forms).
     - **Validates: Requirements 5.2, 6.2, 8.2**
 
@@ -193,7 +193,7 @@ with mocked `fetch`; no backend is required.
     - Field-level validation messages (8.2) and user not-found view (8.4).
     - _Requirements: 8.2, 8.4_
 
-- [~] 13. Checkpoint - LIVE domains
+- [ ] 13. Checkpoint - LIVE domains
   - Ensure all tests pass and LIVE screens work against mocked fetch; ask the user if
     questions arise.
 
@@ -268,11 +268,11 @@ with mocked `fetch`; no backend is required.
       with empty-state. Screens render identically to live ones (no mock marker).
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.6, 10.1, 10.2, 11.1, 11.2, 11.3, 12.1, 12.2_
 
-  - [~] 18.2 Write property test for payment and notification views render all contract fields
+  - [ ] 18.2 Write property test for payment and notification views render all contract fields
     - **Property 9: Payment and notification views render all contract fields**
     - **Validates: Requirements 11.1, 12.1**
 
-  - [~] 18.3 Write unit tests for matching-in-progress, payment failure, and notifications empty-state
+  - [ ] 18.3 Write unit tests for matching-in-progress, payment failure, and notifications empty-state
     - Matching-in-progress view (10.1), payment failure reason surfaced (11.3), and
       notifications empty-state (12.2).
     - _Requirements: 10.1, 11.3, 12.2_
@@ -285,20 +285,20 @@ with mocked `fetch`; no backend is required.
       service-unavailable (including null placeholder origins).
     - _Requirements: 13.1, 13.2, 13.3_
 
-  - [~] 19.2 Write unit tests for loading indicator and unavailable + retry
+  - [ ] 19.2 Write unit tests for loading indicator and unavailable + retry
     - Loading indicator appears while pending (13.1); unavailable message + retry re-runs the
       query (13.3).
     - _Requirements: 13.1, 13.3_
 
 - [ ] 20. Smoke / structural checks
-  - [~] 20.1 Write structural smoke tests
+  - [ ] 20.1 Write structural smoke tests
     - Assert the app builds and runs standalone (1.5), user client exposes only create/get
       (8.5), no token/credential storage exists (2.6), trip screens reference no
       real-time/live-location modules (9.6), and each domain shares one interface across
       Live/Mock implementations (4.1, 4.3, 9.5, 10.3, 11.4, 12.3).
     - _Requirements: 1.5, 2.6, 4.1, 4.3, 8.5, 9.5, 9.6, 10.3, 11.4, 12.3_
 
-- [~] 21. Final checkpoint - full suite
+- [ ] 21. Final checkpoint - full suite
   - Ensure all tests pass (Vitest + fast-check, mocked fetch, no backend) and the app builds;
     ask the user if questions arise.
 

@@ -14,6 +14,7 @@ import java.util.UUID;
 import lombok.Getter;
 import cloudnative.microservices.trip.exception.TripNotAcceptableException;
 import cloudnative.microservices.trip.exception.TripNotCancellableException;
+import cloudnative.microservices.trip.exception.TripTransitionException;
 import lombok.NoArgsConstructor;
 
 @Entity
@@ -142,6 +143,45 @@ public class Trip {
         this.driverId = driverId;
         this.status = TripStatus.DRIVER_ASSIGNED;
         this.acceptedAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * Marks that the assigned driver has arrived at the pickup point.
+     * Legal only from DRIVER_ASSIGNED.
+     */
+    public void arrive(Instant now) {
+        if (this.status != TripStatus.DRIVER_ASSIGNED) {
+            throw new TripTransitionException(this.id, this.status, "marked arrived");
+        }
+        this.status = TripStatus.DRIVER_ARRIVED;
+        this.arrivedAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * Starts the trip once the driver has arrived and the passenger is aboard.
+     * Legal only from DRIVER_ARRIVED.
+     */
+    public void start(Instant now) {
+        if (this.status != TripStatus.DRIVER_ARRIVED) {
+            throw new TripTransitionException(this.id, this.status, "started");
+        }
+        this.status = TripStatus.IN_PROGRESS;
+        this.startedAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * Completes the trip after it has been driven. Legal only from IN_PROGRESS.
+     * COMPLETED is a terminal state.
+     */
+    public void complete(Instant now) {
+        if (this.status != TripStatus.IN_PROGRESS) {
+            throw new TripTransitionException(this.id, this.status, "completed");
+        }
+        this.status = TripStatus.COMPLETED;
+        this.completedAt = now;
         this.updatedAt = now;
     }
 

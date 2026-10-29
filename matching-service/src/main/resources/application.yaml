@@ -1,0 +1,32 @@
+server:
+  port: ${SERVER_PORT:8085}
+
+spring:
+  application:
+    name: matching-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5437/matching_service}
+    username: ${SPRING_DATASOURCE_USERNAME:matching}
+    password: ${SPRING_DATASOURCE_PASSWORD:matching_local}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  # Redis is used by the GEO finder (Task B4). Config-driven; same code points at
+  # a local redis container or Amazon ElastiCache by env only.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+ridenow:
+  matching:
+    # Which nearby-driver finder to use: "postgres" (boring scan, default) or
+    # "redis" (Redis GEO). Flip to feel the difference / move to the real path.
+    finder: ${MATCHING_FINDER:postgres}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

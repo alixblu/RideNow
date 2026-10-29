@@ -77,6 +77,70 @@ services:
       timeout: 3s
       retries: 10
 
+  notification-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification_service}
+      POSTGRES_USER: ${NOTIFICATION_DB_USERNAME:-notification}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notification_local}
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOTIFICATION_DB_USERNAME:-notification} -d ${NOTIFICATION_DB_NAME:-notification_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  matching-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${MATCHING_DB_NAME:-matching_service}
+      POSTGRES_USER: ${MATCHING_DB_USERNAME:-matching}
+      POSTGRES_PASSWORD: ${MATCHING_DB_PASSWORD:-matching_local}
+    volumes:
+      - matching-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MATCHING_DB_USERNAME:-matching} -d ${MATCHING_DB_NAME:-matching_service}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- Redis: live driver state, GEO matching, pub/sub, cache ----------------
+  # The local stand-in for Amazon ElastiCache. The client code is identical;
+  # only the host/port change in the cloud. Redis is the PRIMARY store for live
+  # driver location/availability (the DBML keeps that out of Postgres), the GEO
+  # index matching-service queries, the pub/sub channel for live tracking, and
+  # an optional cache-aside store.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- Local AWS (LocalStack): SQS + EventBridge -----------------------------
+  # The local stand-in for AWS messaging. The init script under
+  # localstack/init/ready.d provisions the same resource names the cloud uses
+  # (see iac/stacks/05-messaging.yaml): the ridenow-local-events bus, the
+  # ridenow-local-notifications queue + DLQ, and the rule wiring events -> queue.
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: sqs,events
+      AWS_DEFAULT_REGION: ${AWS_REGION:-ap-southeast-1}
+      DEBUG: "0"
+    volumes:
+      - ./localstack/init:/etc/localstack/init/ready.d
+    healthcheck:
+      # The init marker file is written by LocalStack once ready.d scripts ran.
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name ridenow-local-notifications >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
   # ---- Application services --------------------------------------------------
   user-service:
     build: ./user-service
@@ -104,6 +168,8 @@ services:
         condition: service_healthy
       user-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       SERVER_PORT: 8080
       SPRING_DATASOURCE_URL: jdbc:postgresql://driver-db:5432/${DRIVER_DB_NAME:-driver_service}
@@ -112,6 +178,9 @@ services:
       # Service-to-service: reach user-service by its compose service name, the
       # local equivalent of Kubernetes Service DNS.
       SERVICES_USER_SERVICE_BASE_URL: http://user-service:8081
+      # Redis: live driver state (primary store) + GEO publish + pub/sub.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "8080:8080"
     healthcheck:
@@ -126,11 +195,21 @@ services:
     depends_on:
       trip-db:
         condition: service_healthy
+      localstack:
+        condition: service_healthy
     environment:
       SERVER_PORT: 8082
       SPRING_DATASOURCE_URL: jdbc:postgresql://trip-db:5432/${TRIP_DB_NAME:-trip_service}
       SPRING_DATASOURCE_USERNAME: ${TRIP_DB_USERNAME:-trip}
       SPRING_DATASOURCE_PASSWORD: ${TRIP_DB_PASSWORD:-trip_local}
+      # Async event publishing (EventBridge). The "eventbridge" profile activates
+      # the real SDK publisher; without it the logging publisher is used.
+      SPRING_PROFILES_ACTIVE: eventbridge
+      RIDENOW_EVENTS_BUS_NAME: ${EVENTS_BUS_NAME:-ridenow-local-events}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ENDPOINT: http://localstack:4566
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
     ports:
       - "8082:8082"
     healthcheck:
@@ -145,15 +224,76 @@ services:
     depends_on:
       payment-db:
         condition: service_healthy
+      localstack:
+        condition: service_healthy
     environment:
       SERVER_PORT: 8083
       SPRING_DATASOURCE_URL: jdbc:postgresql://payment-db:5432/${PAYMENT_DB_NAME:-payment_service}
       SPRING_DATASOURCE_USERNAME: ${PAYMENT_DB_USERNAME:-payment}
       SPRING_DATASOURCE_PASSWORD: ${PAYMENT_DB_PASSWORD:-payment_local}
+      SPRING_PROFILES_ACTIVE: eventbridge
+      RIDENOW_EVENTS_BUS_NAME: ${EVENTS_BUS_NAME:-ridenow-local-events}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ENDPOINT: http://localstack:4566
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
     ports:
       - "8083:8083"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ---- Notification worker: consumes the SQS notifications queue -------------
+  notification-worker:
+    build: ./notification-worker
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8084
+      SPRING_DATASOURCE_URL: jdbc:postgresql://notification-db:5432/${NOTIFICATION_DB_NAME:-notification_service}
+      SPRING_DATASOURCE_USERNAME: ${NOTIFICATION_DB_USERNAME:-notification}
+      SPRING_DATASOURCE_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notification_local}
+      RIDENOW_NOTIFICATIONS_QUEUE_URL: http://localstack:4566/000000000000/ridenow-local-notifications
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ENDPOINT: http://localstack:4566
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+    ports:
+      - "8084:8084"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8084/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ---- Matching service: nearby-driver matching via Redis GEO ----------------
+  matching-service:
+    build: ./matching-service
+    depends_on:
+      matching-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8085
+      SPRING_DATASOURCE_URL: jdbc:postgresql://matching-db:5432/${MATCHING_DB_NAME:-matching_service}
+      SPRING_DATASOURCE_USERNAME: ${MATCHING_DB_USERNAME:-matching}
+      SPRING_DATASOURCE_PASSWORD: ${MATCHING_DB_PASSWORD:-matching_local}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Use the Redis GEO finder in the running system (the "real" path).
+      MATCHING_FINDER: redis
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8085/actuator/health | grep -q UP"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -164,3 +304,5 @@ volumes:
   driver-db-data:
   trip-db-data:
   payment-db-data:
+  notification-db-data:
+  matching-db-data:
