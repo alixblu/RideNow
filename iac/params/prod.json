@@ -20,7 +20,7 @@
     "MultiAz": "true",
     "BackupRetentionDays": "30",
     "DeletionProtection": "true",
-    "EngineVersion": "17.4"
+    "EngineVersion": "17"
   },
   "05-messaging": {
     "Environment": "prod",

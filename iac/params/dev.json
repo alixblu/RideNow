@@ -20,7 +20,7 @@
     "MultiAz": "false",
     "BackupRetentionDays": "1",
     "DeletionProtection": "false",
-    "EngineVersion": "17.4"
+    "EngineVersion": "17"
   },
   "05-messaging": {
     "Environment": "dev",

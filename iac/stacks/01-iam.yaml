@@ -60,7 +60,7 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub "ridenow-${Environment}-app-access"
-      Description: >
+      Description: >-
         Scoped runtime access for RideNow pods via IRSA: pull images, read DB
         secrets, and (where present) use the environment's queues and event bus.
       PolicyDocument:

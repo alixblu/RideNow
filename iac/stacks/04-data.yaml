@@ -41,8 +41,10 @@ Parameters:
 
   EngineVersion:
     Type: String
-    Default: "17.4"
-    Description: PostgreSQL engine version (match local Postgres 17).
+    Default: "17"
+    Description: PostgreSQL engine version. Major version only ("17") so RDS
+      always picks the latest available minor; pinning a specific minor (e.g.
+      "17.4") breaks when AWS retires that minor from the available list.
 
 Resources:
   # ---- Shared subnet group (private subnets from the network stack) --------

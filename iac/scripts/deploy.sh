@@ -63,7 +63,7 @@ params_for() {
     .[$l] // {} | to_entries
     | map("ParameterKey=\(.key),ParameterValue=\(.value)")
     | join(" ")
-  ' "${PARAMS_FILE}"
+  ' "${PARAMS_FILE}" | tr -d '\r'
 }
 
 for layer in "${LAYERS[@]}"; do
@@ -74,26 +74,82 @@ for layer in "${LAYERS[@]}"; do
   echo "-- ${stack_name} --"
   # Always validate the template first.
   echo "+ aws cloudformation validate-template --template-body file://${template}"
-  if [[ ${APPLY} -eq 1 ]]; then
-    # shellcheck disable=SC2086
-    aws cloudformation deploy \
+
+  # Detect current stack state. Used by both dry-run and apply paths.
+  # REVIEW_IN_PROGRESS means a prior dry-run left a ghost stack with no resources.
+  stack_status="$(aws cloudformation describe-stacks \
       --region "${AWS_REGION}" \
       --stack-name "${stack_name}" \
-      --template-file "${template}" \
-      --capabilities CAPABILITY_NAMED_IAM \
-      --parameter-overrides ${overrides}
+      --query 'Stacks[0].StackStatus' \
+      --output text 2>/dev/null || echo "DOES_NOT_EXIST")"
+
+  # Build --parameters array; overrides is already ParameterKey=K,ParameterValue=V form.
+  params_args=()
+  for kv in ${overrides}; do
+    params_args+=("${kv}")
+  done
+
+  # Resolve change-set type: CREATE for new or ghost stacks, UPDATE for live ones.
+  if [[ "${stack_status}" == "DOES_NOT_EXIST" || "${stack_status}" == "REVIEW_IN_PROGRESS" ]]; then
+    cs_type="CREATE"
   else
-    # Dry run: produce a change set without executing it.
-    echo "+ aws cloudformation deploy --no-execute-changeset --stack-name ${stack_name} ..."
-    echo "  parameters: ${overrides}"
-    # shellcheck disable=SC2086
-    aws cloudformation deploy \
+    cs_type="UPDATE"
+  fi
+
+  if [[ ${APPLY} -eq 1 ]]; then
+    cs_name="ridenow-apply-$(date +%s)"
+    echo "+ creating and executing change set (${cs_type}) ..."
+    # Use create-change-set + execute instead of "deploy" so we control the
+    # change-set type explicitly. This avoids "must have values" errors when a
+    # ghost REVIEW_IN_PROGRESS stack exists from a prior dry run.
+    aws cloudformation create-change-set \
       --region "${AWS_REGION}" \
       --stack-name "${stack_name}" \
-      --template-file "${template}" \
+      --template-body "file://${template}" \
       --capabilities CAPABILITY_NAMED_IAM \
-      --no-execute-changeset \
-      --parameter-overrides ${overrides} || true
+      --change-set-name "${cs_name}" \
+      --change-set-type "${cs_type}" \
+      --parameters "${params_args[@]}"
+
+    echo "+ waiting for change set to be ready ..."
+    aws cloudformation wait change-set-create-complete \
+      --region "${AWS_REGION}" \
+      --stack-name "${stack_name}" \
+      --change-set-name "${cs_name}"
+
+    echo "+ executing change set ..."
+    aws cloudformation execute-change-set \
+      --region "${AWS_REGION}" \
+      --stack-name "${stack_name}" \
+      --change-set-name "${cs_name}"
+
+    echo "+ waiting for stack to stabilise ..."
+    if [[ "${cs_type}" == "CREATE" ]]; then
+      aws cloudformation wait stack-create-complete \
+        --region "${AWS_REGION}" \
+        --stack-name "${stack_name}"
+    else
+      aws cloudformation wait stack-update-complete \
+        --region "${AWS_REGION}" \
+        --stack-name "${stack_name}"
+    fi
+    echo "  ${stack_name} deployed."
+  else
+    # Dry run: create the change set but do not execute it.
+    cs_name="ridenow-dryrun-$(date +%s)"
+    echo "+ aws cloudformation create-change-set --stack-name ${stack_name} (${cs_type}) ..."
+    echo "  parameters: ${overrides}"
+
+    aws cloudformation create-change-set \
+      --region "${AWS_REGION}" \
+      --stack-name "${stack_name}" \
+      --template-body "file://${template}" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --change-set-name "${cs_name}" \
+      --change-set-type "${cs_type}" \
+      --parameters "${params_args[@]}" \
+    && echo "  change set '${cs_name}' (${cs_type}) created — not executed" \
+    || echo "  WARN: change set creation failed (see error above)"
   fi
   echo
 done
