@@ -30,19 +30,12 @@ separate DB to prove any of the three patterns. Create it manually later (see th
 | 01-iam | `iac/stacks/01-iam.yaml` | EKS cluster + node roles, scoped policies |
 | 02-network | `iac/stacks/02-network.yaml` | VPC, subnets (2 AZ), IGW, NAT, SGs |
 | 03-ecr | `iac/stacks/03-ecr.yaml` | ECR repos for user/driver/trip/payment/matching/notification |
-| **04-data-lab** | **`localfile/aws-hybrid/04-data-lab.yaml`** | Five single-AZ RDS instances (user/driver/trip/payment/notification) with Secrets Manager credentials |
+| **04-data** | **`iac/stacks/04-data.yaml`** | Five Multi-AZ RDS instances (user/driver/trip/payment/notification) with Secrets Manager credentials |
 
-Stack 04 uses **this folder's own template** (`04-data-lab.yaml`) instead of
-`iac/stacks/04-data.yaml`. The differences:
-
-- **Five DBs** (adds notification-worker; drops matching-service).
-- **Single-AZ, no automated backups, `DeletionPolicy: Delete`** — sized and
-  configured for a disposable lab, not production.
-- **EngineVersion defaults to `"17"`** (major only) so RDS picks the latest
-  available minor automatically. Never pin a specific minor like `17.4` — AWS
-  retires old minors and the stack will fail with an `InvalidRequest` error.
-- **Same export names** as `iac/stacks/04-data.yaml` so the k8s manifests and
-  `07-eks-deploy.md` work without any changes.
+All four stacks use the standard `iac/stacks/` templates. Stack 04 parameters
+are controlled by `iac/params/dev.json` — the defaults there use `MultiAz: false`
+for dev. To enable Multi-AZ, set `MultiAz=true` in the deploy command or update
+`dev.json`.
 
 ---
 
@@ -88,14 +81,16 @@ for layer in 01-iam 02-network 03-ecr; do
     --no-cli-pager
 done
 
-# Stack 04 uses the lab template:
+# Stack 04 uses the standard iac/ template:
+params=$(jq -r '."04-data" // {} | to_entries | map("ParameterKey=\(.key),ParameterValue=\(.value)") | join(" ")' \
+  params/dev.json)
 aws cloudformation create-change-set \
   --region ap-southeast-1 \
   --stack-name ridenow-dev-04-data \
-  --template-body file://../localfile/aws-hybrid/04-data-lab.yaml \
+  --template-body file://stacks/04-data.yaml \
   --change-set-type CREATE \
   --change-set-name ridenow-dev-04-data-dryrun \
-  --parameters ParameterKey=Environment,ParameterValue=dev \
+  --parameters $params \
   --no-cli-pager
 aws cloudformation wait change-set-create-complete \
   --region ap-southeast-1 \
@@ -167,19 +162,45 @@ import exports from 02-network).
 
 ---
 
-## 3. Deploy stack 04 (the lab template)
+## 3. Deploy stack 04 (from iac/)
 
 ```bash
-aws cloudformation deploy \
+cd iac
+params=$(jq -r '."04-data" // {} | to_entries | map("ParameterKey=\(.key),ParameterValue=\(.value)") | join(" ")' \
+  params/dev.json)
+
+aws cloudformation create-change-set \
   --region ap-southeast-1 \
   --stack-name ridenow-dev-04-data \
-  --template-file ../localfile/aws-hybrid/04-data-lab.yaml \
-  --parameter-overrides Environment=dev
+  --template-body file://stacks/04-data.yaml \
+  --change-set-type CREATE \
+  --change-set-name ridenow-dev-04-data-deploy \
+  --parameters $params \
+  --no-cli-pager
+
+aws cloudformation wait change-set-create-complete \
+  --region ap-southeast-1 \
+  --stack-name ridenow-dev-04-data \
+  --change-set-name ridenow-dev-04-data-deploy \
+  --no-cli-pager
+
+aws cloudformation execute-change-set \
+  --region ap-southeast-1 \
+  --stack-name ridenow-dev-04-data \
+  --change-set-name ridenow-dev-04-data-deploy \
+  --no-cli-pager
+
+aws cloudformation wait stack-create-complete \
+  --region ap-southeast-1 \
+  --stack-name ridenow-dev-04-data \
+  --no-cli-pager
+
+echo "ridenow-dev-04-data: CREATE_COMPLETE"
 ```
 
-Five RDS instances take a few minutes each. The command waits until all five are
-`Available`. If it fails with `Cannot find version ...`, check that
-`EngineVersion=17` is what was passed (no minor version pinned).
+Five RDS instances take a few minutes each. If it fails with
+`Cannot find version ...`, confirm `EngineVersion=17` was passed — never pin a
+specific minor like `17.4` (AWS retires old minors and the stack will fail).
 
 ---
 
@@ -224,11 +245,11 @@ All six repos are now in `iac/stacks/03-ecr.yaml` — nothing to create by hand.
 
 ### matching-service DB (optional — only if you want the GEO matching demo)
 
-`04-data-lab.yaml` intentionally skips matching-service. If you want to demo
-nearby-driver matching later, create one RDS instance manually in the console
-(same settings as the others: private, same DB SG, `matching_service` DB name,
-`matching` master user, Secrets Manager creds). It is not required for patterns
-1, 2, or 3.
+`iac/stacks/04-data.yaml` only creates the four core databases (user, driver,
+trip, payment, notification). If you want to demo nearby-driver matching later,
+create one RDS instance manually in the console (same settings as the others:
+private, same DB SG, `matching_service` DB name, `matching` master user, Secrets
+Manager creds). It is not required for patterns 1, 2, or 3.
 
 ---
 
@@ -249,19 +270,9 @@ Delete the ALB + EKS workloads and node group first (they hold the VPC open),
 then the two manually-created ECR repos, then:
 
 ```bash
-# Delete stack 04 separately (different template path):
-aws cloudformation delete-stack \
-  --stack-name ridenow-dev-04-data --region ap-southeast-1
-aws cloudformation wait stack-delete-complete \
-  --stack-name ridenow-dev-04-data --region ap-southeast-1
-
-# Then stacks 03 -> 01 in reverse:
+# Delete stacks 04 -> 01 in reverse (teardown.sh handles all four):
 cd iac
 ./scripts/teardown.sh dev --apply
 ```
-
-`teardown.sh` handles 01-03 in reverse order; stack 04 is done separately because
-it was deployed from a different template path and `teardown.sh` doesn't know
-about it.
 
 Next: `05-push-images.md`.
