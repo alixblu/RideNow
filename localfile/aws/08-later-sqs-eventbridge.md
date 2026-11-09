@@ -1,14 +1,14 @@
-# 08 - Later op: SQS + EventBridge (async notifications)
+# 08 - SQS + EventBridge (async notifications)
 
-Goal (when you want async notifications live): the same bus/queue/rule the code
-already publishes to and consumes from locally, created in the console. Then
-trip/payment events fan out through EventBridge to an SQS queue, and
-notification-worker processes them with retries + DLQ.
+Goal: the production bus/queue/rule the code already publishes to and consumes
+from locally, created in the console. trip/payment events fan out through
+EventBridge to an SQS queue, and notification-worker processes them with retries
++ DLQ.
 
-Do this whenever you want the async feature on EKS. Independent of Redis (guide 07).
+Independent of Redis (guide 07) — provision in either order.
 
-Time: ~20 min. Cost: SQS/EventBridge are effectively free at this volume (pay per
-request, generous free tier).
+Time: ~20 min. Cost: SQS/EventBridge are inexpensive at this volume (pay per
+request).
 
 ---
 

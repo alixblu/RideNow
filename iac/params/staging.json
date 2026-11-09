@@ -4,37 +4,31 @@
   },
   "02-network": {
     "Environment": "staging",
-    "VpcCidr": "10.20.0.0/16",
-    "AzCount": "2",
-    "SingleNatGateway": "false"
+    "VpcCidr": "10.20.0.0/16"
   },
   "03-ecr": {
     "Environment": "staging",
-    "MaxImageCount": "30",
+    "MaxImageCount": "50",
     "UntaggedExpireDays": "14"
   },
   "04-data": {
     "Environment": "staging",
-    "DbInstanceClass": "db.t4g.small",
-    "DbAllocatedStorage": "50",
+    "DbInstanceClass": "db.r6g.large",
+    "DbAllocatedStorage": "100",
     "MultiAz": "true",
-    "BackupRetentionDays": "7",
-    "DeletionProtection": "true",
+    "BackupRetentionDays": "30",
+    "DeletionProtection": "false",
     "EngineVersion": "17"
   },
   "05-messaging": {
     "Environment": "staging",
     "EnableMessaging": "true",
     "EnableRedis": "true",
-    "RedisNodeType": "cache.t4g.small"
+    "RedisNodeType": "cache.r6g.large"
   },
   "06-eks-cluster": {
     "Environment": "staging",
-    "KubernetesVersion": "1.31",
-    "NodeInstanceType": "t3.large",
-    "NodeMinSize": "2",
-    "NodeDesiredSize": "3",
-    "NodeMaxSize": "6"
+    "KubernetesVersion": "1.31"
   },
   "07-eks-addons": {
     "Environment": "staging",

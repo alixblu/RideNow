@@ -185,6 +185,17 @@ The migration to cloud (steps 10-11) is deliberately late and deliberately dull:
 every mechanism already has a working local version, so the cloud is "same concept,
 managed by AWS."
 
+**Cloud phase status (built).** The AWS footprint is now codified end to end as a
+**production** deployment on **EKS Fargate** (serverless pods — no EC2 node groups, no
+cluster autoscaler). The CloudFormation layers in `iac/stacks/` (01 IAM incl. a Fargate
+pod execution role, 02 three-AZ network with a NAT per AZ, 03 ECR, 04 per-service
+Multi-AZ RDS, 05 SQS/EventBridge/Redis, 06 cluster + Fargate profiles, 07 ALB-controller
+and External-Secrets IRSA) deploy in order via `iac/scripts/deploy.sh`, and the console
+counterpart is `localfile/aws/01..08`. Observability is Fargate-appropriate: the AMP
+agentless scraper plus the Fargate log router, not node-level DaemonSet agents. See
+section 9.5 for the gap between "stacks deployed" and "running app", and the networking /
+inbound-security posture.
+
 ---
 
 ## 6. How to tell if you are doing it right
@@ -208,10 +219,11 @@ notification-worker), and **all four Redis roles** (matching-service's Redis GEO
 state, cache-aside, Pub/Sub) are all built and run locally - against a Redis container and
 LocalStack, so the cloud move is config-only.
 
-The remaining work is the cloud/platform phase: Docker images (done), local Kubernetes, then
-AWS (console first, then CloudFormation) and EKS, followed by observability, CI/CD, and
-load/failure testing. Each still follows the same rule - the mechanism behind each boundary
-is swapped, the boundary itself does not move.
+The cloud/platform phase is now largely codified: Docker images (done), and the full AWS
+footprint as production **EKS Fargate** CloudFormation (`iac/`) with matching console
+guides (`localfile/aws/`). What remains is the application-security and resilience
+hardening in section 9, plus CI/CD and load/failure testing. Each still follows the same
+rule — the mechanism behind each boundary is swapped, the boundary itself does not move.
 
 
 ---
@@ -338,9 +350,16 @@ than a redesign - which is the whole point of the design.
   DLQ via redelivery. The publisher sits behind a `DomainEventPublisher` interface with
   profile-selected impls, so the cloud swap is config-only.
 - **Credible platform story.** K8s manifests set resource requests/limits, readiness and
-  liveness probes, and HPA on the HTTP services; secrets come from AWS Secrets Manager via
-  the External Secrets Operator and IRSA (no static keys); CloudFormation is staged per
-  environment. Well above typical hobby-project quality.
+  liveness probes, and HPA on the HTTP services; pods run on **EKS Fargate** (no nodes to
+  patch or autoscale); secrets come from AWS Secrets Manager via the External Secrets
+  Operator and IRSA (no static keys); CloudFormation deploys a three-AZ, Multi-AZ-RDS
+  production footprint. Well above typical hobby-project quality.
+- **Data-tier network isolation is real.** RDS and ElastiCache sit in private subnets and
+  their security groups accept traffic only from the cluster SG, then (per guide 06 step
+  2.5) only from per-service security groups — so a service can reach its own database but
+  not another service's. The application services are `ClusterIP`; only the ALB is
+  internet-facing, and it routes just the four public API paths. matching-service and
+  notification-worker have no public route at all.
 
 ### 9.2 Production blockers (must fix before "enterprise")
 
@@ -350,8 +369,10 @@ than a redesign - which is the whole point of the design.
    user-service does not hash credentials. For a ride-hailing app handling payments and PII
    this alone makes it non-production. It is marked "planned" in the docs, consistent with
    the learning stage, but it is non-negotiable for enterprise.
-2. **No edge TLS.** The ingress is HTTP:80 only (no HTTPS listener) and is a bare
-   path-router with no auth or rate limiting. Combined with (1), the edge is wide open.
+2. **No edge TLS, WAF, or inbound restriction.** The ALB ingress is `internet-facing`
+   with a single HTTP:80 listener — no ACM certificate / HTTPS, no `wafv2-acl-arn`, no
+   `inbound-cidrs` source-IP limit. It is a bare path-router with no auth or rate
+   limiting. Combined with (1), the edge is wide open to the whole internet in plaintext.
 3. **No sync-call resilience.** The one cross-service call (`UserServiceClient`) uses a
    `RestClient` built with no connect/read timeout, no retry, and no circuit breaker. A
    slow or hung user-service ties up driver-service threads unbounded. No
@@ -369,7 +390,15 @@ than a redesign - which is the whole point of the design.
 
 - Liveness and readiness both point at `/actuator/health`; they should be split so a lost
   DB connection gates traffic (readiness) without triggering pod restarts (liveness).
-- No `NetworkPolicy`, `PodDisruptionBudget`, or resource quotas.
+- **No east-west restriction between pods.** There is no Kubernetes `NetworkPolicy`
+  anywhere in `iac/k8s/`, so pod-to-pod traffic inside the cluster is unrestricted — any
+  service pod can call any other on any port. The per-pod security groups (guide 06 step
+  2.5) scope pod→**database** access, not pod→pod. On **Fargate** this matters because
+  NetworkPolicy enforcement needs the VPC CNI NetworkPolicy agent (a DaemonSet), which
+  Fargate does not run — so the Fargate-correct lever for east-west control is to extend
+  the per-service security groups to also scope which caller SGs may reach each service,
+  rather than relying on NetworkPolicy. (See 9.5.)
+- No `PodDisruptionBudget` or resource quotas.
 - `notification-worker` scales on nothing (replicas:1, no KEDA/SQS-depth autoscaling).
 - Payment is a `SimulatedPaymentGateway` - expected at this stage, not production.
 
@@ -385,3 +414,56 @@ mean each can be added as a mechanism swap, which is exactly what this design op
 Suggested hardening order when the project reaches that phase: security -> observability ->
 sync-call resilience -> transactional outbox, each introduced as the smallest change that
 fits the existing service and data boundaries.
+
+### 9.5 Cloud deploy: what the IaC does, and the network/security posture
+
+A precise read of "can we run the whole prod project from the IaC now", recorded here so
+it does not have to be re-derived.
+
+**What the CloudFormation deploys (stacks 01→07).** `iac/scripts/deploy.sh prod --apply`
+provisions the full AWS footprint in dependency order: IAM roles (incl. the Fargate pod
+execution role), the three-AZ network, ECR repos, four Multi-AZ RDS instances with
+Secrets Manager credentials, SQS/DLQ + EventBridge + ElastiCache, the EKS control plane
+with three Fargate profiles, and the ALB-controller / External-Secrets IRSA roles. All
+seven templates pass `cfn-lint` and are wired purely by exports/imports.
+
+**What the IaC does NOT do (still manual / CLI, per guides 03/05/06).** The templates
+provision infrastructure, not the running application:
+
+- Build and push service images to ECR (guide 03).
+- In-cluster installs that are Helm/kubectl, not CloudFormation: the AWS Load Balancer
+  Controller, the External Secrets Operator, the CoreDNS Fargate patch, the Fargate
+  log-router ConfigMap, the per-service `SecurityGroupPolicy` resources, and the service
+  Deployments/Services/Ingress/HPA manifests.
+- The KMS grant that lets External Secrets decrypt the RDS-managed secrets, and the
+  per-service SG creation + `authorize-security-group-ingress` (guide 06 step 2.5).
+- **One single-pass blocker:** stack 07 needs the cluster's OIDC provider id
+  (`OidcProviderId`), which only exists after stack 06. `deploy.sh` runs 06→07 in one
+  pass with that parameter empty, so a clean run fails on 07 until the id is supplied
+  (guide 06 step 1c deploys 07 by hand with it). Resolving the id automatically between
+  06 and 07 would make the script a true one-command infra deploy.
+
+**Network / inbound security posture (what is controlled vs open).**
+
+Controlled today:
+- Databases and Redis are private-subnet only; their SGs admit traffic only from the
+  cluster SG, tightened to per-service SGs by guide 06 step 2.5 (a service reaches its own
+  DB, not another's).
+- Services are `ClusterIP`; the only internet-facing entry is the ALB, routing just the
+  four public API paths. matching-service and notification-worker are not publicly
+  reachable.
+
+Open / missing (consolidated with 9.2 and 9.3):
+- The ALB is HTTP:80, internet-facing, with no WAF, no `inbound-cidrs`, and no
+  application auth — the edge is wide open.
+- No pod-to-pod (east-west) restriction: no `NetworkPolicy`, and NetworkPolicy enforcement
+  is unavailable on Fargate anyway, so east-west must be done with per-service security
+  groups instead.
+
+Fargate-correct hardening to close the inbound/east-west gap, in priority order:
+1. ALB: attach an ACM certificate + HTTPS listener (redirect 80→443), a WAFv2 ACL, and
+   `inbound-cidrs` if the API is not meant for the open internet.
+2. East-west: extend the per-service SGs so each service's SG admits only the specific
+   caller SGs it expects (e.g. driver-service from the ALB SG and user-service SG only) —
+   the substitute for NetworkPolicy on Fargate.
+3. Application auth/TLS as per 9.2 blockers (1) and (2), which no network control replaces.

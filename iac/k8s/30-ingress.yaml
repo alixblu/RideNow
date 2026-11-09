@@ -4,6 +4,9 @@
 # the AlbControllerRoleArn exported by stack 07-eks-addons. The controller reads
 # these annotations and provisions an ALB in the PUBLIC subnets (discovered via
 # the kubernetes.io/role/elb subnet tags set in the network stack).
+#
+# target-type: ip is REQUIRED on Fargate - there are no EC2 instances to register
+# as targets, so the ALB targets pod IPs directly.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -1,16 +1,17 @@
-# RideNow on AWS - Console-First, Step by Step (Backend)
+# RideNow on AWS - Console-First, Step by Step (Backend, Production)
 
-A hands-on, **click-by-click** path to run the RideNow backend on AWS using the
-**Management Console**. No CloudFormation, no CLI-only steps except where the
-console genuinely can't do the thing (building/pushing a Docker image, and
-`kubectl` once the cluster exists). This is the console counterpart to the
-codified templates in `../../iac/`.
+A hands-on, **click-by-click** path to run the RideNow backend in **production**
+on AWS using the **Management Console**. No CloudFormation, no CLI-only steps
+except where the console genuinely can't do the thing (building/pushing a Docker
+image, and `kubectl` once the cluster exists). This is the console counterpart to
+the codified templates in `../../iac/`.
 
-> Scope: **backend only**, as requested. The goal is to get the four HTTP
-> services + the notification worker + matching running on **Amazon EKS**, which
-> is the piece you do by hand here. The stateful managed services the code can
-> use (ElastiCache / SQS / EventBridge) are covered as **later operations** you
-> switch on by changing environment variables - no code changes.
+> Scope: **backend only**. The goal is to get the four HTTP services + the
+> notification worker + matching running on **Amazon EKS with AWS Fargate** —
+> serverless pods, no EC2 node group to size, patch, or autoscale. The stateful
+> managed services the code uses (ElastiCache / SQS / EventBridge) are provisioned
+> as part of the production footprint and wired via environment variables — no
+> code changes.
 
 ---
 
@@ -20,49 +21,52 @@ codified templates in `../../iac/`.
                  Internet
                     |
             ALB (Ingress)           <- one load balancer, routes by path
-                    |
+                    |                   (targets pod IPs: target-type: ip)
    /api/users  /api/drivers  /api/trips  /api/payments
         |            |            |            |
-   user-svc     driver-svc    trip-svc    payment-svc      (Deployments on EKS)
+   user-svc     driver-svc    trip-svc    payment-svc      (Fargate pods on EKS)
         |            |            |            |
-     RDS user    RDS driver   RDS trip    RDS payment       (one DB per service)
+     RDS user    RDS driver   RDS trip    RDS payment       (one Multi-AZ DB per service)
 
    matching-svc (internal)        notification-worker (no HTTP, consumes SQS)
         |                                |
    ElastiCache Redis (GEO/live)     SQS queue + DLQ  <--  EventBridge bus
-                                         ^                     ^
-                                    "later ops": switch on when you want the
-                                    async + Redis features in the cloud
 ```
 
-The application code is already written against the **real AWS SDK v2** (SQS,
-EventBridge) and **Spring Data Redis**, exercised locally against LocalStack and
-a Redis container. So "move to AWS" means: provision the managed resource in the
-console, then point the same container image at it by changing environment
-variables. No rebuild.
+Every pod runs on **Fargate**: EKS schedules it onto a right-sized micro-VM based
+on the pod's CPU/memory requests — there are no nodes in the cluster. The
+application code is written against the **real AWS SDK v2** (SQS, EventBridge) and
+**Spring Data Redis**, so moving to AWS means provisioning the managed resource in
+the console and pointing the same container image at it via environment variables.
+No rebuild.
 
 ---
 
 ## The order (do these top to bottom)
 
 EKS needs a network, images, and databases to be useful, so the dependency order
-is IAM -> VPC -> ECR -> RDS/Secrets -> EKS -> deploy. The async/Redis pieces have
-no hard dependency on EKS and can be done whenever you want those features.
+is IAM -> VPC -> ECR -> RDS/Secrets -> EKS -> deploy. Redis and the async
+messaging layer are part of the production footprint and can be provisioned in
+parallel once the network exists.
+
+> **Deploying from the CloudFormation templates?** Read `00-deploy-runbook.md`
+> first — it sequences the `iac/` stack deploys with the per-guide image-build,
+> Helm, and `kubectl` steps in one dependency-correct order, and explains where
+> each guide below slots in.
 
 | # | Guide | What it creates | Needed for EKS? |
 |---|-------|-----------------|-----------------|
-| 01 | `01-iam.md` | An admin-ish IAM user/role for yourself; the EKS cluster & node roles | yes (prereq) |
-| 02 | `02-vpc.md` | VPC, public + private subnets (multi-AZ), IGW, NAT, route tables, security groups | yes |
+| 01 | `01-iam.md` | An admin IAM user/role for yourself; the EKS cluster role and the Fargate pod execution role | yes (prereq) |
+| 02 | `02-vpc.md` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, security groups | yes |
 | 03 | `03-ecr.md` | One ECR repo per service; build & push images | yes |
-| 04 | `04-rds-secrets.md` | One RDS PostgreSQL per service; credentials in Secrets Manager | yes (pods need a DB) |
-| 05 | `05-eks-cluster.md` | The EKS cluster + a managed node group; connect `kubectl` | **the main event** |
+| 04 | `04-rds-secrets.md` | One Multi-AZ RDS PostgreSQL per service; credentials in Secrets Manager | yes (pods need a DB) |
+| 05 | `05-eks-cluster.md` | The EKS cluster + Fargate profiles; connect `kubectl` | **the main event** |
 | 06 | `06-eks-deploy.md` | Namespace, Secrets, Deployments/Services, the ALB Ingress; verify traffic | yes (this is "done") |
-| 07 | `07-later-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub) | no - later op |
-| 08 | `08-later-sqs-eventbridge.md` | SQS queue + DLQ, EventBridge bus + rule; wire the worker | no - later op |
+| 07 | `07-later-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub) | matching-service |
+| 08 | `08-later-sqs-eventbridge.md` | SQS queue + DLQ, EventBridge bus + rule; wire the worker | notification-worker |
 
-Guides 01-06 get you a running backend on EKS. Guides 07-08 are the "others
-later" operations you called out - switch them on when you want the async and
-Redis features live in the cloud.
+Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the
+Redis and async messaging the matching-service and notification-worker depend on.
 
 ---
 
@@ -80,23 +84,24 @@ built code (`application.yaml` per service) and the k8s manifests in `../../iac/
 | matching-service | 8085 | `ridenow/matching-service` | `/actuator/health` | its RDS, Redis* |
 | notification-worker | 8084 (health only) | `ridenow/notification-worker` | `/actuator/health` | its RDS, SQS* |
 
-`*` = only when you do the later ops (07-08). Without them, driver/trip/payment/
-user run fine; matching needs Redis to answer GEO queries; the worker idles with
-no queue.
+`*` = provisioned in guides 07-08. driver/trip/payment/user run on their RDS;
+matching needs Redis to answer GEO queries; the worker consumes the SQS queue.
 
-> The k8s manifests in `../../iac/k8s/` currently cover user/driver/trip/payment.
-> When you deploy matching-service and notification-worker, add manifests for
-> them following the same shape (guide 06 shows the pattern and the extra env).
+> The k8s manifests in `../../iac/k8s/` cover user/driver/trip/payment plus
+> matching-service and notification-worker. All are selected by the `ridenow`
+> Fargate profile (namespace match), so they schedule onto Fargate with no node
+> group present.
 
 ---
 
 ## Cost warning (read before you click Create)
 
-EKS control plane, NAT gateways, and RDS (especially Multi-AZ) **bill by the
-hour whether or not you use them**. ElastiCache bills continuously too. This is
-NOT free tier. When you stop for the day, tear down in reverse order
-(08 -> 01) or at least delete the EKS node group, NAT gateways, and RDS
-instances. Each guide ends with a "Clean up" note.
+The EKS control plane, NAT gateways (one per AZ), Multi-AZ RDS, and ElastiCache
+**bill by the hour whether or not you use them**. This is NOT free tier. Fargate
+is different: it bills **per pod vCPU/memory-second** while pods run, so idle
+pods still cost (there's always at least `minReplicas` running) but there are no
+always-on worker nodes. When you decommission an environment, tear down in
+reverse order (08 -> 01). Each guide ends with a "Clean up" note.
 
 ## Prerequisites
 

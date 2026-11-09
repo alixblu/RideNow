@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  RideNow network layer (02). VPC with public + private subnets across multiple
-  AZs, Internet Gateway, NAT gateway(s), route tables, and base security groups.
-  Exports are consumed by the data (04), messaging (05), and EKS (06) stacks.
+  RideNow network layer (02). Production VPC: public + private subnets across
+  THREE Availability Zones, Internet Gateway, one NAT gateway per AZ, route
+  tables, and base security groups. Exports are consumed by the data (04),
+  messaging (05), and EKS (06) stacks.
 
 # ---------------------------------------------------------------------------
 # Parameters (supplied per environment via params/<env>.json)
@@ -15,34 +16,8 @@ Parameters:
 
   VpcCidr:
     Type: String
-    Default: 10.0.0.0/16
+    Default: 10.30.0.0/16
     Description: CIDR block for the VPC.
-
-  AzCount:
-    Type: Number
-    AllowedValues: [2, 3]
-    Default: 2
-    Description: Number of Availability Zones to spread subnets across.
-
-  SingleNatGateway:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "true"
-    Description: >
-      true  = one shared NAT gateway (cheaper, dev).
-      false = one NAT gateway per AZ (resilient, prod).
-
-# ---------------------------------------------------------------------------
-# Conditions
-# ---------------------------------------------------------------------------
-Conditions:
-  UseThreeAzs: !Equals [!Ref AzCount, 3]
-  OneNatGateway: !Equals [!Ref SingleNatGateway, "true"]
-  # Second/third NAT only created when NOT sharing a single NAT.
-  CreateNat2: !Not [!Condition OneNatGateway]
-  CreateNat3: !And
-    - !Not [!Condition OneNatGateway]
-    - !Condition UseThreeAzs
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -103,7 +78,6 @@ Resources:
 
   PublicSubnet3:
     Type: AWS::EC2::Subnet
-    Condition: UseThreeAzs
     Properties:
       VpcId: !Ref Vpc
       AvailabilityZone: !Select [2, !GetAZs ""]
@@ -145,7 +119,6 @@ Resources:
 
   PrivateSubnet3:
     Type: AWS::EC2::Subnet
-    Condition: UseThreeAzs
     Properties:
       VpcId: !Ref Vpc
       AvailabilityZone: !Select [2, !GetAZs ""]
@@ -188,7 +161,6 @@ Resources:
 
   PublicSubnet3RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: UseThreeAzs
     Properties:
       SubnetId: !Ref PublicSubnet3
       RouteTableId: !Ref PublicRouteTable
@@ -214,7 +186,6 @@ Resources:
 
   NatEip2:
     Type: AWS::EC2::EIP
-    Condition: CreateNat2
     DependsOn: VpcGatewayAttachment
     Properties:
       Domain: vpc
@@ -224,7 +195,6 @@ Resources:
 
   NatGateway2:
     Type: AWS::EC2::NatGateway
-    Condition: CreateNat2
     Properties:
       AllocationId: !GetAtt NatEip2.AllocationId
       SubnetId: !Ref PublicSubnet2
@@ -234,7 +204,6 @@ Resources:
 
   NatEip3:
     Type: AWS::EC2::EIP
-    Condition: CreateNat3
     DependsOn: VpcGatewayAttachment
     Properties:
       Domain: vpc
@@ -244,7 +213,6 @@ Resources:
 
   NatGateway3:
     Type: AWS::EC2::NatGateway
-    Condition: CreateNat3
     Properties:
       AllocationId: !GetAtt NatEip3.AllocationId
       SubnetId: !Ref PublicSubnet3
@@ -287,8 +255,8 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable2
       DestinationCidrBlock: 0.0.0.0/0
-      # Shared single NAT -> NatGateway1; per-AZ NAT -> NatGateway2.
-      NatGatewayId: !If [OneNatGateway, !Ref NatGateway1, !Ref NatGateway2]
+      # Per-AZ NAT for resilience: AZ2 private subnet egresses via its own NAT.
+      NatGatewayId: !Ref NatGateway2
 
   PrivateSubnet2RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -298,7 +266,6 @@ Resources:
 
   PrivateRouteTable3:
     Type: AWS::EC2::RouteTable
-    Condition: UseThreeAzs
     Properties:
       VpcId: !Ref Vpc
       Tags:
@@ -307,25 +274,27 @@ Resources:
 
   PrivateDefaultRoute3:
     Type: AWS::EC2::Route
-    Condition: UseThreeAzs
     Properties:
       RouteTableId: !Ref PrivateRouteTable3
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !If [OneNatGateway, !Ref NatGateway1, !Ref NatGateway3]
+      NatGatewayId: !Ref NatGateway3
 
   PrivateSubnet3RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: UseThreeAzs
     Properties:
       SubnetId: !Ref PrivateSubnet3
       RouteTableId: !Ref PrivateRouteTable3
 
   # ---- Security groups -----------------------------------------------------
-  # Shared SG for EKS worker nodes / application pods.
-  NodeSecurityGroup:
+  # Shared SG used by in-VPC resources that must reach the databases. On
+  # Fargate, application pods primarily attach to the EKS cluster security group
+  # (created by EKS), so the DB SG below also allows that cluster SG at deploy
+  # time - see guide 06. This SG is still exported for the ALB and any
+  # VPC-level wiring that needs a stable, stack-owned group.
+  ClusterSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub "ridenow-${Environment} EKS nodes / application pods"
+      GroupDescription: !Sub "ridenow-${Environment} EKS / application pods"
       VpcId: !Ref Vpc
       SecurityGroupEgress:
         - IpProtocol: "-1"
@@ -333,18 +302,18 @@ Resources:
           Description: Allow all egress (NAT to internet, RDS, etc.)
       Tags:
         - Key: Name
-          Value: !Sub "ridenow-${Environment}-node-sg"
+          Value: !Sub "ridenow-${Environment}-cluster-sg"
 
-  # Nodes may talk to each other freely (pod-to-pod, kubelet, etc.).
-  NodeSelfIngress:
+  # Members may talk to each other freely (pod-to-pod, control plane, etc.).
+  ClusterSelfIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      GroupId: !Ref NodeSecurityGroup
+      GroupId: !Ref ClusterSecurityGroup
       IpProtocol: "-1"
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      Description: Allow all traffic between nodes in this SG.
+      SourceSecurityGroupId: !Ref ClusterSecurityGroup
+      Description: Allow all traffic between members of this SG.
 
-  # DB SG: Postgres reachable ONLY from the node SG. No public access, ever.
+  # DB SG: Postgres reachable ONLY from inside the VPC. No public access, ever.
   DbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -358,15 +327,15 @@ Resources:
         - Key: Name
           Value: !Sub "ridenow-${Environment}-db-sg"
 
-  DbIngressFromNodes:
+  DbIngressFromCluster:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !Ref DbSecurityGroup
       IpProtocol: tcp
       FromPort: 5432
       ToPort: 5432
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      Description: Postgres 5432 from EKS nodes only.
+      SourceSecurityGroupId: !Ref ClusterSecurityGroup
+      Description: Postgres 5432 from the RideNow cluster SG only.
 
 # ---------------------------------------------------------------------------
 # Outputs (cross-stack exports: ridenow-<env>-network-<resource>)
@@ -383,25 +352,21 @@ Outputs:
       Name: !Sub "ridenow-${Environment}-network-VpcCidr"
 
   PublicSubnetIds:
-    Description: Comma-separated public subnet ids.
-    Value: !If
-      - UseThreeAzs
-      - !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
-      - !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Description: Comma-separated public subnet ids (3 AZs).
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
     Export:
       Name: !Sub "ridenow-${Environment}-network-PublicSubnetIds"
 
   PrivateSubnetIds:
-    Description: Comma-separated private subnet ids (workloads + data).
-    Value: !If
-      - UseThreeAzs
-      - !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
-      - !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Description: Comma-separated private subnet ids (workloads + data, 3 AZs).
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
     Export:
       Name: !Sub "ridenow-${Environment}-network-PrivateSubnetIds"
 
+  # Exported under the historical NodeSecurityGroupId name so existing importers
+  # (messaging 05, cluster 06) keep working; it now points at the cluster SG.
   NodeSecurityGroupId:
-    Value: !Ref NodeSecurityGroup
+    Value: !Ref ClusterSecurityGroup
     Export:
       Name: !Sub "ridenow-${Environment}-network-NodeSecurityGroupId"
 

@@ -4,9 +4,7 @@
   },
   "02-network": {
     "Environment": "prod",
-    "VpcCidr": "10.30.0.0/16",
-    "AzCount": "3",
-    "SingleNatGateway": "false"
+    "VpcCidr": "10.30.0.0/16"
   },
   "03-ecr": {
     "Environment": "prod",
@@ -19,7 +17,7 @@
     "DbAllocatedStorage": "100",
     "MultiAz": "true",
     "BackupRetentionDays": "30",
-    "DeletionProtection": "true",
+    "DeletionProtection": "false",
     "EngineVersion": "17"
   },
   "05-messaging": {
@@ -30,11 +28,7 @@
   },
   "06-eks-cluster": {
     "Environment": "prod",
-    "KubernetesVersion": "1.31",
-    "NodeInstanceType": "m6i.large",
-    "NodeMinSize": "3",
-    "NodeDesiredSize": "4",
-    "NodeMaxSize": "12"
+    "KubernetesVersion": "1.31"
   },
   "07-eks-addons": {
     "Environment": "prod",

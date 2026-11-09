@@ -4,7 +4,8 @@ Goal: run the services on the cluster and reach them from the internet through a
 single ALB. By the end, `GET /api/drivers` works from your browser against an AWS
 load balancer. This is the "done" line for the backend-on-EKS goal.
 
-Time: ~30 min. Cost: the ALB bills hourly while it exists.
+Time: ~30 min. Cost: the ALB bills hourly while it exists; Fargate pods bill per
+vCPU/memory-second while running.
 
 The manifests live in `../../iac/k8s/`. You'll fill in three placeholders
 (`<ACCOUNT_ID>`, `<REGION>`, each `<..._DB_ENDPOINT>`) and apply them.
@@ -13,32 +14,21 @@ The manifests live in `../../iac/k8s/`. You'll fill in three placeholders
 
 ## Cluster layout
 
-This guide uses a single shared node group for everything:
+Everything runs on **Fargate** — no nodes. Pods are placed by the three Fargate
+profiles created in guide 05, matched by namespace:
 
 ```
-ridenow-dev-nodes  (t3.medium × 2–3, autoscaled)
-  ├── kube-system        ALB controller, cluster-autoscaler, CoreDNS, metrics-server
-  ├── amazon-cloudwatch  CloudWatch agent, OTel operator, kube-state-metrics
-  ├── external-dns
-  ├── external-secrets
-  └── ridenow            your 6 services (2 replicas each, HPA up to 6)
+Fargate profiles (serverless — one micro-VM per pod)
+  ├── ridenow-system         → kube-system:      ALB controller, CoreDNS, metrics-server
+  │                            external-secrets:  External Secrets Operator
+  ├── ridenow-observability  → aws-observability: Fargate log router config
+  └── ridenow-app            → ridenow:           your 6 services (2 replicas each, HPA up to 6)
 ```
 
-Add-ons and services compete for the same nodes. The cluster autoscaler (step 1c)
-adds a third node whenever pods are `Pending` due to capacity.
-
-**Production difference.** In prod you'd split into three node groups with taints
-so system add-ons and application pods never compete for capacity:
-
-| Node group | Taint | What runs there |
-|---|---|---|
-| `system-nodes` | `dedicated=system:NoSchedule` | All add-ons and controllers |
-| `app-nodes` | _(none)_ | Your 6 microservices |
-| `worker-nodes` (Spot) | `dedicated=worker:NoSchedule` | notification-worker, batch jobs |
-
-Each add-on Helm chart accepts a `tolerations` value to target the system nodes;
-each service Deployment gets a `nodeSelector` or affinity rule. That separation
-isn't needed at dev scale — one node group is the right starting point.
+There is no node capacity to manage and no cluster autoscaler: each pod gets its
+own right-sized micro-VM, and the HPA still scales replica count per service.
+Pod-to-pod isolation is handled with per-pod security groups (step 2.5), not node
+pools or taints.
 
 ---
 
@@ -91,7 +81,7 @@ helm repo update
 # Get your VPC ID from the CloudFormation export (or paste it directly)
 VPC_ID=$(aws cloudformation list-exports \
   --region ap-southeast-1 \
-  --query "Exports[?Name=='ridenow-dev-network-VpcId'].Value" \
+  --query "Exports[?Name=='ridenow-prod-network-VpcId'].Value" \
   --output text --no-cli-pager)
 echo "VPC ID: $VPC_ID"
 
@@ -121,16 +111,14 @@ kubectl logs -n kube-system \
 # Should show: "Starting EventRecordingController" with no errors
 ```
 
-### 1c. Install the Cluster Autoscaler
+### 1c. Create the add-on IRSA roles (`07-eks-addons` stack)
 
-Without the autoscaler, EKS never adds nodes even though the node group allows up
-to 3. System add-ons (CloudWatch, OTel, external-dns, ESO) consume enough pod
-slots on 2 nodes that service pods get stuck `Pending`. Install the autoscaler
-once so the node group scales itself whenever capacity runs out.
+The ALB controller (above) and the External Secrets Operator (step 2) assume
+scoped IAM roles via IRSA. The `07-eks-addons` stack creates both roles. There is
+**no cluster autoscaler** on Fargate — Fargate right-sizes each pod and the HPA
+scales replica count, so there is nothing to autoscale at the node level.
 
-**Deploy the `07-eks-addons` stack** — this single stack creates all three IRSA
-roles the cluster needs: ALB controller, External Secrets Operator, and cluster
-autoscaler. Run it once here; later steps just read its exports.
+Deploy the stack once here; later steps read its exports.
 
 ```bash
 OIDC_ID=$(aws eks describe-cluster \
@@ -141,110 +129,20 @@ OIDC_ID=$(aws eks describe-cluster \
 echo "OIDC ID: $OIDC_ID"
 
 aws cloudformation deploy \
-  --stack-name ridenow-dev-eks-addons \
+  --stack-name ridenow-prod-eks-addons \
   --template-file iac/stacks/07-eks-addons.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
-    Environment=dev \
+    Environment=prod \
     EnableAddons=true \
     OidcProviderId=$OIDC_ID \
   --region ap-southeast-1 \
   --no-cli-pager
 ```
 
-**Retrieve the autoscaler role ARN** from the stack export:
-
-```bash
-CA_ROLE_ARN=$(aws cloudformation list-exports \
-  --region ap-southeast-1 \
-  --query "Exports[?Name=='ridenow-dev-eks-ClusterAutoscalerRoleArn'].Value" \
-  --output text --no-cli-pager)
-echo "Autoscaler Role ARN: $CA_ROLE_ARN"
-```
-
-**Install the Cluster Autoscaler via Helm:**
-
-```bash
-# Match the major.minor version to your EKS cluster version
-EKS_VERSION=$(aws eks describe-cluster \
-  --name ridenow \
-  --region ap-southeast-1 \
-  --query "cluster.version" \
-  --output text --no-cli-pager)
-echo "EKS version: $EKS_VERSION"   # e.g. 1.31
-
-helm repo add autoscaler https://kubernetes.github.io/autoscaler
-helm repo update
-
-helm install cluster-autoscaler autoscaler/cluster-autoscaler \
-  -n kube-system \
-  --set fullnameOverride=cluster-autoscaler \
-  --set autoDiscovery.clusterName=ridenow \
-  --set awsRegion=ap-southeast-1 \
-  --set rbac.serviceAccount.create=true \
-  --set rbac.serviceAccount.name=cluster-autoscaler \
-  --set "rbac.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${CA_ROLE_ARN}" \
-  --set image.tag=v${EKS_VERSION}.0 \
-  --set extraArgs.balance-similar-node-groups=true \
-  --set extraArgs.skip-nodes-with-system-pods=false
-```
-
-> **Version note:** the autoscaler image tag must match your EKS minor version
-> (e.g. EKS 1.31 → `v1.31.0`). If `v${EKS_VERSION}.0` doesn't exist yet, check
-> the latest patch at https://github.com/kubernetes/autoscaler/releases and pass
-> it explicitly with `--set image.tag=v1.31.x`.
-
-**Tag the node group's Auto Scaling Group** so the autoscaler can discover it:
-
-```bash
-# Get the actual EKS node group name dynamically
-NODEGROUP=$(aws eks list-nodegroups \
-  --cluster-name ridenow \
-  --region ap-southeast-1 \
-  --query "nodegroups[0]" \
-  --output text)
-
-echo "Node Group: $NODEGROUP"
-
-# Get the ASG name backing that node group
-ASG_NAME=$(aws eks describe-nodegroup \
-  --cluster-name ridenow \
-  --nodegroup-name "$NODEGROUP" \
-  --region ap-southeast-1 \
-  --query "nodegroup.resources.autoScalingGroups[0].name" \
-  --output text)
-
-echo "ASG: $ASG_NAME"
-
-# Validate
-if [ -z "$ASG_NAME" ] || [ "$ASG_NAME" = "None" ]; then
-  echo "ERROR: ASG not found"
-  exit 1
-fi
-
-# Tag ASG
-aws autoscaling create-or-update-tags \
-  --tags \
-    "ResourceId=${ASG_NAME},ResourceType=auto-scaling-group,Key=k8s.io/cluster-autoscaler/enabled,Value=true,PropagateAtLaunch=false" \
-    "ResourceId=${ASG_NAME},ResourceType=auto-scaling-group,Key=k8s.io/cluster-autoscaler/ridenow,Value=owned,PropagateAtLaunch=false" \
-  --region ap-southeast-1 \
-  --no-cli-pager
-```
-
-**Verify the autoscaler is running:**
-
-```bash
-kubectl get deploy -n kube-system cluster-autoscaler
-# NAME                 READY   UP-TO-DATE   AVAILABLE
-# cluster-autoscaler   1/1     1            1
-
-kubectl logs -n kube-system deploy/cluster-autoscaler --tail=10
-# Should show: "Starting main loop" with no credential errors
-```
-
-Once running, whenever a pod is `Pending` due to insufficient capacity the
-autoscaler adds a node (up to `maxSize: 3`). Scale-down happens automatically
-after 10 minutes of a node being underutilised.
+This exports `ridenow-prod-eks-AlbControllerRoleArn` and
+`ridenow-prod-eks-ExternalSecretsRoleArn`, used by the ALB controller install
+above and the ESO install in step 2.
 
 ---
 
@@ -256,24 +154,14 @@ after 10 minutes of a node being underutilised.
    kubectl apply -f iac/k8s/00-namespace.yaml   # creates namespace "ridenow"
    ```
 
-2. Get each service's DB credentials into the cluster. Two options:
+2. Get each service's DB credentials into the cluster. Use the **External Secrets
+   Operator** so Kubernetes Secrets are synced from Secrets Manager and rotate
+   automatically — no credential ever sits in a manifest or in git. (A manual
+   `kubectl create secret generic ...` works as a one-off break-glass fallback,
+   but it does not rotate and is not the production path.)
 
-   **Option A - quick, by hand** (fine for a lab). For each service, read the
-   username/password from its Secrets Manager secret (guide 04) and create a k8s
-   Secret the Deployment expects:
-
-   ```bash
-   kubectl create secret generic driver-db-credentials -n ridenow \
-     --from-literal=username='driver' \
-     --from-literal=password='<the password from Secrets Manager>'
-   ```
-
-   Repeat for `user-db-credentials`, `trip-db-credentials`,
-   `payment-db-credentials`, `matching-db-credentials`,
-   `notification-db-credentials` (the Deployments reference these names).
-
-   **Option B - External Secrets Operator** (closer to production; what
-   `iac/k8s/10-external-secrets.yaml` expects).
+   **External Secrets Operator** — what `iac/k8s/10-external-secrets.yaml`
+   expects.
 
    **B1. Confirm the `07-eks-addons` stack is deployed** — it was run in step 1c
    and already created the ESO IRSA role. Retrieve its ARN and grant it KMS
@@ -284,12 +172,12 @@ after 10 minutes of a node being underutilised.
    ```bash
    ESO_ROLE_ARN=$(aws cloudformation list-exports \
      --region ap-southeast-1 \
-     --query "Exports[?Name=='ridenow-dev-eks-ExternalSecretsRoleArn'].Value" \
+     --query "Exports[?Name=='ridenow-prod-eks-ExternalSecretsRoleArn'].Value" \
      --output text --no-cli-pager)
    echo "ESO Role ARN: $ESO_ROLE_ARN"
 
    KMS_KEY_ARN=$(aws kms describe-key \
-     --key-id alias/ridenow-dev-rds \
+     --key-id alias/ridenow-prod-rds \
      --region ap-southeast-1 \
      --query KeyMetadata.Arn \
      --output text --no-cli-pager)
@@ -350,29 +238,29 @@ after 10 minutes of a node being underutilised.
    ```bash
    aws cloudformation list-exports \
      --region ap-southeast-1 \
-     --query "Exports[?starts_with(Name,'ridenow-dev-data-') && ends_with(Name,'SecretArn')].{Name:Name,Value:Value}" \
+     --query "Exports[?starts_with(Name,'ridenow-prod-data-') && ends_with(Name,'SecretArn')].{Name:Name,Value:Value}" \
      --output table --no-cli-pager
    # +------------------------------------+----------------------------------------------------------+
-   # | ridenow-dev-data-UserDbSecretArn   | arn:aws:secretsmanager:...:secret:ridenow-dev-user-db-Xx |
-   # | ridenow-dev-data-DriverDbSecretArn | arn:aws:secretsmanager:...:secret:ridenow-dev-driver-db-Xx|
-   # | ridenow-dev-data-TripDbSecretArn   | arn:aws:secretsmanager:...:secret:ridenow-dev-trip-db-Xx  |
-   # | ridenow-dev-data-PaymentDbSecretArn| arn:aws:secretsmanager:...:secret:ridenow-dev-payment-db-Xx|
+   # | ridenow-prod-data-UserDbSecretArn   | arn:aws:secretsmanager:...:secret:ridenow-prod-user-db-Xx |
+   # | ridenow-prod-data-DriverDbSecretArn | arn:aws:secretsmanager:...:secret:ridenow-prod-driver-db-Xx|
+   # | ridenow-prod-data-TripDbSecretArn   | arn:aws:secretsmanager:...:secret:ridenow-prod-trip-db-Xx  |
+   # | ridenow-prod-data-PaymentDbSecretArn| arn:aws:secretsmanager:...:secret:ridenow-prod-payment-db-Xx|
    ```
 
    Then substitute all placeholders and apply:
 
    ```bash
    USER_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
-     --query "Exports[?Name=='ridenow-dev-data-UserDbSecretArn'].Value" \
+     --query "Exports[?Name=='ridenow-prod-data-UserDbSecretArn'].Value" \
      --output text --no-cli-pager)
    DRIVER_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
-     --query "Exports[?Name=='ridenow-dev-data-DriverDbSecretArn'].Value" \
+     --query "Exports[?Name=='ridenow-prod-data-DriverDbSecretArn'].Value" \
      --output text --no-cli-pager)
    TRIP_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
-     --query "Exports[?Name=='ridenow-dev-data-TripDbSecretArn'].Value" \
+     --query "Exports[?Name=='ridenow-prod-data-TripDbSecretArn'].Value" \
      --output text --no-cli-pager)
    PAYMENT_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
-     --query "Exports[?Name=='ridenow-dev-data-PaymentDbSecretArn'].Value" \
+     --query "Exports[?Name=='ridenow-prod-data-PaymentDbSecretArn'].Value" \
      --output text --no-cli-pager)
 
    sed -e "s|<REGION>|ap-southeast-1|g" \
@@ -416,14 +304,14 @@ after 10 minutes of a node being underutilised.
 
      ```bash
      KMS_KEY_ARN=$(aws kms describe-key \
-       --key-id alias/ridenow-dev-rds \
+       --key-id alias/ridenow-prod-rds \
        --region ap-southeast-1 \
        --query KeyMetadata.Arn \
        --output text --no-cli-pager)
 
      ESO_ROLE_ARN=$(aws cloudformation list-exports \
        --region ap-southeast-1 \
-       --query "Exports[?Name=='ridenow-dev-eks-ExternalSecretsRoleArn'].Value" \
+       --query "Exports[?Name=='ridenow-prod-eks-ExternalSecretsRoleArn'].Value" \
        --output text --no-cli-pager)
 
      aws kms create-grant \
@@ -456,40 +344,37 @@ after 10 minutes of a node being underutilised.
 
 ---
 
-## 2.5. Per-pod security groups (production)
+## 2.5. Per-pod security groups
 
-> **Dev shortcut:** if you're running a dev cluster on `t3.medium` nodes, skip
-> this step and instead allow the EKS cluster SG on the DB security group
-> (one-liner at the end of this section). The full per-pod setup requires
-> `t3.large` or larger nodes.
+Each service pod gets its own security group so it can only reach its own
+database — a driver-service pod is physically blocked from reaching the user
+database at the network level. On Fargate this is **native**: every Fargate pod
+already runs on its own ENI, and a `SecurityGroupPolicy` binds specific SGs to
+pods by label. There is **no `ENABLE_POD_ENI` step** — that flag is for the EC2
+VPC CNI DaemonSet, which doesn't exist on Fargate.
 
-In production each service pod must have its own SG so it can only reach its own
-database — a driver-service pod must be physically blocked from reaching the user
-database at the network level.
+By default Fargate pods attach to the **cluster security group**, which the DB SG
+already trusts (guide 02 wires `DbIngressFromCluster`). The per-pod SGs below
+tighten that from "any pod can reach any DB" to "each service reaches only its
+own DB".
 
-**1. Enable pod ENI on the VPC CNI addon:**
-
-```bash
-kubectl set env daemonset aws-node \
-  -n kube-system \
-  ENABLE_POD_ENI=true
-
-kubectl rollout status daemonset/aws-node -n kube-system
-```
-
-**2. Create one SG per service and wire it to that service's DB only:**
+**1. Create one SG per service and wire it to that service's DB only:**
 
 ```bash
 VPC_ID=$(aws cloudformation list-exports \
   --region ap-southeast-1 \
-  --query "Exports[?Name=='ridenow-dev-network-VpcId'].Value" \
+  --query "Exports[?Name=='ridenow-prod-network-VpcId'].Value" \
   --output text --no-cli-pager)
 
-DB_SG=sg-0b0fe43a64932a237   # ridenow DB security group
+DB_SG=$(aws cloudformation list-exports \
+  --region ap-southeast-1 \
+  --query "Exports[?Name=='ridenow-prod-network-DbSecurityGroupId'].Value" \
+  --output text --no-cli-pager)
+echo "DB SG: $DB_SG"
 
 for SVC in user driver trip payment; do
   SG_ID=$(aws ec2 create-security-group \
-    --group-name ridenow-dev-${SVC}-service-sg \
+    --group-name ridenow-prod-${SVC}-service-sg \
     --description "${SVC}-service pods" \
     --vpc-id $VPC_ID \
     --region ap-southeast-1 \
@@ -509,7 +394,7 @@ done
 
 Record the four SG IDs printed above — you need them in the next step.
 
-**3. Create `iac/k8s/40-security-group-policies.yaml`** replacing each
+**2. Create `iac/k8s/40-security-group-policies.yaml`** replacing each
 `sg-XXXXXXXX` with the SG ID for that service:
 
 ```yaml
@@ -566,35 +451,30 @@ spec:
       - sg-WWWWWWWW   # payment-service SG
 ```
 
+**3. Apply the policy before deploying the services:**
+
 ```bash
 kubectl apply -f iac/k8s/40-security-group-policies.yaml
 ```
 
-Policies must exist before pods start — pods that launched before the policy was
-applied won't pick it up until they restart.
+Policies must exist before pods start — on Fargate the SG is attached to the pod
+ENI at schedule time, so a pod that launched before the policy existed keeps the
+default cluster SG until it is recreated.
 
-After deploying the services (step 3), remove the broad cluster SG rule that was
-added as a dev workaround:
+Once the per-pod SGs are in place and confirmed working, tighten the DB SG by
+removing the broad cluster-SG rule so only the per-service SGs remain:
 
 ```bash
-# Only run this after per-pod SGs are confirmed working
-aws ec2 revoke-security-group-ingress \
-  --group-id sg-0b0fe43a64932a237 \
-  --protocol tcp \
-  --port 5432 \
-  --source-group sg-0676dd75784f7f89d \
+CLUSTER_SG=$(aws cloudformation list-exports \
   --region ap-southeast-1 \
-  --no-cli-pager
-```
+  --query "Exports[?Name=='ridenow-prod-network-NodeSecurityGroupId'].Value" \
+  --output text --no-cli-pager)
 
-**Dev shortcut** — if skipping per-pod SGs, just allow the cluster SG on the DB:
-
-```bash
-aws ec2 authorize-security-group-ingress \
-  --group-id sg-0b0fe43a64932a237 \
+aws ec2 revoke-security-group-ingress \
+  --group-id $DB_SG \
   --protocol tcp \
   --port 5432 \
-  --source-group sg-0676dd75784f7f89d \
+  --source-group $CLUSTER_SG \
   --region ap-southeast-1 \
   --no-cli-pager
 ```
@@ -608,13 +488,13 @@ real values (a quick `sed`, or edit by hand):
 
 - `<ACCOUNT_ID>` -> your 12-digit account id
 - `<REGION>` -> `ap-southeast-1`
-- `<IMAGE_TAG>` -> the tag you pushed in guide 03 (`local` or `v1.0.0`)
+- `<IMAGE_TAG>` -> the tag you pushed in guide 03 (e.g. `v1.0.0`)
 - `<USER_DB_ENDPOINT>`, `<DRIVER_DB_ENDPOINT>`, ... -> the RDS endpoints (guide 04)
 
 **What each manifest already ships — no extra work needed:**
 
-- **`replicas: 2`** — two pods per service so a single node drain or pod crash
-  doesn't cause downtime.
+- **`replicas: 2`** — two pods per service across AZs, so losing one pod (or the
+  Fargate micro-VM under it) doesn't cause downtime.
 - **Resource requests and limits** — every container declares:
   ```yaml
   resources:
@@ -625,8 +505,9 @@ real values (a quick `sed`, or edit by hand):
       cpu: "1000m"
       memory: "1Gi"
   ```
-  Requests tell the scheduler how much capacity to reserve; limits cap runaway
-  processes. Without requests the autoscaler can't make correct scale decisions.
+  On Fargate the pod's requests determine the micro-VM size (rounded up to the
+  nearest valid vCPU/memory combo) — here 250m / 512Mi bills as a 0.25 vCPU /
+  0.5 GB task. You pay for the rounded-up size, so keep requests realistic.
 - **HorizontalPodAutoscaler** — each manifest includes an HPA that scales between
   2 and 6 replicas when average CPU crosses 70 %:
   ```yaml
@@ -640,16 +521,16 @@ real values (a quick `sed`, or edit by hand):
           type: Utilization
           averageUtilization: 70
   ```
-  The HPA needs `metrics-server` running in `kube-system` to read pod CPU — it's
-  already installed by the observability stack (guide 06a).
+  The HPA needs `metrics-server` (a Deployment on Fargate, installed as a cluster
+  add-on in guide 05) to read pod CPU. Each new replica is a new Fargate pod.
 
 Example with sed for one file:
 
 ```bash
 sed -e 's/<ACCOUNT_ID>/123456789012/' \
     -e 's/<REGION>/ap-southeast-1/' \
-    -e 's/<IMAGE_TAG>/local/' \
-    -e 's/<DRIVER_DB_ENDPOINT>/ridenow-driver.abcd.ap-southeast-1.rds.amazonaws.com/' \
+    -e 's/<IMAGE_TAG>/v1.0.0/' \
+    -e 's/<DRIVER_DB_ENDPOINT>/ridenow-prod-driver-db.abcd.ap-southeast-1.rds.amazonaws.com/' \
     iac/k8s/21-driver-service.yaml | kubectl apply -f -
 ```
 
@@ -734,28 +615,27 @@ curl -s "http://$ADDR/api/drivers"      # a JSON page of drivers (from RDS)
 curl -s "http://$ADDR/api/trips"        # a JSON page of trips
 ```
 
-A JSON response through the ALB means: image pulled from ECR, pod healthy on EKS,
-connected to its RDS, reachable via the load balancer. That's the backend running
-on EKS - **done**.
+A JSON response through the ALB means: image pulled from ECR, pod healthy on
+Fargate, connected to its RDS, reachable via the load balancer. That's the
+backend running on EKS Fargate - **done**.
 
 ---
 
-## Production readiness checklist
+## Production hardening checklist
 
-What this guide already sets up vs. what you'd add before going to production:
+What this guide already sets up, and what to layer on next:
 
-| Concern | This guide (dev) | Production addition |
+| Concern | Already in place | Hardening to add |
 |---|---|---|
-| Availability | `replicas: 2` per service | Add a `PodDisruptionBudget` (`maxUnavailable: 1`) so node drains don't take a service fully down |
-| Autoscaling | HPA on CPU 70 %, min 2 / max 6 | Tune thresholds per service; consider memory or custom metrics for I/O-heavy services |
-| Node capacity | Single shared node group, autoscaler up to 3 | Split into system / app / worker node groups with taints (see Cluster layout section above) |
-| Cost | On-demand t3.medium | Move notification-worker to a Spot node group (`dedicated=worker:NoSchedule`) |
-| Secrets | ESO syncs from Secrets Manager every 1 h | Enable RDS managed password rotation; ESO picks up the new value automatically |
-| IAM | IRSA per service account | Audit and scope each role to the minimum set of actions and resources |
-| Network isolation | Cluster SG allowed on all DBs | Per-pod SGs via `SecurityGroupPolicy` so each service can only reach its own DB (see below) |
+| Availability | `replicas: 2` per service across AZs | Add a `PodDisruptionBudget` (`maxUnavailable: 1`) so voluntary disruptions don't take a service fully down |
+| Autoscaling | HPA on CPU 70 %, min 2 / max 6 (each replica a Fargate pod) | Tune thresholds per service; consider memory or custom metrics for I/O-heavy services |
+| Compute | Fargate (no nodes to patch, size, or autoscale) | Nothing to do — this is the serverless-compute end state |
+| Secrets | ESO syncs from Secrets Manager; per-pod SGs isolate each DB | Enable RDS managed password rotation; ESO picks up the new value automatically |
+| IAM | IRSA per service account; Fargate pod execution role | Audit and scope each role to the minimum set of actions and resources |
+| Network isolation | Per-pod SGs via `SecurityGroupPolicy` (step 2.5) — each service reaches only its own DB | Add NetworkPolicies for east-west pod traffic |
 | TLS | Plain HTTP through ALB | Attach an ACM certificate to the ALB listener; add WAF for public endpoints |
-| Image tags | `local` / `v1.0.0` | Use immutable SHA digests (`image@sha256:...`) in CI/CD to prevent tag mutation |
-| Observability | CloudWatch + OTel (guide 06a) | Set log retention policies; add alarms on 5xx rates and pod restart counts |
+| Image tags | `v1.0.0` pushed to ECR | Use immutable SHA digests (`image@sha256:...`) in CI/CD to prevent tag mutation |
+| Observability | AMP scraper + Fargate log router (guide 06a) | Set log retention policies; add alarms on 5xx rates and pod restart counts |
 
 The three highest-value items to tackle first are PodDisruptionBudgets, TLS on the
 ALB, and locking image tags to digests — the rest can follow incrementally.
@@ -766,6 +646,7 @@ ALB, and locking image tags to digests — the rest can follow incrementally.
 
 - `kubectl delete -f iac/k8s/30-ingress.yaml` first (this removes the ALB - it
   bills hourly), then the service manifests and namespace.
-- Then tear down the cluster/node group (guide 05) and RDS (guide 04).
+- Then tear down the cluster + Fargate profiles (guide 05) and RDS (guide 04).
 
-Next (optional features): `07-later-elasticache-redis.md`, `08-later-sqs-eventbridge.md`.
+Next (features provisioned in): `07-later-elasticache-redis.md`,
+`08-later-sqs-eventbridge.md`.

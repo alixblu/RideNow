@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  RideNow IAM layer (01). Roles and policies for the EKS cluster and its managed
-  node group, plus a scoped application policy (ECR pull, Secrets Manager read,
-  and gated SQS/EventBridge access) that IRSA roles attach to later. Exported
-  role ARNs are imported by the EKS cluster stack (06).
+  RideNow IAM layer (01). Roles and policies for the EKS cluster and its Fargate
+  pods, plus a scoped application policy (ECR pull, Secrets Manager read, and
+  SQS/EventBridge access) that IRSA roles attach to later. Exported role ARNs
+  are imported by the EKS cluster stack (06).
 
 Parameters:
   Environment:
@@ -36,25 +36,22 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- EKS managed node group role -----------------------------------------
-  NodeRole:
+  # ---- EKS Fargate pod execution role --------------------------------------
+  # Every Fargate profile references this role. Fargate uses it to pull images
+  # from ECR and to ship pod logs to CloudWatch via the Fargate log router.
+  FargatePodExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "ridenow-${Environment}-eks-node-role"
+      RoleName: !Sub "ridenow-${Environment}-eks-fargate-pod-execution-role"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: ec2.amazonaws.com
+              Service: eks-fargate-pods.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
-        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
-        # Broad ECR read on nodes is standard so the kubelet can pull any image;
-        # fine-grained, app-level ECR access is on the scoped policy below.
-        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
-        - arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -111,10 +108,10 @@ Outputs:
     Export:
       Name: !Sub "ridenow-${Environment}-iam-ClusterRoleArn"
 
-  NodeRoleArn:
-    Value: !GetAtt NodeRole.Arn
+  FargatePodExecutionRoleArn:
+    Value: !GetAtt FargatePodExecutionRole.Arn
     Export:
-      Name: !Sub "ridenow-${Environment}-iam-NodeRoleArn"
+      Name: !Sub "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
 
   AppAccessPolicyArn:
     Value: !Ref AppAccessPolicy

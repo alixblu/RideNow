@@ -4,41 +4,35 @@
   },
   "02-network": {
     "Environment": "dev",
-    "VpcCidr": "10.10.0.0/16",
-    "AzCount": "2",
-    "SingleNatGateway": "true"
+    "VpcCidr": "10.10.0.0/16"
   },
   "03-ecr": {
     "Environment": "dev",
-    "MaxImageCount": "20",
-    "UntaggedExpireDays": "7"
+    "MaxImageCount": "50",
+    "UntaggedExpireDays": "14"
   },
   "04-data": {
     "Environment": "dev",
-    "DbInstanceClass": "db.t4g.micro",
-    "DbAllocatedStorage": "20",
-    "MultiAz": "false",
-    "BackupRetentionDays": "1",
+    "DbInstanceClass": "db.r6g.large",
+    "DbAllocatedStorage": "100",
+    "MultiAz": "true",
+    "BackupRetentionDays": "30",
     "DeletionProtection": "false",
     "EngineVersion": "17"
   },
   "05-messaging": {
     "Environment": "dev",
-    "EnableMessaging": "false",
-    "EnableRedis": "false",
-    "RedisNodeType": "cache.t4g.micro"
+    "EnableMessaging": "true",
+    "EnableRedis": "true",
+    "RedisNodeType": "cache.r6g.large"
   },
   "06-eks-cluster": {
     "Environment": "dev",
-    "KubernetesVersion": "1.31",
-    "NodeInstanceType": "t3.medium",
-    "NodeMinSize": "1",
-    "NodeDesiredSize": "2",
-    "NodeMaxSize": "3"
+    "KubernetesVersion": "1.31"
   },
   "07-eks-addons": {
     "Environment": "dev",
-    "EnableAddons": "false",
+    "EnableAddons": "true",
     "OidcProviderId": ""
   }
 }

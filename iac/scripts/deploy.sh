@@ -66,10 +66,45 @@ params_for() {
   ' "${PARAMS_FILE}" | tr -d '\r'
 }
 
+# Resolve the cluster OIDC provider id (last path segment of the issuer URL).
+# Stack 07 needs it, but it only exists after stack 06 creates the cluster, so
+# it cannot live in params/<env>.json. We look it up at deploy time.
+oidc_id_for() {
+  aws eks describe-cluster \
+    --name "ridenow-${ENV}" \
+    --region "${AWS_REGION}" \
+    --query "cluster.identity.oidc.issuer" \
+    --output text 2>/dev/null | sed 's|.*/||'
+}
+
 for layer in "${LAYERS[@]}"; do
   template="${STACKS_DIR}/${layer}.yaml"
   stack_name="ridenow-${ENV}-${layer}"
   overrides="$(params_for "${layer}")"
+
+  # 07-eks-addons: inject the live OIDC id if the params file left it blank.
+  # Without it the stack's AddonsOn condition is false and no IRSA roles are
+  # created, so a blank value silently produces an empty stack.
+  if [[ "${layer}" == "07-eks-addons" ]]; then
+    oidc_id="$(oidc_id_for)"
+    if [[ -z "${oidc_id}" || "${oidc_id}" == "None" ]]; then
+      if [[ ${APPLY} -eq 1 ]]; then
+        echo "ERROR: could not resolve OIDC id for cluster ridenow-${ENV}." >&2
+        echo "       Stack 06 (EKS cluster) must be deployed first." >&2
+        exit 1
+      else
+        echo "   WARN: cluster ridenow-${ENV} not found yet (expected during a" >&2
+        echo "         dry run before 06 is applied). Leaving OidcProviderId blank;" >&2
+        echo "         it is resolved automatically on the real --apply run." >&2
+      fi
+    else
+      # Drop any blank OidcProviderId from the file params, then append the real one.
+      overrides="$(echo "${overrides}" \
+        | sed -E 's/ParameterKey=OidcProviderId,ParameterValue=[^ ]*//g') \
+        ParameterKey=OidcProviderId,ParameterValue=${oidc_id}"
+      echo "   resolved OidcProviderId=${oidc_id}"
+    fi
+  fi
 
   echo "-- ${stack_name} --"
   # Always validate the template first.

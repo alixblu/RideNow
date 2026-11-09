@@ -80,60 +80,6 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- Cluster Autoscaler IRSA role ---------------------------------------
-  ClusterAutoscalerRole:
-    Type: AWS::IAM::Role
-    Condition: AddonsOn
-    Properties:
-      RoleName: !Sub "ridenow-${Environment}-cluster-autoscaler"
-      AssumeRolePolicyDocument:
-        Fn::Sub:
-          - |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": { "Federated": "${ProviderArn}" },
-                  "Action": "sts:AssumeRoleWithWebIdentity",
-                  "Condition": {
-                    "StringEquals": {
-                      "${Issuer}:sub": "system:serviceaccount:kube-system:cluster-autoscaler",
-                      "${Issuer}:aud": "sts.amazonaws.com"
-                    }
-                  }
-                }
-              ]
-            }
-          - ProviderArn: !GetAtt OidcProvider.Arn
-            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
-      Policies:
-        - PolicyName: cluster-autoscaler
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - autoscaling:DescribeAutoScalingGroups
-                  - autoscaling:DescribeAutoScalingInstances
-                  - autoscaling:DescribeLaunchConfigurations
-                  - autoscaling:DescribeScalingActivities
-                  - autoscaling:DescribeTags
-                  - ec2:DescribeImages
-                  - ec2:DescribeInstanceTypes
-                  - ec2:DescribeLaunchTemplateVersions
-                  - ec2:GetInstanceTypesFromInstanceRequirements
-                  - eks:DescribeNodegroup
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - autoscaling:SetDesiredCapacity
-                  - autoscaling:TerminateInstanceInAutoScalingGroup
-                Resource: "*"
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
   # ---- External Secrets IRSA role (reads RideNow RDS secrets) --------------
   ExternalSecretsRole:
     Type: AWS::IAM::Role
@@ -185,12 +131,6 @@ Outputs:
     Value: !GetAtt AlbControllerRole.Arn
     Export:
       Name: !Sub "ridenow-${Environment}-eks-AlbControllerRoleArn"
-
-  ClusterAutoscalerRoleArn:
-    Condition: AddonsOn
-    Value: !GetAtt ClusterAutoscalerRole.Arn
-    Export:
-      Name: !Sub "ridenow-${Environment}-eks-ClusterAutoscalerRoleArn"
 
   ExternalSecretsRoleArn:
     Condition: AddonsOn

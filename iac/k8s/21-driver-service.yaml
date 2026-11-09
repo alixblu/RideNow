@@ -4,6 +4,12 @@
 # (http://user-service:8081) - the cloud equivalent of the compose service name
 # used locally. DB creds come from the driver-db Secret projected by
 # external-secrets.
+#
+# Runs on AWS Fargate (scheduled by the `ridenow` namespace Fargate profile).
+# Fargate sizes each pod's micro-VM by ROUNDING UP the sum of container
+# requests to the nearest valid vCPU/memory combo - here requests 250m CPU /
+# 512Mi round up to a 0.25 vCPU / 0.5 GB Fargate task. Keep requests realistic:
+# you are billed for the rounded-up size, not actual usage.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

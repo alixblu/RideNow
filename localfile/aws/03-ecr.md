@@ -1,8 +1,8 @@
 # 03 - ECR: a registry for the service images
 
-Goal: one ECR repository per service, then build each image and push it. EKS
-nodes pull from here (their node role already has `AmazonEC2ContainerRegistryReadOnly`
-from guide 01).
+Goal: one ECR repository per service, then build each image and push it. Fargate
+pulls from here using the **Fargate pod execution role** (it carries
+`AmazonEKSFargatePodExecutionRolePolicy`, which includes ECR pull — from guide 01).
 
 Time: ~20 min (mostly image builds). Cost: ECR storage is cheap; you pay per GB
 stored and for data transfer.
@@ -44,11 +44,10 @@ Run it from the repo root:
 # dry run first - read exactly what it will do (no changes):
 AWS_ACCOUNT_ID=<your 12-digit id> AWS_REGION=ap-southeast-1 ./localfile/scripts/push-to-ecr.sh
 
-# then push for real:
-AWS_ACCOUNT_ID=<your 12-digit id> AWS_REGION=ap-southeast-1 ./localfile/scripts/push-to-ecr.sh --push
-
-# optional: a versioned tag instead of "local"
-IMAGE_TAG=v1.0.0 AWS_ACCOUNT_ID=... AWS_REGION=... ./localfile/scripts/push-to-ecr.sh --push
+# then push for real with a versioned tag (use an immutable tag in production,
+# not a floating "local"):
+IMAGE_TAG=v1.0.0 AWS_ACCOUNT_ID=<your 12-digit id> AWS_REGION=ap-southeast-1 \
+  ./localfile/scripts/push-to-ecr.sh --push
 ```
 
 What the script does per service: `docker build` the service folder, `docker tag`
@@ -63,23 +62,23 @@ For one service, from its folder (e.g. `trip-service/`):
 aws ecr get-login-password --region ap-southeast-1 \
   | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com
 
-# 2. build, tag, push
-docker build -t trip-service:local ./trip-service
-docker tag trip-service:local <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/trip-service:local
-docker push <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/trip-service:local
+# 2. build, tag, push (use an immutable version tag in production)
+docker build -t trip-service:v1.0.0 ./trip-service
+docker tag trip-service:v1.0.0 <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/trip-service:v1.0.0
+docker push <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/trip-service:v1.0.0
 ```
 
 ---
 
 ## Verify
 
-- ECR -> each `ridenow/<service>` repo shows at least one image tag (`local` or
-  your `IMAGE_TAG`), with a scan result.
+- ECR -> each `ridenow/<service>` repo shows at least one image tag (e.g.
+  `v1.0.0`), with a scan result.
 
 ## Clean up
 
-ECR storage is cheap, but to avoid charges delete old image tags you don't need
-(repo -> select images -> Delete), or delete the repos entirely if you abandon
-the project.
+ECR storage is cheap. A lifecycle policy (expire untagged images, cap tag count)
+keeps it bounded automatically — the `03-ecr.yaml` stack sets this up. Delete old
+tags you no longer need (repo -> select images -> Delete).
 
 Next: `04-rds-secrets.md`.

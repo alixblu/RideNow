@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RideNow compute layer (06). EKS control plane with KMS secrets envelope
-  encryption and a managed node group on the PRIVATE subnets. OIDC is enabled so
-  pods assume scoped IRSA roles (07) instead of relying on node-wide IAM. Roles
-  come from the IAM stack (01); subnets and the node SG come from the network
-  stack (02).
+  encryption and AWS Fargate profiles (serverless pods) on the PRIVATE subnets -
+  no EC2 node groups. OIDC is enabled so pods assume scoped IRSA roles (07). The
+  cluster role and Fargate pod execution role come from the IAM stack (01);
+  subnets come from the network stack (02).
 
 Parameters:
   Environment:
@@ -15,21 +15,6 @@ Parameters:
     Type: String
     Default: "1.31"
     Description: EKS Kubernetes version.
-
-  NodeInstanceType:
-    Type: String
-    Default: t3.medium
-    Description: Worker node EC2 instance type (sized per environment).
-
-  NodeMinSize:
-    Type: Number
-    Default: 1
-  NodeDesiredSize:
-    Type: Number
-    Default: 2
-  NodeMaxSize:
-    Type: Number
-    Default: 3
 
 Resources:
   # ---- KMS key for Kubernetes secrets envelope encryption ------------------
@@ -76,26 +61,57 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  NodeGroup:
-    Type: AWS::EKS::Nodegroup
+  # ---- Fargate profiles (serverless pods on private subnets) ---------------
+  # Each profile matches pods by namespace and schedules them onto right-sized
+  # Fargate micro-VMs. No EC2 nodes, no node SG for pods (Fargate pods attach to
+  # the cluster security group), no autoscaler.
+
+  # Application services (user/driver/trip/payment/matching/notification-worker).
+  AppFargateProfile:
+    Type: AWS::EKS::FargateProfile
     Properties:
       ClusterName: !Ref Cluster
-      NodegroupName: !Sub "ridenow-${Environment}-nodes"
-      NodeRole: !ImportValue
-        Fn::Sub: "ridenow-${Environment}-iam-NodeRoleArn"
-      # Workers run in the private subnets only; egress is via the NAT gateways.
+      FargateProfileName: !Sub "ridenow-${Environment}-app"
+      PodExecutionRoleArn: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
       Subnets: !Split
         - ","
         - !ImportValue
           Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
-      InstanceTypes:
-        - !Ref NodeInstanceType
-      ScalingConfig:
-        MinSize: !Ref NodeMinSize
-        DesiredSize: !Ref NodeDesiredSize
-        MaxSize: !Ref NodeMaxSize
-      Tags:
-        Environment: !Ref Environment
+      Selectors:
+        - Namespace: ridenow
+
+  # System add-ons: CoreDNS, AWS Load Balancer Controller, External Secrets,
+  # metrics-server. CoreDNS must be patched to run on Fargate (see guide 05).
+  SystemFargateProfile:
+    Type: AWS::EKS::FargateProfile
+    Properties:
+      ClusterName: !Ref Cluster
+      FargateProfileName: !Sub "ridenow-${Environment}-system"
+      PodExecutionRoleArn: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
+      Subnets: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+      Selectors:
+        - Namespace: kube-system
+        - Namespace: external-secrets
+
+  # Fargate log router config lives in the aws-observability namespace.
+  ObservabilityFargateProfile:
+    Type: AWS::EKS::FargateProfile
+    Properties:
+      ClusterName: !Ref Cluster
+      FargateProfileName: !Sub "ridenow-${Environment}-observability"
+      PodExecutionRoleArn: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
+      Subnets: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+      Selectors:
+        - Namespace: aws-observability
 
 Outputs:
   ClusterName:

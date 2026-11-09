@@ -7,9 +7,9 @@
 # still imported by a live stack.
 #
 # SAFETY: dry-run by default. Without --apply it only PRINTS the delete plan.
-# For prod it additionally requires typing the environment name to confirm, and
-# note that RDS has DeletionProtection=true in staging/prod - you must disable
-# that (or accept the retained snapshot) before the data stack will delete.
+# For prod it additionally requires typing the environment name to confirm.
+# RDS DeletionProtection is false, so the data stack deletes without a manual
+# unlock; the DeletionPolicy=Snapshot still leaves a final snapshot behind.
 #
 # Usage:
 #   ./scripts/teardown.sh dev              # print plan, delete nothing

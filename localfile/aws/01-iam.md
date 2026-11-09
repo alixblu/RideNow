@@ -1,8 +1,8 @@
 # 01 - IAM: who you are, and the roles EKS needs
 
 Goal: sign in as a non-root user with enough permissions to build RideNow, and
-create the two IAM **roles** EKS requires (a cluster role and a node role). EKS
-will not start without these roles.
+create the two IAM **roles** EKS on Fargate requires (a cluster role and a
+Fargate pod execution role). EKS will not start pods without these.
 
 Time: ~15 min. Cost: IAM is free.
 
@@ -42,35 +42,49 @@ behalf.
 
 ---
 
-## 3. Create the EKS **node role**
+## 3. Create the EKS **Fargate pod execution role**
 
-This is the role the EC2 worker nodes (where your pods run) assume. It needs to
-join the cluster, pull images from ECR, and run the networking plugin.
+On Fargate there are no EC2 worker nodes, so there's no node role. Instead, each
+Fargate profile references a **pod execution role** that Fargate uses to pull the
+pod's image from ECR and ship its logs to CloudWatch.
 
 1. IAM -> **Roles** -> **Create role**.
-2. Trusted entity: **AWS service** -> use case **EC2**. **Next**.
-3. Attach these three managed policies (search each, tick it):
-   - **AmazonEKSWorkerNodePolicy**
-   - **AmazonEC2ContainerRegistryReadOnly**  (lets nodes pull from ECR - guide 03)
-   - **AmazonEKS_CNI_Policy**  (the VPC networking plugin)
-4. **Next**. Role name: `ridenow-eks-node-role`. **Create role**.
+2. Trusted entity: **Custom trust policy**, and paste:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "Service": "eks-fargate-pods.amazonaws.com" },
+       "Action": "sts:AssumeRole"
+     }]
+   }
+   ```
+   (The console's "EKS - Fargate pod" use case sets the same trust; the custom
+   policy just makes it explicit.)
+3. **Next**. Attach the managed policy **AmazonEKSFargatePodExecutionRolePolicy**
+   (covers ECR pull + the Fargate log router).
+4. **Next**. Role name: `ridenow-eks-fargate-pod-execution-role`. **Create role**.
+
+You'll select this role when you create the Fargate profiles in guide 05.
 
 ---
 
-## 4. (Note) IRSA roles for later ops
+## 4. (Note) IRSA roles created later
 
-The async/Redis "later ops" (guides 07-08) and the ALB Ingress (guide 06) use
-**IRSA** (IAM Roles for Service Accounts) so specific pods get specific AWS
-permissions without long-lived keys. You create those *after* the cluster exists
-(the trust policy references the cluster's OIDC provider), so they live in the
-guides that need them - not here.
+The Redis and async messaging features (guides 07-08) and the ALB Ingress
+(guide 06) use **IRSA** (IAM Roles for Service Accounts) so specific pods get
+specific AWS permissions without long-lived keys. You create those *after* the
+cluster exists (the trust policy references the cluster's OIDC provider), so they
+live in the guides that need them - not here.
 
 ---
 
 ## Verify
 
 - You are signed in as `ridenow-admin`, not root.
-- IAM -> Roles shows `ridenow-eks-cluster-role` and `ridenow-eks-node-role`.
+- IAM -> Roles shows `ridenow-eks-cluster-role` and
+  `ridenow-eks-fargate-pod-execution-role`.
 
 ## Clean up
 
