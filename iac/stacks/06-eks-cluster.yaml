@@ -65,24 +65,15 @@ Resources:
   # Each profile matches pods by namespace and schedules them onto right-sized
   # Fargate micro-VMs. No EC2 nodes, no node SG for pods (Fargate pods attach to
   # the cluster security group), no autoscaler.
-
-  # Application services (user/driver/trip/payment/matching/notification-worker).
-  AppFargateProfile:
-    Type: AWS::EKS::FargateProfile
-    Properties:
-      ClusterName: !Ref Cluster
-      FargateProfileName: !Sub "ridenow-${Environment}-app"
-      PodExecutionRoleArn: !ImportValue
-        Fn::Sub: "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
-      Subnets: !Split
-        - ","
-        - !ImportValue
-          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
-      Selectors:
-        - Namespace: ridenow
+  #
+  # IMPORTANT: EKS creates only ONE Fargate profile at a time per cluster -
+  # creating a second while another is CREATING returns a 409. CloudFormation
+  # would otherwise create these three in parallel, so they are chained with
+  # DependsOn to force serial creation: System -> App -> Observability.
 
   # System add-ons: CoreDNS, AWS Load Balancer Controller, External Secrets,
   # metrics-server. CoreDNS must be patched to run on Fargate (see guide 05).
+  # Created first because CoreDNS underpins the rest.
   SystemFargateProfile:
     Type: AWS::EKS::FargateProfile
     Properties:
@@ -98,9 +89,26 @@ Resources:
         - Namespace: kube-system
         - Namespace: external-secrets
 
+  # Application services (user/driver/trip/payment/matching/notification-worker).
+  AppFargateProfile:
+    Type: AWS::EKS::FargateProfile
+    DependsOn: SystemFargateProfile
+    Properties:
+      ClusterName: !Ref Cluster
+      FargateProfileName: !Sub "ridenow-${Environment}-app"
+      PodExecutionRoleArn: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-iam-FargatePodExecutionRoleArn"
+      Subnets: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-PrivateSubnetIds"
+      Selectors:
+        - Namespace: ridenow
+
   # Fargate log router config lives in the aws-observability namespace.
   ObservabilityFargateProfile:
     Type: AWS::EKS::FargateProfile
+    DependsOn: AppFargateProfile
     Properties:
       ClusterName: !Ref Cluster
       FargateProfileName: !Sub "ridenow-${Environment}-observability"

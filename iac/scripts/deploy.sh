@@ -147,10 +147,31 @@ for layer in "${LAYERS[@]}"; do
       --parameters "${params_args[@]}"
 
     echo "+ waiting for change set to be ready ..."
-    aws cloudformation wait change-set-create-complete \
+    # Don't use `wait change-set-create-complete`: an empty change set (stack
+    # already up to date) finishes as FAILED with reason "didn't contain
+    # changes", which the waiter treats as a terminal error. Poll instead and
+    # treat the no-op case as success.
+    if ! aws cloudformation wait change-set-create-complete \
       --region "${AWS_REGION}" \
       --stack-name "${stack_name}" \
-      --change-set-name "${cs_name}"
+      --change-set-name "${cs_name}" 2>/dev/null; then
+      cs_reason="$(aws cloudformation describe-change-set \
+        --region "${AWS_REGION}" \
+        --stack-name "${stack_name}" \
+        --change-set-name "${cs_name}" \
+        --query 'StatusReason' --output text 2>/dev/null || echo '')"
+      if echo "${cs_reason}" | grep -qiE "didn't contain changes|no updates are to be performed|submitted information"; then
+        echo "  no changes for ${stack_name}; skipping (already up to date)."
+        aws cloudformation delete-change-set \
+          --region "${AWS_REGION}" \
+          --stack-name "${stack_name}" \
+          --change-set-name "${cs_name}" >/dev/null 2>&1 || true
+        echo
+        continue
+      fi
+      echo "ERROR: change set for ${stack_name} failed: ${cs_reason}" >&2
+      exit 1
+    fi
 
     echo "+ executing change set ..."
     aws cloudformation execute-change-set \
