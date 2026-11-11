@@ -1,469 +1,365 @@
-# RideNow Architecture - The Local-First Mental Model
+# RideNow Architecture
 
-This document explains how RideNow is *meant* to be understood and built: as a set of
-stable boundaries, where each boundary starts with the simplest possible mechanism and is
-later swapped for its "real" counterpart. Nothing here replaces the proposal
-(`RideNow_Project_Proposal.md`) or the step list (`LEARNING_PATH.md`) - it is the mental
-model that makes both of them click, and makes the eventual cloud migration feel boring.
+How RideNow is put together, why, and where it falls short of production.
 
----
-
-## 0. Decisions locked (the short list of what we actually do)
-
-The settled choices, each with a one-line reason. Details follow in later sections.
-
-| Area | Decision | Why |
-|------|----------|-----|
-| Service calls (need answer now) | Direct HTTP | Synchronous request/response; already built in Stage 4 |
-| Async work queue (do-it-later, one consumer) | **SQS** | Durable, retries, DLQ; the messaging workhorse |
-| Event fan-out (one event, many consumers) | **EventBridge** | Proposal commits to it; pick ONE fan-out tool |
-| SNS | **Not used** | EventBridge already covers fan-out; two tools, one job |
-| Local messaging (before cloud) | EventBridge + SQS on **LocalStack**, behind a `DomainEventPublisher` interface | Built: real AWS SDK v2 against a local stand-in; the outbox stand-in was leapfrogged but the transport is still a swap |
-| Live driver location | **Redis = primary store, NOT in Postgres** | Ephemeral, high-write, geo-queried; DBML says keep it out of the DB |
-| Find nearby drivers | Postgres query first, then **Redis GEO** | Feel the limit before adding Redis |
-| Live location to rider | Redis Pub/Sub + WebSockets | Real-time, loss-tolerant stream |
-| Caching | Off by default; add per-endpoint only when proven hot + staleness-tolerant | Caching everything causes stale-data bugs |
-| Accept-ride concurrency | Optimistic lock (`@Version`) in trip-service, one DB | Exactly-one-winner; already built & proven |
-| Schema + seed data | Flyway (`V1` schema, `R` seed) per service, `validate` | One source of truth; done |
-| Durable data | Postgres per service (RDS in cloud) | Database-per-service rule |
-| Running services | `mvn run` -> Docker -> local k8s -> EKS | Local-first, migrate last |
-
-Deferred until a feature needs them: WebSockets, Saga, Kubernetes, all AWS
-*provisioning*. Do not adopt early.
-
-**Now built (local-first, against LocalStack + a Redis container):** async
-messaging (SQS + EventBridge) with a `notification-worker` consumer, and all four
-Redis roles (live driver state, Redis GEO matching in a new `matching-service`,
-cache-aside on the driver profile, and Pub/Sub for live location). These use the
-real AWS SDK v2 / Spring Data Redis against local stand-ins, so the move to real
-AWS (ElastiCache, SQS, EventBridge) is config-only. See
-`guides/stage-11a-local-async-messaging.md` for the messaging flow.
+- Product scope and goals: `RideNow_Project_Proposal.md`.
+- Per-service details (ports, APIs, packages): `SERVICES.md`.
+- Glossary of techniques: `KNOWLEDGE.md`.
+- Persistent fields: `database/ridenow.dbml`.
 
 ---
 
-## 1. The one idea that makes migration easy
+## 1. The guiding idea
 
-> Keep the architecture (the boundaries) fixed. Change only the mechanism behind each
-> boundary, one at a time.
+> Keep the boundaries fixed. Change only the mechanism behind each boundary.
 
-A "boundary" is a place where one part of the system talks to another:
-- a service calling another service
-- a service sending a notification
-- a service storing data
-- a service finding nearby drivers
-- a service running somewhere
+A boundary is any place where one part of the system talks to another. Every boundary
+started with the simplest local mechanism and is swapped for the managed one by
+**configuration**, not by rewriting business code:
 
-For every boundary, there is a **boring local mechanism** you build first and a **real
-mechanism** you swap in later. Because the boundary does not move, swapping the mechanism
-is a substitution, never a redesign. That is the whole trick to "build locally, migrate
-easily".
+| Boundary | Local mechanism | Cloud mechanism | Hidden behind |
+|---|---|---|---|
+| Service-to-service call | HTTP to `localhost` / compose DNS | HTTP to Kubernetes Service DNS | a URL in config + a small client class |
+| Domain events | EventBridge + SQS on LocalStack | Amazon EventBridge + SQS | `DomainEventPublisher` (logging impl or EventBridge impl) |
+| Durable data | Postgres container per service | RDS PostgreSQL per service | datasource URL |
+| Live driver state, GEO, Pub/Sub, cache | Redis container | ElastiCache | Redis host/port (+ TLS flag) |
+| Nearby-driver search | Postgres scan | Redis GEO | `NearbyDriverFinder` |
+| Payment provider | `SimulatedPaymentGateway` | a real provider | `PaymentGateway` |
+| Delivery to apps | logging sender | Redis -> realtime-gateway -> WebSocket | `NotificationSender`, `ClientChannel` |
+| Running a service | `mvnw spring-boot:run`, then Docker Compose | EKS on Fargate | image + env vars |
+| Secrets | `application.yaml` / `.env` | Secrets Manager via External Secrets + IRSA | env vars |
 
-The discipline that enables it: **put every boundary behind something you control** - an
-interface, a config value, a small client class. Your business logic talks to the
-interface; the mechanism hides behind it. You already did this once in Stage 4 by making
-the user-service URL a config value instead of a hardcoded string. Same move, everywhere.
+Test for a healthy boundary: if swapping its mechanism would force a change to business
+logic, the boundary has leaked. Fix that before adding anything new.
 
 ---
 
-## 2. The system as boundaries (this never changes)
+## 2. Services and data ownership
 
 ```
-            +-------------+        +--------------+
- Passenger  | user-service|        | driver-service|  Driver
-   app  ---> | accounts    |        | drivers,      | <--- app
-            +------+------+        | vehicles      |
-                   |               +-------+-------+
-                   |                       |
-                   v                       v
-            +-------------------------------------+
-            |            trip-service             |
-            |  ride lifecycle / state machine     |
-            +------+----------------------+-------+
-                   |                      |
-          needs a driver            trip completed
-                   |                      |
-                   v                      v
-            +-------------+        +----------------+
-            |matching-svc |        | payment-service|
-            |find a driver|        | charge the trip|
-            +-------------+        +--------+-------+
-                                            |
-                                     "trip paid" happened
-                                            |
-                                            v
-                                   +-------------------+
-                                   |notification-worker|
-                                   | tell the people   |
-                                   +-------------------+
+                 Rider app                           Driver app
+                    |  REST                              |  REST
+                    v                                    v
+   +--------------+      +--------------+      +----------------+
+   | user-service |<-----| driver-svc   |----->| matching-svc   |
+   | accounts     | HTTP | drivers,     |handoff| offers,        |
+   +--------------+      | live state   |      | Redis GEO      |
+                         +--------------+      +----------------+
+                    REST                            ^ trip.requested
+                    v                               | (SQS)
+   +-------------------------------+   HTTP   +----------------+
+   |        trip-service           |--------->| payment-svc    |
+   | lifecycle, @Version accept    | authorize| hold/capture/  |
+   +-------------------------------+          | release        |
+                    | events                  +----------------+
+                    v                                ^ trip.completed /
+             EventBridge bus  --> one SQS queue per consumer --+ trip.cancelled
+                    |
+                    v
+   +-------------------------+  Redis Pub/Sub  +------------------+
+   | notification-worker     |---------------->| realtime-gateway |--WebSocket--> apps
+   | idempotent SQS consumer |                 | holds sockets    |
+   +-------------------------+                 +------------------+
 ```
 
-Rules that hold at every stage (local or cloud), straight from AGENTS.md:
-- Each service owns its own database. No shared tables, no cross-service joins.
-- Services reach each other only through an explicit API or a message - never by reading
-  another service's database.
-- Cross-service references are stored as plain IDs (e.g. `userId` as a UUID), not JPA
-  relationships.
+| Service | Owns | Talks to others by |
+|---|---|---|
+| user-service | users | serves HTTP |
+| driver-service | drivers, vehicles; live state in Redis | HTTP to user-service; position handoff to matching-service |
+| trip-service | trips, trip offers, the accept race | HTTP to payment-service; publishes events |
+| payment-service | payments | serves HTTP; consumes its queue; publishes events |
+| matching-service | driver positions, offers it makes, the GEO index | consumes its queue; publishes events |
+| notification-worker | the processed-notification ledger | consumes its queue; publishes to Redis |
+| realtime-gateway | nothing (no database) | subscribes to Redis; holds WebSockets |
+
+Rules that hold everywhere (from `AGENTS.md`):
+
+- **Database per service.** No shared tables, no cross-service joins.
+- **Access goes through an API or an event,** never through another service's database.
+- **Foreign ids are plain UUIDs,** never JPA relationships across services.
+- **Ratings ownership is undecided.** No service owns ratings yet.
 
 ---
 
-## 3. The substitution table (what to build now vs later)
+## 3. Sync or async: the rule and the map
 
-| Boundary / concept        | Boring version FIRST (local)                      | Real version LATER (the lesson)        |
-|---------------------------|---------------------------------------------------|----------------------------------------|
-| Service-to-service call   | Direct HTTP call (RestClient) - Stage 4           | Same + timeouts, retries, circuit breaker |
-| Async notification        | "Outbox" table + a scheduled poller sends it      | AWS SQS (queue) + DLQ                   |
-| Events between services   | A direct call, or an outbox row the other reads   | AWS EventBridge                        |
-| Find nearby drivers       | A plain PostgreSQL query (even a naive one)       | Redis GEO (ElastiCache in cloud)       |
-| Shared/live driver state  | A column in Postgres, polled                      | Redis (shared, fast, TTL)              |
-| Live location to rider    | Rider polls an HTTP endpoint                      | WebSockets + Redis Pub/Sub             |
-| Running a service         | `mvn spring-boot:run`                             | Docker -> local Kubernetes -> AWS EKS  |
-| Config                    | `application.yaml`                                | ConfigMap -> env                       |
-| Secrets                   | `application.yaml` (local only)                   | Kubernetes Secret -> AWS Secrets Manager |
-| Database                  | Postgres in a container                           | Amazon RDS PostgreSQL                  |
-| Image storage             | local `docker build`                              | Amazon ECR                             |
+**Rule:** if the caller needs the answer to continue, call it synchronously over HTTP.
+If something merely *happened* and others react later, publish an event. Most
+interactions stay synchronous, and async is added per interaction, not project-wide.
 
-Read the table left to right as a learning sequence. You never jump straight to the right
-column. You earn each move by first making the left column work and feeling its limits.
+| Interaction | Mode | Why |
+|---|---|---|
+| User / driver CRUD; driver -> user validation | Sync | the caller needs the result |
+| `POST /trips` -> payment **authorize** | **Sync, strict** | a bad card must stop the trip before any driver is bothered |
+| `POST /trips` -> find drivers | **Async** (`trip.requested`) | trip creation must not wait on the geo search |
+| `accept` | Sync, then event | the optimistic lock needs an immediate winner or loser |
+| `arrive`, `start`, `complete`, `cancel` | Sync, then event | the state change is the answer; reactions come later |
+| Trip ends -> payment **capture / release** | **Async** (`trip.completed` / `trip.cancelled`) | the rider never waits on it; retries are safe |
+| Any event -> tell the user | **Async** | delivery must never slow the business flow |
+| Driver location write | Sync write + Redis Pub/Sub | Redis is the primary store; the stream may lose updates |
+| Trip / payment reads | Sync | the caller needs the answer |
 
----
+### 3.1 Event routing
 
-## 4. Why learn the LOCAL equivalent before the AWS service
+```mermaid
+flowchart LR
+  T[trip-service] -->|trip.* / driver.*| EB[(EventBridge bus)]
+  P[payment-service] -->|payment.succeeded / failed| EB
+  M[matching-service] -->|match.offered| EB
+  EB -->|trip.requested| QM[matching queue + DLQ] --> M
+  EB -->|trip.completed, trip.cancelled| QP[payment queue + DLQ] --> P
+  EB -->|every ridenow.* event| QN[notifications queue + DLQ] --> N[notification-worker]
+  N -->|Redis Pub/Sub| G[realtime-gateway]
+  G -->|WebSocket| A[apps]
+```
 
-The hard part is the *concept*, not the vendor. Learn it with the simplest local mechanism
-first; the AWS service is the same concept, managed.
+- **One rule per consumer, matched on `detail-type`.** A consumer sees only the events
+  it handles. Adding a consumer means adding a rule and a queue; publishers do not change.
+- **Every queue has a DLQ** with `maxReceiveCount` 5. Each queue's policy admits only its
+  own rule (`aws:SourceArn`).
+- **Events are published after commit** (`@TransactionalEventListener(AFTER_COMMIT)`),
+  so a rolled-back change publishes nothing.
+- **Every consumer is idempotent,** because SQS delivers at least once. A consumer deletes
+  a message only after handling it. A malformed message is dropped, and anything else
+  that fails is retried and then dead-lettered.
 
-- **Messaging:** outbox table + poller (Postgres only, no broker) -> then SQS. Same
-  producer/consumer/retry/DLQ/idempotency concepts; only the implementation behind the
-  `NotificationPublisher` interface swaps. (RabbitMQ is not used - the outbox teaches the
-  same lessons and SQS is the destination.)
-- **Kubernetes:** Deployments/Services/probes on local k8s (Docker Desktop or `kind`) ->
-  then EKS. The manifests are ~90% the same.
+| Event | Published by | Consumed by |
+|---|---|---|
+| `trip.requested` | trip-service | matching, notifications |
+| `driver.accepted`, `driver.arrived`, `trip.started` | trip-service | notifications |
+| `trip.completed`, `trip.cancelled` | trip-service | payment, notifications |
+| `match.offered` | matching-service | notifications (to the driver) |
+| `payment.succeeded`, `payment.failed` | payment-service | notifications |
 
-**Introduce each only when a feature needs it:** notifications -> async messaging (outbox,
-then SQS); "stay up and scale" -> orchestration (local k8s, then EKS). Adopting a solution
-before you have its problem is the trap the proposal warns about.
+### 3.2 Payment: authorize, then capture or release
 
----
+```
+PENDING -> PROCESSING -> AUTHORIZED     sync, inside POST /trips
+AUTHORIZED -> PAID                      async, on trip.completed (final fare)
+AUTHORIZED -> RELEASED                  async, on trip.cancelled
+PROCESSING -> FAILED                    authorize declined
+AUTHORIZED -> FAILED                    capture failed (compensation path)
+```
 
-## 5. The recommended build order (reframed)
+- **Strict.** If authorize is declined, trip creation returns `402`. If payment-service is
+  slow or down, it returns `503`. Either way no trip row is written.
+- **No double hold.** The trip id is the idempotency key, so a retried `POST /trips` cannot
+  create a second hold.
+- **Compensation.** If the hold may exist but the trip was not saved, trip-service
+  publishes a compensating `trip.cancelled`, and payment-service releases the hold. This
+  event names no recipient, because the rider already got the error synchronously.
+- **Repeats are safe.** Capture and release do nothing on a payment that is already final,
+  so a duplicate delivery cannot double-charge.
+- **Fare.** trip-service estimates it from straight-line distance times a per-ride-type
+  rate plus a base fare. The final fare equals the estimate for now; recomputing it
+  from the real route is deferred.
+- **Saga case.** A failed capture moves the payment to `FAILED`, publishes
+  `payment.failed`, and the rider is notified. There is no cross-service transaction.
 
-This refines the proposal's roadmap around the local-first idea. Phases map to
-`LEARNING_PATH.md` stages.
+### 3.3 Concurrency: exactly one driver wins
 
-1. **Working two-service system, HTTP only.** user + driver, each with its own DB, talking
-   over HTTP. (Done - Stages 1-4.)
-2. **Trip lifecycle in trip-service.** A state machine (REQUESTED -> ... -> COMPLETED),
-   transactions, validation. Still just HTTP + Postgres. (Done - trip-service is built.)
-3. **The concurrency lab.** Two drivers accept one ride; prove exactly one wins using
-   optimistic/pessimistic locking. Pure Postgres + Java. This is the project's signature
-   problem and needs NO queue, NO Redis, NO cloud. (Done - optimistic lock built & proven.)
-4. **Matching, the boring way.** matching-service finds a driver with a Postgres query.
-   Feel why that is slow/awkward -> THEN introduce Redis GEO as the fix. (Done -
-   matching-service is built: a swappable `NearbyDriverFinder` with a Postgres scan
-   impl and a Redis GEO impl matching-service owns; positions arrive via an explicit
-   ingest handoff.)
-5. **Async notifications.** (Done, local-first against LocalStack.) trip-service and
-   payment-service publish domain events to EventBridge after commit; a rule routes
-   them to an SQS queue; `notification-worker` consumes them idempotently with retry
-   and a DLQ. The architecture's outbox stand-in was leapfrogged: the publisher sits
-   behind a `DomainEventPublisher` interface (logging default, EventBridge impl), so
-   the transport is still a swap, and the move to real AWS is config-only.
-6. **Payment + failure handling.** Payment can fail; handle it with explicit state and
-   compensation (the Saga idea) instead of a cross-service transaction. (Done -
-   payment-service is built with idempotency and explicit states.)
-7. **Events.** Where a direct call is too tight a coupling, publish an event. (Done -
-   trip/payment events fan out through EventBridge, local-first via LocalStack.)
-8. **Containerize** every service (Docker). The system runs as images.
-9. **Local Kubernetes.** Run the images as Deployments/Services on Docker Desktop k8s or
-   kind. Learn Pods, probes, scaling - for free.
-10. **AWS, console first, then CloudFormation.** IAM, VPC, RDS, ECR, ElastiCache, SQS,
-    EventBridge - each clicked once, then codified.
-11. **EKS.** Deploy the same manifests to managed Kubernetes.
-12. **Observability, CI/CD, load & failure testing.**
-
-The migration to cloud (steps 10-11) is deliberately late and deliberately dull: by then
-every mechanism already has a working local version, so the cloud is "same concept,
-managed by AWS."
-
-**Cloud phase status (built).** The AWS footprint is now codified end to end as a
-**production** deployment on **EKS Fargate** (serverless pods — no EC2 node groups, no
-cluster autoscaler). The CloudFormation layers in `iac/stacks/` (01 IAM incl. a Fargate
-pod execution role, 02 three-AZ network with a NAT per AZ, 03 ECR, 04 per-service
-Multi-AZ RDS, 05 SQS/EventBridge/Redis, 06 cluster + Fargate profiles, 07 ALB-controller
-and External-Secrets IRSA) deploy in order via `iac/scripts/deploy.sh`, and the console
-counterpart is `localfile/aws/01..08`. Observability is Fargate-appropriate: the AMP
-agentless scraper plus the Fargate log router, not node-level DaemonSet agents. See
-section 9.5 for the gap between "stacks deployed" and "running app", and the networking /
-inbound-security posture.
+- **Where the race lives.** Accept-ride is decided in one service and one database:
+  trip-service, with `@Version` optimistic locking. matching-service only proposes
+  candidates and never decides who wins.
+- **The guarantee.** 50 simultaneous accepts produce exactly one winner, proven by
+  `AcceptTripConcurrencyTest`.
+- **What's never cached.** Trip status and the accept read. A stale read there would break
+  the guarantee.
 
 ---
 
-## 6. How to tell if you are doing it right
+## 4. Messaging and Redis: one job per tool
 
-At any point, you should be able to answer, for each boundary:
-- What mechanism is behind it right now? (HTTP? outbox? Redis?)
-- What problem would make me upgrade that mechanism?
-- If I swapped the mechanism, how much of my business code would change? (Answer should be:
-  almost none, because it is behind an interface/config.)
+| Need | Tool | Not this |
+|---|---|---|
+| Answer now | HTTP | a queue |
+| Do one task later, reliably | SQS (+ DLQ) | Redis Pub/Sub |
+| One event, many independent reactors | EventBridge -> one SQS queue per consumer | SNS (an alternative to EventBridge; we picked one) |
+| Real-time, lossy, latest-value-wins stream | Redis Pub/Sub | SQS |
 
-If swapping a mechanism would force you to rewrite business logic, the boundary leaked -
-fix that before adding anything new.
+**Redis Pub/Sub is not a queue.** It is fire-and-forget: a subscriber that is down
+misses the message forever, and nothing is stored, retried or dead-lettered. That suits
+GPS pings and the last hop to the WebSocket gateway, because the client resyncs over
+REST. It never suits payments or anything that must not be lost.
 
----
+**Redis has four roles,** and caching is the smallest:
 
-## 7. What this means for the next step
+1. **Primary store for live driver state** (availability and position, with a TTL). Kept
+   out of Postgres on purpose. Losing it is fine, because the app re-reports.
+2. **GEO index** for nearby-driver search, owned by matching-service.
+3. **Pub/Sub** for driver location and for notifications on their way to the gateway.
+4. **Cache-aside** on the driver profile only.
 
-The HTTP-only two-service system, the trip lifecycle, the concurrency lab (the heart of the
-whole project), payment with explicit states, **async notifications** (EventBridge -> SQS ->
-notification-worker), and **all four Redis roles** (matching-service's Redis GEO, live driver
-state, cache-aside, Pub/Sub) are all built and run locally - against a Redis container and
-LocalStack, so the cloud move is config-only.
+**Cache a read only when all three hold:**
 
-The cloud/platform phase is now largely codified: Docker images (done), and the full AWS
-footprint as production **EKS Fargate** CloudFormation (`iac/`) with matching console
-guides (`localfile/aws/`). What remains is the application-security and resilience
-hardening in section 9, plus CI/CD and load/failure testing. Each still follows the same
-rule — the mechanism behind each boundary is swapped, the boundary itself does not move.
+- it is read far more often than it changes;
+- it tolerates staleness for the TTL;
+- it is a measured hot path.
 
-
----
-
-## 8. Messaging, Redis, and caching - decision guide
-
-Notes from design discussion. The theme: each tool has ONE job it is best at; do not
-substitute them for each other, and do not adopt any of them before a feature needs it.
-
-### 8.1 Synchronous vs asynchronous - pick per interaction, not per project
-
-Two kinds of service-to-service interaction, each wants a different tool:
-
-- **"I need an answer now"** (synchronous) -> a direct **HTTP call**.
-  Example: driver-service creating a driver must know right now whether the user exists.
-  Already built this way in Stage 4. Do NOT route this through a queue.
-- **"This happened; react whenever"** (asynchronous) -> a **queue / event**.
-  Example: trip completed -> send a notification; the trip must not wait for it.
-
-Do NOT make the whole project message-based. Most interactions are synchronous HTTP or
-stay inside one service's database. Introduce async messaging per feature.
-
-### 8.2 SQS vs SNS vs EventBridge - two different jobs
-
-- **Work queue** (one producer -> one consumer group, "do this later"): **plain SQS**.
-  This is the workhorse. Notifications, payment side-effects. Use this most of the time.
-- **Fan-out** (one event -> many independent consumers): **SNS+SQS** OR **EventBridge**.
-  SNS and EventBridge are ALTERNATIVES to each other, not additions - pick ONE.
-  RideNow commits to EventBridge, so prefer SQS + EventBridge and skip SNS, unless you
-  specifically want to learn the SNS->SQS pattern.
-
-Do not adopt SNS + SQS + EventBridge together; that is three tools for two jobs.
-
-| Need                                   | Use                        |
-|----------------------------------------|----------------------------|
-| Do one task later, reliably            | SQS                        |
-| One event, several independent reactors| SQS + EventBridge (one fan-out tool) |
-| Request/response, need answer now      | HTTP (not messaging)       |
-
-### 8.3 Redis Pub/Sub is NOT a replacement for SQS
-
-They look similar (both deliver messages) but differ fundamentally:
-
-- **Redis Pub/Sub = fire-and-forget.** Delivered only to whoever is connected at that
-  instant. No storage, no retry, no DLQ, no acknowledgment. If a subscriber is down or
-  crashes mid-processing, the message is lost forever.
-- **SQS = store-and-forward.** Durable until processed; retries on failure; dead-letter
-  queue; at-least-once delivery.
-
-So:
-- **Durable, must-not-lose, retryable work** (notifications, payments) -> **SQS**. Never
-  Redis Pub/Sub - losing a payment event is unacceptable.
-- **Real-time, disposable, latest-value-wins streams** (live driver location to the
-  passenger map) -> **Redis Pub/Sub** is the BETTER choice: lowest latency, and a dropped
-  GPS ping does not matter because another arrives a second later.
-
-(Nuance: Redis *Streams* - distinct from Pub/Sub - do offer durability/replay, closer to a
-queue. But plain Pub/Sub does not, and Streams still lack SQS's managed DLQ/visibility
-ergonomics. Keep the split: SQS for durable jobs, Redis Pub/Sub for live streams.)
-
-### 8.4 Redis is NOT "just a cache" in RideNow
-
-Redis has four roles here; caching is the smallest:
-
-1. **Geospatial store (the headline role).** Redis GEO answers "find available drivers
-   near this point" in milliseconds. Live location is the PRIMARY data here, deliberately
-   kept OUT of Postgres (the DBML says so). This is why Redis is in the architecture.
-2. **Shared/live state.** Online/offline + current position: fast-changing, read by many,
-   ephemeral. Kept in Redis to avoid hammering Postgres.
-3. **Pub/Sub for live tracking** (see 8.3).
-4. **Cache** (cache-aside) - optional, secondary.
-
-Cache = a disposable copy whose real home is Postgres. GEO/live-state = Redis IS the home
-(losing it is acceptable; the driver app re-reports).
-
-### 8.5 Should every DB read be cached? No.
-
-Caching is a targeted optimization, not a default. Caching everything makes the system
-slower, buggier (two copies of the truth that can disagree), and wastes RAM.
-
-**Cache a read only when ALL of these hold:**
-- read far more often than it changes (high read:write ratio), AND
-- it tolerates being slightly stale for the TTL, AND
-- you have measured it as a real hot path.
-
-**Mapped to RideNow:**
-- Good candidate: user/driver **profile** (read often, changes rarely).
-- NEVER cache: trip status and the accept-ride read (correctness-critical, changes
-  constantly) - a stale read here would break the exactly-one-winner guarantee.
-- Not caching at all: live driver location (Redis is its primary store, not a cache of it).
-- Pointless: one-off reads (create-then-read-once).
-
-Default = no cache; serve reads from Postgres. Add a cache to ONE specific endpoint only
-when it is a proven read-heavy, staleness-tolerant hot path.
+Default: no cache.
 
 ---
 
-## 9. Production-readiness review
+## 5. Real-time delivery
 
-A review of the architecture against two bars: (a) its stated goal as a local-first
-learning/portfolio project, and (b) enterprise production-level readiness. Both verdicts
-are given because both are fair questions, and they differ.
+- **realtime-gateway only holds sockets.** It has no database and no business logic.
+  Clients connect to `/ws` (STOMP) and subscribe to `/topic/users/{userId}`.
+- **No sticky sessions needed.** notification-worker publishes each notification on the
+  Redis channel `ridenow.notifications`. Every gateway pod subscribes, and the pod that
+  holds the recipient's socket delivers it.
+- **The socket is an optimization, never the source of truth.** On every connect and
+  reconnect the client first fetches current state over REST. Each message carries
+  `eventId` and `occurredAt`, so clients drop duplicates and stale messages.
+- **Clients only receive.** `SEND` is rejected, and so is a subscription to anything but an
+  exact per-user topic. That blocks wildcards that would leak other users'
+  notifications. Frame size, subscriptions per connection and frames per window are capped.
+- **Rolling deploys.** Shutdown closes sockets with `1001` "reconnect". Clients reconnect
+  with exponential backoff, jitter and a connect timeout. `realtime-gateway/README.md`
+  has the full client contract.
+- **Scope today: notifications only.** Live driver location over the same socket is a
+  later task, and the Redis channel for it already exists.
 
-**Framing:** RideNow is explicitly a local-first learning project (AGENTS.md, this doc,
-and the proposal all say so). Judged against that goal it is well-built. Judged as an
-enterprise production system it is a solid foundation with several hard blockers. The
-boundaries are clean enough that each blocker can be closed as a *mechanism swap* rather
-than a redesign - which is the whole point of the design.
+**Why WebSocket and not UDP, WebRTC or QUIC:**
 
-### 9.1 What is strong (and would hold up in production)
+- The traffic is small and low-rate: about one GPS ping a second, and a few events per trip.
+- TCP head-of-line blocking does not matter at that rate.
+- WebRTC is for peer-to-peer media, and riders and drivers never talk directly.
+- WebTransport / QUIC client and server support is still immature.
+- Revisit only if load tests show head-of-line blocking on bad mobile networks. SSE is
+  the simpler one-way fallback.
 
-- **Clean service boundaries.** Database-per-service is enforced: no shared tables, no
-  cross-service joins, cross-service references stored as scalar IDs, services talk only
-  over HTTP or events. This is the most important thing to get right in microservices, and
-  it is right here.
-- **Idiomatic, consistent layering.** Every service follows controller -> service ->
-  repository -> entity with constructor injection, DTOs at the boundary, and a focused
-  `@RestControllerAdvice`. Low onboarding cost.
-- **Correct concurrency model.** trip-service uses `@Version` optimistic locking for
-  accept-ride, with a dedicated race test (`AcceptTripConcurrencyTest`). The
-  exactly-one-winner guarantee is real, not hand-waved.
-- **Thoughtful async pipeline.** `@TransactionalEventListener(AFTER_COMMIT)` ->
-  EventBridge -> SQS -> worker, with an idempotency ledger (`ProcessedNotification`) and a
-  DLQ via redelivery. The publisher sits behind a `DomainEventPublisher` interface with
-  profile-selected impls, so the cloud swap is config-only.
-- **Credible platform story.** K8s manifests set resource requests/limits, readiness and
-  liveness probes, and HPA on the HTTP services; pods run on **EKS Fargate** (no nodes to
-  patch or autoscale); secrets come from AWS Secrets Manager via the External Secrets
-  Operator and IRSA (no static keys); CloudFormation deploys a three-AZ, Multi-AZ-RDS
-  production footprint. Well above typical hobby-project quality.
-- **Data-tier network isolation is real.** RDS and ElastiCache sit in private subnets and
-  their security groups accept traffic only from the cluster SG, then (per guide 06 step
-  2.5) only from per-service security groups — so a service can reach its own database but
-  not another service's. The application services are `ClusterIP`; only the ALB is
-  internet-facing, and it routes just the four public API paths. matching-service and
-  notification-worker have no public route at all.
+---
 
-### 9.2 Production blockers (must fix before "enterprise")
+## 6. Running it
 
-1. **No security, anywhere.** No `spring-boot-starter-security` in any pom, no auth filter,
-   no JWT, no `@PreAuthorize`, no service-to-service auth. The ALB ingress exposes
-   `/api/users`, `/api/drivers`, `/api/trips`, `/api/payments` unauthenticated, and
-   user-service does not hash credentials. For a ride-hailing app handling payments and PII
-   this alone makes it non-production. It is marked "planned" in the docs, consistent with
-   the learning stage, but it is non-negotiable for enterprise.
-2. **No edge TLS, WAF, or inbound restriction.** The ALB ingress is `internet-facing`
-   with a single HTTP:80 listener — no ACM certificate / HTTPS, no `wafv2-acl-arn`, no
-   `inbound-cidrs` source-IP limit. It is a bare path-router with no auth or rate
-   limiting. Combined with (1), the edge is wide open to the whole internet in plaintext.
-3. **No sync-call resilience.** The one cross-service call (`UserServiceClient`) uses a
-   `RestClient` built with no connect/read timeout, no retry, and no circuit breaker. A
-   slow or hung user-service ties up driver-service threads unbounded. No
-   resilience4j/spring-retry anywhere.
-4. **No true transactional outbox.** The after-commit publish is deliberate and better than
-   publishing inside the transaction, but it is not at-least-once on the producer side: if
-   the process dies between DB commit and the after-commit publish, the event is silently
-   lost. For payment events this is the kind of gap that bites in production. The docs are
-   honest that the outbox was "leapfrogged."
-5. **Thin observability.** Actuator exposes `health` only. No Micrometer/Prometheus
-   metrics, no distributed tracing (OTel/Zipkin), no correlation IDs across the
-   HTTP -> EventBridge -> SQS chain, no structured logging. Flying blind during an incident.
+| Stage | How |
+|---|---|
+| One service | `./mvnw spring-boot:run` + that service's own `docker-compose.yml` (DB only) |
+| Whole system | root `docker compose up --build`: 6 Postgres, Redis, LocalStack, 7 services |
+| Cloud | EKS on **Fargate** (no node groups), Multi-AZ RDS per service, ElastiCache, SQS, EventBridge |
 
-### 9.3 Lower-severity gaps
+**Cloud footprint.** CloudFormation in `iac/stacks/`, deployed in order by
+`iac/scripts/deploy.sh`. The script resolves the cluster's OIDC id between stacks 06 and 07.
 
-- Liveness and readiness both point at `/actuator/health`; they should be split so a lost
-  DB connection gates traffic (readiness) without triggering pod restarts (liveness).
-- **No east-west restriction between pods.** There is no Kubernetes `NetworkPolicy`
-  anywhere in `iac/k8s/`, so pod-to-pod traffic inside the cluster is unrestricted — any
-  service pod can call any other on any port. The per-pod security groups (guide 06 step
-  2.5) scope pod→**database** access, not pod→pod. On **Fargate** this matters because
-  NetworkPolicy enforcement needs the VPC CNI NetworkPolicy agent (a DaemonSet), which
-  Fargate does not run — so the Fargate-correct lever for east-west control is to extend
-  the per-service security groups to also scope which caller SGs may reach each service,
-  rather than relying on NetworkPolicy. (See 9.5.)
-- No `PodDisruptionBudget` or resource quotas.
-- `notification-worker` scales on nothing (replicas:1, no KEDA/SQS-depth autoscaling).
-- Payment is a `SimulatedPaymentGateway` - expected at this stage, not production.
+| Stack | Provides |
+|---|---|
+| 01 | IAM: cluster and Fargate roles, a shared ECR/Secrets policy, one messaging policy per service scoped to its exact queue/bus |
+| 02 | three-AZ network with a NAT per AZ |
+| 03 | ECR, one repo per service |
+| 04 | RDS per service |
+| 05 | bus, three queues + DLQs, rules, queue policies, Redis |
+| 06 | EKS cluster + Fargate profiles |
+| 07 | IRSA roles for the add-ons and for trip, payment, matching and notification-worker |
 
-### 9.4 Verdict
+**What the stacks do not do.** Image builds, Helm add-ons, per-pod security groups and the
+`iac/k8s/` manifests are manual steps. Follow `guides/aws/00-deploy-runbook.md`.
 
-As a **local-first learning architecture**, it is well-designed: stable, correct
-boundaries; real swap-the-mechanism discipline; and the hard problem (concurrency) handled
-properly. As an **enterprise production system**, it is not there yet - chiefly the total
-absence of authentication/authorization and TLS, plus missing sync-call resilience, no real
-outbox, and near-zero observability. None are architectural dead-ends; the clean boundaries
-mean each can be added as a mechanism swap, which is exactly what this design optimizes for.
+**Network posture.**
 
-Suggested hardening order when the project reaches that phase: security -> observability ->
-sync-call resilience -> transactional outbox, each introduced as the smallest change that
-fits the existing service and data boundaries.
+- RDS and Redis sit in private subnets and admit only cluster traffic. Per-service
+  security groups narrow that to "own database only".
+- Services are `ClusterIP`. The only internet-facing entry is the ALB: four API paths
+  plus `/ws`, with a 300s idle timeout for sockets.
 
-### 9.5 Cloud deploy: what the IaC does, and the network/security posture
+---
 
-A precise read of "can we run the whole prod project from the IaC now", recorded here so
-it does not have to be re-derived.
+## 7. Production readiness
 
-**What the CloudFormation deploys (stacks 01→07).** `iac/scripts/deploy.sh prod --apply`
-provisions the full AWS footprint in dependency order: IAM roles (incl. the Fargate pod
-execution role), the three-AZ network, ECR repos, four Multi-AZ RDS instances with
-Secrets Manager credentials, SQS/DLQ + EventBridge + ElastiCache, the EKS control plane
-with three Fargate profiles, and the ALB-controller / External-Secrets IRSA roles. All
-seven templates pass `cfn-lint` and are wired purely by exports/imports.
+Judged as a **local-first learning project**, the design is sound:
 
-**What the IaC does NOT do (still manual / CLI, per guides 03/05/06).** The templates
-provision infrastructure, not the running application:
+- correct boundaries;
+- real swap-the-mechanism discipline;
+- the hard concurrency problem solved properly.
 
-- Build and push service images to ECR (guide 03).
-- In-cluster installs that are Helm/kubectl, not CloudFormation: the AWS Load Balancer
-  Controller, the External Secrets Operator, the CoreDNS Fargate patch, the Fargate
-  log-router ConfigMap, the per-service `SecurityGroupPolicy` resources, and the service
-  Deployments/Services/Ingress/HPA manifests.
-- The KMS grant that lets External Secrets decrypt the RDS-managed secrets, and the
-  per-service SG creation + `authorize-security-group-ingress` (guide 06 step 2.5).
-- **One single-pass blocker:** stack 07 needs the cluster's OIDC provider id
-  (`OidcProviderId`), which only exists after stack 06. `deploy.sh` runs 06→07 in one
-  pass with that parameter empty, so a clean run fails on 07 until the id is supplied
-  (guide 06 step 1c deploys 07 by hand with it). Resolving the id automatically between
-  06 and 07 would make the script a true one-command infra deploy.
+Judged as an **enterprise system**, it is not there yet. Every gap below can be closed as a
+mechanism swap, not a redesign.
 
-**Network / inbound security posture (what is controlled vs open).**
+### 7.1 What already holds up
 
-Controlled today:
-- Databases and Redis are private-subnet only; their SGs admit traffic only from the
-  cluster SG, tightened to per-service SGs by guide 06 step 2.5 (a service reaches its own
-  DB, not another's).
-- Services are `ClusterIP`; the only internet-facing entry is the ALB, routing just the
-  four public API paths. matching-service and notification-worker are not publicly
-  reachable.
+- **Clean boundaries.** Database per service, scalar foreign ids, HTTP or events only.
+- **Consistent layering.** Every service uses controller -> service -> repository with
+  DTOs, constructor injection and one `@RestControllerAdvice`.
+- **A proven concurrency guarantee.** Exactly one driver wins the accept race.
+- **A safe async pipeline.**
+  - Events are published after commit, through a swappable publisher.
+  - Each consumer has its own queue and DLQ.
+  - Every consumer is idempotent.
+  - Repeated payment actions cannot double-charge.
+- **Explicit failure states for payment.** A strict sync authorize, plus compensation
+  instead of a distributed transaction.
+- **Least-privilege IAM.** Each service's IRSA role reaches only its own queue and the bus.
+  Each queue accepts only its own rule.
+- **Credible platform setup.**
+  - Fargate, with probes, requests/limits and HPA.
+  - Secrets come from Secrets Manager.
+  - Data tiers are private.
+  - Readiness and liveness are split on realtime-gateway.
 
-Open / missing (consolidated with 9.2 and 9.3):
-- The ALB is HTTP:80, internet-facing, with no WAF, no `inbound-cidrs`, and no
-  application auth — the edge is wide open.
-- No pod-to-pod (east-west) restriction: no `NetworkPolicy`, and NetworkPolicy enforcement
-  is unavailable on Fargate anyway, so east-west must be done with per-service security
-  groups instead.
+### 7.2 Blockers
 
-Fargate-correct hardening to close the inbound/east-west gap, in priority order:
-1. ALB: attach an ACM certificate + HTTPS listener (redirect 80→443), a WAFv2 ACL, and
-   `inbound-cidrs` if the API is not meant for the open internet.
-2. East-west: extend the per-service SGs so each service's SG admits only the specific
-   caller SGs it expects (e.g. driver-service from the ALB SG and user-service SG only) —
-   the substitute for NetworkPolicy on Fargate.
-3. Application auth/TLS as per 9.2 blockers (1) and (2), which no network control replaces.
+1. **No authentication or authorization.**
+   - There is no Spring Security, JWT, or service-to-service auth.
+   - The WebSocket accepts any user id.
+   - Credentials are not hashed.
+2. **No edge TLS, WAF, or source restriction.** The ALB is HTTP:80 and open to the internet.
+3. **Sync-call resilience is partial.**
+   - trip -> payment has connect and read timeouts.
+   - driver -> user has none.
+   - There is no retry and no circuit breaker anywhere.
+4. **No transactional outbox.**
+   - If a process dies between commit and the after-commit publish, the event is lost.
+   - That matters most for `trip.completed`, which is what triggers the capture.
+5. **Thin observability.**
+   - There is a health endpoint only.
+   - There are no metrics, no tracing, and no correlation ids across HTTP -> EventBridge -> SQS.
+
+### 7.3 Lower-severity gaps
+
+- **Redis TLS.**
+  - ElastiCache is provisioned with in-transit TLS.
+  - notification-worker and realtime-gateway set `REDIS_SSL=true`.
+  - driver-service and matching-service cannot connect over TLS yet.
+- **Orphaned holds.** A hold whose compensation is also lost stays forever. The fix is an
+  expiry sweep.
+- **No durable inbox.** A user who is offline at the moment of delivery misses the
+  notification. REST still shows the true state.
+- **No push to closed apps.** A WebSocket reaches only foreground apps, and FCM/APNs are
+  out of scope.
+- **Probes and HPA.**
+  - Most services point both liveness and readiness at `/actuator/health`.
+  - realtime-gateway scales on CPU, not on connection count.
+- **No east-west restriction between pods.**
+  - On Fargate, NetworkPolicy is not enforced.
+  - The fix is to extend the per-service security groups to name allowed callers.
+- **Cluster policies.** There is no `PodDisruptionBudget` and no resource quota.
+- **Queue-depth scaling.** notification-worker and the other consumers don't scale on queue depth.
+- **Malformed JSON.** trip-service and matching-service return `500` instead of `400`.
+- **Simulated payment.** Payment uses a simulated gateway.
+
+**Hardening order:** security -> observability -> sync-call resilience -> outbox.
+
+---
+
+## 8. How it was verified
+
+The changes were checked against the full local stack (`docker compose up --build`, all
+containers healthy) with real STOMP clients subscribed as the passenger and the driver.
+
+| Check | Result |
+|---|---|
+| Request a trip | `201`; fare computed; payment `AUTHORIZED`, idempotency key = trip id |
+| Async matching | `trip.requested` -> offer recorded for the nearby driver; `/match` never called |
+| Full lifecycle | the passenger got all six notifications in order, ending with `payment.succeeded` |
+| Async capture | `trip.completed` -> payment `PAID`, with no HTTP call |
+| Cancel | payment `RELEASED`; `match.offered` reached only the driver |
+| Strict authorize | payment-service stopped -> `503`, no trip, no notification |
+| Consumer down | the message waited in its queue and was handled on restart |
+| Duplicate delivery | the paid payment stayed unchanged |
+| DLQ | a malformed message failed 5 times, then sat in the DLQ |
+| Gateway restart | socket closed with `1001`; the client reconnected and kept receiving |
+
+**Not verified:**
+
+- **AWS itself.** The stacks pass `cfn-lint`; nothing was deployed.
+- **Testcontainers suites.** They could not reach Docker Engine 29 on the dev machine.
+- **Scale.** No load tests and no many-replica runs.

@@ -1,15 +1,18 @@
 package cloudnative.microservices.notification.service;
 
+import cloudnative.microservices.notification.dto.Notification;
+
 /**
- * The seam to the actual notification channel (push/SMS/email). Locally this is
- * a simulated sender that logs; a real provider implements the same interface
- * later with no change to the consumer or idempotency logic.
+ * The seam to the actual notification channel. Locally this is a simulated sender
+ * that logs; {@link RedisNotificationSender} hands notifications to the
+ * realtime-gateway (WebSocket). Other channels (push/SMS/email) would implement
+ * the same interface with no change to the consumer or idempotency logic.
  */
 public interface NotificationSender {
 
     /**
-     * Delivers a notification for the given event. Throwing signals a transient
-     * failure so the message is retried (and eventually dead-lettered).
+     * Delivers one notification to one recipient. Throwing signals a transient
+     * failure so the SQS message is retried (and eventually dead-lettered).
      */
-    void send(String eventType, String aggregateId, String summary);
+    void send(Notification notification);
 }

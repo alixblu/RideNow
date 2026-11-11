@@ -1,0 +1,51 @@
+server:
+  port: ${SERVER_PORT:8086}
+  # On SIGTERM: stop taking new requests and give in-flight work time to finish.
+  # The WebSocket sessions are closed first with 1001 "reconnect" (SessionRegistry).
+  shutdown: graceful
+
+spring:
+  application:
+    name: realtime-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  # Redis Pub/Sub carries notifications from notification-worker to every gateway
+  # pod. Config-driven: a local redis container or Amazon ElastiCache by env only.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # ElastiCache is provisioned with in-transit TLS; set REDIS_SSL=true there.
+      ssl:
+        enabled: ${REDIS_SSL:false}
+
+ridenow:
+  gateway:
+    notifications-channel: ${RIDENOW_GATEWAY_CHANNEL:ridenow.notifications}
+    # Browser origins allowed to open a socket. "*" is for local use only; set the
+    # real app origin(s) in the cloud. (Native mobile clients send no Origin.)
+    allowed-origins: ${RIDENOW_GATEWAY_ALLOWED_ORIGINS:*}
+    max-message-bytes: 8192
+    max-subscriptions-per-session: 5
+    max-frames-per-window: 60
+    frame-window: 10s
+    heartbeat: 10s
+
+# No database, no business API: the actuator health endpoint is for probes only.
+# Split probes: readiness includes Redis (without it this pod cannot deliver, so
+# stop routing new sockets to it); liveness does not (restarting would not fix a
+# Redis outage, it would only drop every open socket).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,redis
+        liveness:
+          include: livenessState

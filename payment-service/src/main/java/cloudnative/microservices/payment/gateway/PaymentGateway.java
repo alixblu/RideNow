@@ -12,19 +12,25 @@ import java.math.BigDecimal;
  * provider (e.g. a PayPalPaymentGateway calling the PayPal REST API) would be
  * added as another implementation of this interface, with no change to
  * PaymentService, the controller, or the schema.
+ *
+ * The lifecycle is authorize-then-capture: funds are held for the estimated fare
+ * when the trip is requested, then captured for the final fare (or released)
+ * once the trip ends.
  */
 public interface PaymentGateway {
 
-    /**
-     * Attempt to charge the given amount using the given method.
-     *
-     * @return the outcome of the charge; callers map this onto PaymentStatus.
-     */
-    ChargeResult charge(PaymentMethod method, BigDecimal amount, String currency);
+    /** Hold funds for the estimated fare. A decline means the trip must not start. */
+    ChargeResult authorize(PaymentMethod method, BigDecimal amount, String currency);
+
+    /** Capture the final fare against a previous authorization. */
+    ChargeResult capture(PaymentMethod method, BigDecimal amount, String currency);
+
+    /** Give back a previous authorization (trip cancelled). */
+    void release(PaymentMethod method, BigDecimal amount, String currency);
 
     /**
-     * Outcome of a charge attempt. A successful charge has {@code approved=true}
-     * and a null {@code failureReason}; a declined charge carries a reason.
+     * Outcome of an authorize/capture attempt. A success has {@code approved=true}
+     * and a null {@code failureReason}; a declined attempt carries a reason.
      */
     record ChargeResult(boolean approved, String failureReason) {
 

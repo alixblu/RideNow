@@ -5,12 +5,14 @@ import cloudnative.microservices.matching.dto.response.CandidateDriver;
 import cloudnative.microservices.matching.dto.response.MatchResponse;
 import cloudnative.microservices.matching.dto.response.TripOfferResponse;
 import cloudnative.microservices.matching.entity.TripOffer;
+import cloudnative.microservices.matching.event.MatchingEvents;
 import cloudnative.microservices.matching.repository.TripOfferRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +32,7 @@ public class MatchingService {
 
     private final NearbyDriverFinder finder;
     private final TripOfferRepository offerRepository;
+    private final ApplicationEventPublisher events;
 
     @Transactional
     public MatchResponse match(MatchRequest request) {
@@ -41,13 +44,17 @@ public class MatchingService {
 
         Instant now = Instant.now();
         Instant expiresAt = now.plus(OFFER_TTL);
-        List<TripOfferResponse> offers = candidates.stream()
+        List<TripOffer> saved = candidates.stream()
                 .map(c -> offerRepository.save(new TripOffer(
                         UUID.randomUUID(), request.tripId(), c.driverId(),
                         c.distanceMeters(), now, expiresAt)))
-                .map(MatchingService::toResponse)
                 .toList();
 
+        // One match.offered per offer, published after commit, so the offered
+        // driver can be told asynchronously. Nothing is published for zero offers.
+        saved.forEach(offer -> events.publishEvent(MatchingEvents.matchOffered(offer)));
+
+        List<TripOfferResponse> offers = saved.stream().map(MatchingService::toResponse).toList();
         return new MatchResponse(request.tripId(), candidates, offers);
     }
 

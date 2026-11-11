@@ -267,6 +267,46 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  RealtimeGatewayRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: ridenow/realtime-gateway
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedExpireDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxImageCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
 Outputs:
   UserServiceRepoUri:
     Value: !GetAtt UserServiceRepo.RepositoryUri
@@ -297,3 +337,8 @@ Outputs:
     Value: !GetAtt NotificationWorkerRepo.RepositoryUri
     Export:
       Name: !Sub "ridenow-${Environment}-ecr-NotificationWorkerRepoUri"
+
+  RealtimeGatewayRepoUri:
+    Value: !GetAtt RealtimeGatewayRepo.RepositoryUri
+    Export:
+      Name: !Sub "ridenow-${Environment}-ecr-RealtimeGatewayRepoUri"

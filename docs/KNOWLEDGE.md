@@ -1,100 +1,134 @@
 # RideNow - Knowledge Table
 
-Remarkable techniques used (or planned) in this project. Each row: the technique, a
-short description, and how it applies in RideNow.
+The techniques RideNow uses or plans to use. Each row gives the technique, a short
+description, and how it shows up here.
+
+- **BUILT**: in the code and verified.
+- **PARTIAL**: some of it is built; the row says what is missing.
+- **PLANNED**: not built yet.
+
+See `ARCHITECTURE.md` for how these fit together.
 
 ## Core backend & data
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Microservices | Small, independently deployable services, each owning its own data | user / driver / trip / payment / matching / notification-worker - each its own Spring Boot app and its own Postgres DB (notification-worker has no business HTTP API, only a health endpoint) |
-| Database-per-service | Each service owns its database; no shared tables, no cross-service joins | one Postgres per service (user / driver / trip / payment / matching / notification), each a separate container; services never read another service's tables. matching-service gets driver positions via an explicit ingest handoff, not by reading driver-service's store |
-| Cross-service reference by ID | Store another service's identifier as a plain value, not a FK/JPA relationship | `drivers.user_id`, `trips.passenger_id`/`driver_id` are UUID columns, not `@ManyToOne` joins |
-| Layered architecture | controller -> service -> repository -> entity, each with one job | Every service: thin controller, business rules in service, persistence in repository, JPA entity for rows |
-| DTO at the boundary | Expose request/response DTOs, never entities, at the API edge | `CreateDriverRequest` in, `DriverResponse` out; entity stays internal |
-| Bean validation | Reject malformed input at the controller with `@Valid` + Jakarta annotations | `@Valid @RequestBody CreateDriverRequest` -> 400 on bad input |
-| Centralized error handling | One place maps exceptions to clean HTTP responses | `@RestControllerAdvice GlobalExceptionHandler` -> 404/409/400/503, never raw stack traces |
-| Flyway migrations | Versioned SQL owns the schema; app validates against it | `V1__init_schema.sql` (schema) + `R__seed_demo_data.sql` (~100 rows) per service; `ddl-auto: validate` as drift safety net |
+| Microservices | Small, independently deployable services, each owning its own data | BUILT: seven Spring Boot apps: user, driver, trip, payment, matching, notification-worker, realtime-gateway |
+| Database-per-service | Each service owns its database; no shared tables or cross-service joins | BUILT: one Postgres per service. realtime-gateway has none. matching-service gets driver positions through an explicit handoff, not by reading driver-service's store |
+| Cross-service reference by ID | Store another service's id as a plain value, not a FK or JPA relationship | BUILT: `drivers.user_id`, `trips.passenger_id` / `driver_id`, and `payments.trip_id` are UUID columns |
+| Layered architecture | controller -> service -> repository -> entity, each with one job | BUILT: thin controllers, rules in services, persistence in repositories |
+| DTO at the boundary | Expose request/response DTOs, never entities | BUILT: e.g. `CreateTripRequest` in, `TripResponse` out |
+| Bean validation | Reject malformed input with `@Valid` + Jakarta annotations | BUILT: e.g. a trip request without `paymentMethod` -> 400 |
+| Centralized error handling | One place maps exceptions to clean HTTP responses | BUILT: `@RestControllerAdvice` per service -> 400/402/404/409/503, never stack traces |
+| Flyway migrations | Versioned SQL owns the schema; the app validates against it | BUILT: `V1__init_schema.sql` and `R__seed_demo_data.sql` per service, `ddl-auto: validate` |
+| DBML as source of truth | One schema document drives every entity and migration | BUILT: `docs/database/ridenow.dbml`; schema changes are proposed there first (e.g. payment `AUTHORIZED` / `RELEASED`) |
+| Strategy behind an interface | Swap an implementation by config without touching callers | BUILT: `NearbyDriverFinder` (Postgres / Redis GEO), `PaymentGateway`, `DomainEventPublisher`, `NotificationSender`, `ClientChannel` |
 
-## Concurrency
+## Concurrency & consistency
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Optimistic locking | A `version` column; an update wins only if the version is unchanged, else it is rejected | THE signature feature: accept-ride. `@Version` on Trip; 50 simultaneous accepts -> exactly one wins (WINNERS=1 LOSERS=49) |
-| Pessimistic locking (alt) | Lock the row (`SELECT ... FOR UPDATE`) so others wait | Noted as an alternative to optimistic; not used - optimistic fits "many drivers, one ride" better |
-| Single-writer boundary | Keep a contested write inside ONE service + ONE DB so the lock actually protects it | accept-ride write lives only in trip-service; matching-service only proposes candidates |
-| Idempotency | A repeated request with the same key produces no duplicate effect | payment-service (planned): `idempotency_key` so a retried charge does not double-charge |
+| Optimistic locking | A `version` column; an update wins only if the version is unchanged | BUILT, the signature feature: `@Version` on Trip. 50 simultaneous accepts -> exactly one winner |
+| Pessimistic locking (alt) | Lock the row (`SELECT ... FOR UPDATE`) so others wait | Considered and not used. Optimistic fits "many drivers, one ride" better |
+| Single-writer boundary | Keep a contested write inside one service and one DB | BUILT: the accept decision lives only in trip-service; matching only proposes candidates |
+| Idempotency key | A repeated request with the same key has no extra effect | BUILT: payment authorize uses the trip id as its key, so a retried `POST /trips` cannot hold twice |
+| Idempotent state transition | An action on an already-final state is a no-op | BUILT: capture / release do nothing unless the payment is `AUTHORIZED`, so duplicate events cannot double-charge |
+| Authorize-then-capture | Hold funds up front, charge the final amount later | BUILT: sync authorize on trip request; async capture on `trip.completed`, release on `trip.cancelled` |
+| Saga / compensation | Undo or offset an earlier step instead of a cross-service transaction | BUILT: if the trip cannot be saved after a hold, a compensating `trip.cancelled` releases it. A failed capture -> `FAILED` + `payment.failed` |
+| Eventual consistency | Services agree after a short delay rather than instantly | BUILT: offers, capture and notifications all follow the trip via events, seconds later |
 
 ## Communication
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Synchronous HTTP (request/response) | Caller needs an answer now; direct call | driver-service calls user-service `GET /api/users/{id}` to verify a user exists before creating a driver (Spring `RestClient`) |
-| Service discovery | Reach a service by name; the platform's DNS resolves it to an instance | local: `localhost:8081` (config); Docker: `http://user-service`; Kubernetes: Service DNS + load-balancing. URL is config, code unchanged |
-| Asynchronous messaging | Producer hands off work; consumer processes later, decoupled | BUILT: trip/payment lifecycle events -> EventBridge -> SQS -> notification-worker. Local-first on LocalStack; cloud is config-only |
-| Message queue (SQS) | Durable work queue: one producer -> one consumer group; retries + DLQ | BUILT: `ridenow-local-notifications` (+ DLQ, maxReceiveCount 5). notification-worker consumes idempotently; a poisoned message dead-letters |
-| Outbox pattern | Write the message as a DB row in the same transaction as the change; a poller publishes it | Concept noted; leapfrogged in practice. Instead the publish fires AFTER the DB commit via a `@TransactionalEventListener`, so a rollback publishes nothing - same safety goal without a poller |
-| Fan-out (pub/sub) | One event delivered to many independent consumers | BUILT: trip/payment events land on an EventBridge bus; a rule routes `ridenow.*` to the notifications queue. Adding another consumer is another rule/target, no producer change |
-| EventBridge vs SNS | Both do fan-out; pick ONE | DECISION: SQS + EventBridge; SNS not used (EventBridge already covers fan-out) |
-| Publisher behind an interface | Hide the transport behind an interface so it can be swapped | BUILT: `DomainEventPublisher` in trip/payment services - a logging impl by default, an `EventBridgeDomainEventPublisher` under the `eventbridge` profile; business logic unchanged |
+| Synchronous HTTP | Caller needs an answer now; direct call | BUILT: driver -> user (validate the user exists); trip -> payment (authorize the fare). Uses Spring `RestClient` |
+| Strict vs lenient dependency | Decide whether a down dependency blocks the request | BUILT (strict): payment-service down -> `POST /trips` returns 503 and saves nothing |
+| Service discovery | Reach a service by name; platform DNS resolves it | BUILT: the URL is config. Compose: `http://payment-service:8083`; Kubernetes: Service DNS |
+| Domain events | A service announces "this happened"; others react | BUILT: `trip.*`, `driver.*`, `match.offered`, `payment.*`. Each carries `eventId`, `type`, `version`, `occurredAt` and flat `data` |
+| Publish after commit | Send the event only once the DB transaction committed | BUILT: `@TransactionalEventListener(AFTER_COMMIT)`. A rollback publishes nothing |
+| Outbox pattern | Write the event in the same transaction; a poller publishes it | PLANNED: publish-after-commit is the current stand-in. It loses an event if the process dies right after commit |
+| Fan-out | One event delivered to many independent consumers | BUILT: EventBridge bus with one rule per consumer, matched on `detail-type` |
+| Message queue (SQS) | Durable work queue: retries, visibility timeout, DLQ | BUILT: matching, payment and notifications queues, one per consumer, each with a DLQ |
+| EventBridge vs SNS | Both do fan-out; pick one | DECISION: EventBridge + SQS. SNS is not used |
+| Publisher behind an interface | Hide the transport so it can be swapped | BUILT: `DomainEventPublisher` in trip, payment and matching. Logging by default, EventBridge under the `eventbridge` profile |
+| Tolerant reader | Consumers ignore fields they do not know | BUILT: `@JsonIgnoreProperties(ignoreUnknown = true)` on every incoming event record, with no shared contract module |
 
 ## Redis
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Redis as primary store | Redis is the ONLY home of some data (not a cache of the DB) | BUILT: driver-service keeps live availability + location in a Redis hash (`ridenow:driver:live:{id}`, TTL), never in Postgres (DBML says so); ephemeral, re-reported by the app |
-| Redis GEO | Geospatial radius queries in-memory | BUILT: matching-service owns a Redis GEO index and answers "drivers near this pickup" via GEOSEARCH. A swappable `NearbyDriverFinder` has a boring Postgres-scan impl and this Redis GEO impl - the headline reason Redis is in the architecture |
-| Redis Pub/Sub | Fire-and-forget real-time fan-out; NOT durable | BUILT (backend side): a driver's location update is published on `ridenow:driver:locations` for a future WebSocket layer. Loss-tolerant, latest-value-wins; NOT a replacement for SQS |
-| WebSockets | Persistent two-way connection pushing updates to the client in real time | Delivery channel for live driver location: Redis Pub/Sub -> backend -> WebSocket -> passenger map. The backend publish side is built; the WebSocket layer itself is still deferred |
-| Cache-aside (caching) | Store a disposable copy of slow/hot DB data with a TTL | BUILT (scoped): driver-service caches the driver PROFILE read in Redis with a TTL and evicts on profile writes. Off by default everywhere else; NEVER the accept-ride read |
+| Redis as primary store | Redis is the only home of some data | BUILT: driver live availability and position (hash with TTL), never in Postgres |
+| Redis GEO | In-memory geospatial radius queries | BUILT: matching-service's GEO index answers "drivers near this pickup" with GEOSEARCH |
+| Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel, and the `ridenow.notifications` channel from notification-worker to every gateway pod |
+| Cache-aside | A disposable copy of hot DB data with a TTL | BUILT (scoped): driver profile only; evicted on writes. Never trip status or the accept read |
+
+## Real-time
+
+| Technique | Basic description | How it is used in this project |
+|-----------|-------------------|-------------------------------|
+| WebSockets + STOMP | Persistent two-way connection; STOMP adds topics and subscriptions | BUILT: realtime-gateway at `/ws`; clients subscribe to `/topic/users/{userId}` |
+| Stateless socket tier via Pub/Sub | Every pod subscribes to the backplane; the pod holding the socket delivers | BUILT: no sticky sessions; the gateway scales horizontally |
+| Socket is not the source of truth | Re-fetch state over REST on (re)connect; the stream only adds updates | BUILT (contract): documented in the gateway README; messages carry `eventId` and `occurredAt` for dedupe |
+| Heartbeats | Periodic pings so dead connections are noticed | BUILT: STOMP heartbeats every 10s in both directions |
+| Graceful drain | On shutdown, ask clients to reconnect instead of cutting them | BUILT: close code `1001` "reconnect", with `preStop` sleep and a termination grace period in Kubernetes |
+| Reconnect with backoff + jitter | Retry later and later, randomized, so clients do not stampede | BUILT (verified with a test client): plus a connect timeout for half-open handshakes |
+| Inbound guard | Limit what a client may do over the socket | BUILT: receive-only; exact per-user topics only (no wildcards); caps on frame size, subscriptions and frame rate |
+| Transport choice | WebSocket vs SSE vs UDP / WebRTC / QUIC | DECISION: WebSocket. Traffic is small and low-rate, so the others are deferred unless load tests show head-of-line blocking |
+| Mobile push | Reach a closed or backgrounded app via FCM / APNs | PLANNED (out of scope): a WebSocket reaches only foreground apps |
+
+## Resilience
+
+| Technique | Basic description | How it is used in this project |
+|-----------|-------------------|-------------------------------|
+| Dead-letter queue | Messages that keep failing move aside for inspection | BUILT: each queue dead-letters after 5 receives (verified) |
+| Idempotent consumer | A repeated delivery has no duplicate effect | BUILT: notification ledger (`processed_notifications`); a matching skip if offers exist; payment no-op transitions |
+| Drop vs retry | Retry only what can succeed later; drop poison data | BUILT: consumers drop malformed events and let real failures retry into the DLQ |
+| Timeouts | Bound how long to wait on a dependency | PARTIAL: trip -> payment has connect and read timeouts (2s / 3s); driver -> user has none |
+| Retries + backoff | Re-attempt with growing delays | PARTIAL: SQS redelivery covers consumers; sync HTTP calls have none |
+| Circuit breaker | Stop calling a failing dependency for a while | PLANNED |
+| Health probes split | Liveness = restart me; readiness = route to me | PARTIAL: realtime-gateway splits them (Redis affects readiness only); others share `/actuator/health` |
 
 ## Security (defense in depth)
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Defense in depth | Multiple independent layers; if one fails, another still protects | Invariants guarded at several layers at once (see rows below) |
-| Layered invariant enforcement | Validate at the edge AND enforce in the service AND constrain in the DB | Uniqueness: service `existsByLicenseNumber` check + DB `UNIQUE` constraint + (for accept) `@Version` lock |
-| AWS Security Groups | Per-resource firewall at the AWS network level | Planned: RDS accepts connections only from the service's security group, not the internet |
-| Kubernetes NetworkPolicy | Restrict which Pods may talk to which | Planned: limit Pod-to-Pod traffic so a compromised service can't reach everything |
-| Application authorization | Control which users/services may perform an action | Planned (JWT/Spring Security): verified at the service, not just assumed past the gateway |
-| Zero Trust | Never trust a request just because it is "inside" the network; verify identity each time | Each service re-verifies authz rather than trusting the perimeter |
-| Least privilege | Give each service only the permissions it needs | Planned: scoped IAM roles, per-service DB users, narrow SQS/EventBridge permissions |
-| Microsegmentation | Divide the network into small zones to limit lateral movement | VPC subnets + security groups + NetworkPolicy keep a breach contained to one zone |
-| Secrets management | Keep credentials out of source/config | local: `application.yaml`; cloud: AWS Secrets Manager + IAM role auth (no long-lived keys) |
-| Blast-radius containment | Service boundaries limit how far a breach spreads | A compromised driver-service reaches only its own DB, not users or payments |
-| Safe error responses | Return clean errors, never internals | `GlobalExceptionHandler` returns DTOs (4xx), never stack traces or persistence internals |
+| Layered invariant enforcement | Validate at the edge, enforce in the service, constrain in the DB | BUILT: e.g. a service uniqueness check + DB `UNIQUE` + `@Version` for accept |
+| Least privilege (IAM) | Each service gets only the permissions it needs | BUILT: per-service messaging policies scoped to exact queue / bus ARNs; one IRSA role per service |
+| Resource policy scoping | The target also restricts who may write to it | BUILT: each SQS queue accepts messages only from its own EventBridge rule (`aws:SourceArn`) |
+| IRSA (IAM Roles for Service Accounts) | Pods get AWS credentials from their service account, not static keys | BUILT: trip, payment, matching, notification-worker; plus the ALB controller and External Secrets |
+| Secrets management | Keep credentials out of source and config | BUILT: Secrets Manager -> External Secrets -> Kubernetes Secret. Local: `.env` |
+| Network isolation | Data tiers private; one public entry point | BUILT: RDS and Redis in private subnets; only the ALB is public; services are `ClusterIP` |
+| Encryption | At rest and in transit | PARTIAL: RDS, SQS and Redis are encrypted at rest; Redis in transit for worker and gateway. Not driver / matching, and no TLS at the ALB |
+| Safe error responses | Clean errors, never internals | BUILT: `GlobalExceptionHandler` DTOs |
+| Application authN/Z | Verify who the caller is and what they may do | PLANNED: JWT / Spring Security, including at WebSocket `CONNECT`. Today anyone knowing a user id can subscribe |
+| East-west restriction | Limit which pods may call which | PLANNED: per-service security groups naming allowed callers (NetworkPolicy is not enforced on Fargate) |
+| Edge protection | TLS, WAF and source restriction at the load balancer | PLANNED: the ALB is HTTP:80 today |
 
-## Local-first & cloud migration
-
-| Technique | Basic description | How it is used in this project |
-|-----------|-------------------|-------------------------------|
-| Local-first, swap mechanism | Keep boundaries fixed; build the simplest local mechanism, swap to the managed one later | Postgres->RDS, outbox->SQS, in-code state->Redis, `mvn run`->EKS. Boundaries never move, so migration is substitution not rewrite |
-| Config-driven endpoints | Addresses/credentials in config, not hardcoded | user-service URL, DB URL in `application.yaml`; swap per environment (local/Docker/k8s) without code changes |
-| Containerization | Package the app as a portable image | Planned (Stage 5-6): multi-stage Dockerfile; same image runs locally and on EKS |
-| Managed database (RDS) | Cloud-run PostgreSQL | Planned (Stage 9): same engine/version as local, so entities/SQL/Flyway behave identically |
-| Image registry (ECR) | Versioned store for Docker images | Planned (Stage 10): push the service image; EKS pulls from here |
-
-## Kubernetes / EKS (planned)
+## Platform: containers, Kubernetes, AWS
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Pod | The smallest deployable unit - a running container instance | Each service runs as Pods on EKS |
-| Deployment | Manages replicas and rolling updates of Pods | Declares how many replicas of driver-service, which image, update strategy |
-| Service (k8s) | Stable internal name + load-balancing across Pods | This IS the service-discovery mechanism: `http://user-service` resolves and load-balances |
-| Ingress / ALB | Routes external HTTP traffic into the cluster | Planned (Stage 13): expose services to the outside world |
-| ConfigMap / Secret | Non-sensitive config / sensitive config injected into Pods | ConfigMap for settings; Secret (or Secrets Manager) for DB credentials |
-| Readiness/Liveness probes | k8s checks "ready for traffic?" / "still alive?" | Uses the Spring Actuator `/actuator/health` endpoint already enabled |
-| Horizontal Pod Autoscaler (HPA) | Add/remove Pods based on metrics (e.g. CPU) | Planned (Stage 13): scale under load |
-| Requests/Limits | Reserve/cap CPU & memory per container | Planned: protect the cluster from a runaway Pod |
-| EKS | AWS-managed Kubernetes control plane + nodes | The final deployment target; same manifests you'd run on local k8s |
+| Local-first, swap mechanism | Keep boundaries fixed; swap local stand-ins for managed services | BUILT: Postgres -> RDS, LocalStack -> SQS / EventBridge, Redis container -> ElastiCache, Compose -> EKS. Config only |
+| LocalStack | Local emulator for AWS APIs | BUILT: `localstack/init/01-messaging.sh` creates the same bus, queues and rules as stack 05; `smoke-test.sh` checks routing |
+| Containerization | Package each app as a portable image | BUILT: multi-stage Dockerfile per service; one image runs locally and on EKS |
+| Docker Compose | Run the whole system on one machine | BUILT: 6 Postgres, Redis, LocalStack and 7 services with health checks |
+| Infrastructure as code | Declarative, reviewable infrastructure | BUILT: seven CloudFormation stacks wired by exports and imports; `cfn-lint` clean; dry-run by default |
+| EKS on Fargate | Managed Kubernetes with serverless pods | BUILT (codified, not deployed in this pass): no node groups to patch or scale |
+| Deployment / Service / Ingress | Replicas, stable internal names, external routing | BUILT: one manifest per service in `iac/k8s/`; the ALB routes four APIs plus `/ws` |
+| Rolling update tuning | Control how many pods are replaced at once | BUILT: realtime-gateway uses `maxUnavailable: 0`, `maxSurge: 1` |
+| HPA | Scale pods on a metric | BUILT (CPU): connection- or queue-depth-based scaling is a gap |
+| Requests / limits | Reserve and cap CPU and memory | BUILT on every service |
+| Observability | Metrics, logs, traces to investigate failures | PARTIAL: health endpoints and Fargate log routing. No metrics, tracing or correlation ids yet |
 
-## Resilience (planned, distributed flows)
+## Testing
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Dead-letter queue (DLQ) | Messages that keep failing go to a side queue for inspection | BUILT: notification-worker leaves a failing message on the queue; after maxReceiveCount (5) SQS moves it to `ridenow-local-notifications-dlq` instead of losing it |
-| Idempotent consumer | A repeated delivery produces no duplicate effect | BUILT: notification-worker records each handled event id in `processed_notifications`; a duplicate SQS delivery (at-least-once) is a no-op |
-| Retries + backoff | Re-attempt a failed operation, waiting longer each time | Queue consumers and upstream HTTP calls |
-| Timeouts | Bound how long to wait on a dependency | HTTP calls to other services (so a slow user-service can't hang driver-service) |
-| Circuit breaker | Stop calling a failing dependency for a while to let it recover | Planned resilience step for service-to-service calls |
-| Saga / compensation | Undo prior steps when a later step fails, instead of a cross-service transaction | payment failure: reconcile the trip via explicit state + compensating action, not a distributed transaction |
+| Unit tests with mocks | Test rules in isolation | BUILT: service, handler and consumer tests in every service |
+| Web-slice tests | Test the HTTP boundary only | BUILT: `@WebMvcTest` for status codes and the error shape |
+| Contract tests for events | Pin the JSON each event carries | BUILT: `TripEventsTest`, `RedisNotificationSenderTest` |
+| Real-socket integration test | Drive the real STOMP stack with real clients | BUILT: gateway delivery, reconnect, wildcard rejection, graceful close, probes |
+| Concurrency test | Many threads race; assert the invariant | BUILT: `AcceptTripConcurrencyTest` |
+| Testcontainers | Real Postgres / LocalStack in tests | BUILT, but blocked on the dev machine (cannot reach Docker Engine 29) |
+| End-to-end failure drills | Kill or duplicate things on purpose and observe | BUILT (manual): payment down, consumer down, duplicate event, poison message, gateway restart (see `ARCHITECTURE.md` section 8) |
+| Load testing | Measure latency, throughput, scaling | PLANNED (k6) |

@@ -1,8 +1,10 @@
 package cloudnative.microservices.payment.controller;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -17,6 +19,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -62,6 +65,34 @@ class PaymentControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.path").value("/api/payments"));
+    }
+
+    @Test
+    void authorizePaymentReturnsCreatedWithAuthorizedStatus() throws Exception {
+        UUID tripId = UUID.randomUUID();
+        Instant now = Instant.now();
+        PaymentResponse response = new PaymentResponse(
+                UUID.randomUUID(), tripId, new BigDecimal("45000.00"), "VND",
+                PaymentMethod.SIMULATED_CARD, PaymentStatus.AUTHORIZED, tripId.toString(),
+                null, now, now, null, null);
+        when(paymentService.createPayment(any())).thenReturn(response);
+
+        String body = """
+                {"tripId":"%s","amount":45000.00,"currency":"VND",
+                 "method":"SIMULATED_CARD","idempotencyKey":"%s"}
+                """.formatted(tripId, tripId);
+
+        mockMvc.perform(post("/api/payments").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("AUTHORIZED"))
+                .andExpect(jsonPath("$.tripId").value(tripId.toString()));
+    }
+
+    @Test
+    void authorizePaymentWithInvalidBodyReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/payments").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
     }
 
     @Test

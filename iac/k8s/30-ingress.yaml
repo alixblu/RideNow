@@ -1,4 +1,5 @@
-# Ingress: one internet-facing ALB fronting all four services by path.
+# Ingress: one internet-facing ALB fronting the four public APIs and the
+# realtime-gateway WebSocket endpoint (/ws) by path.
 #
 # Requires the AWS Load Balancer Controller installed in the cluster and using
 # the AlbControllerRoleArn exported by stack 07-eks-addons. The controller reads
@@ -17,6 +18,11 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # WebSockets (/ws) are long-lived. The ALB closes a connection after this
+    # many idle seconds; the gateway's 10s STOMP heartbeats keep live sockets
+    # busy, and the raised limit gives headroom over the 60s default for clients
+    # on slow networks whose heartbeats arrive late.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
 spec:
   ingressClassName: alb
   rules:
@@ -50,6 +56,15 @@ spec:
                 name: payment-service
                 port:
                   number: 8083
+          # WebSocket (STOMP) endpoint for live notifications. The ALB upgrades
+          # HTTP to WebSocket natively; no extra annotation is needed.
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: realtime-gateway
+                port:
+                  number: 8086
           # matching-service is internal (ClusterIP), reached in-cluster by other
           # services - not exposed publicly by default. Uncomment to make its API
           # reachable through the ALB (e.g. for testing the match endpoint).

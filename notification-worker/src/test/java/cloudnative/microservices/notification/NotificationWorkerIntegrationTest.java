@@ -102,7 +102,8 @@ class NotificationWorkerIntegrationTest {
     private static String eventBridgeMessage(UUID eventId, String type, UUID aggregateId) {
         return "{\"source\":\"ridenow.trip\",\"detail-type\":\"" + type + "\",\"detail\":{"
                 + "\"eventId\":\"" + eventId + "\",\"type\":\"" + type + "\","
-                + "\"aggregateId\":\"" + aggregateId + "\",\"data\":{\"tripId\":\"" + aggregateId + "\"}}}";
+                + "\"aggregateId\":\"" + aggregateId + "\",\"data\":{\"tripId\":\"" + aggregateId + "\","
+                + "\"passengerId\":\"" + UUID.randomUUID() + "\"}}}";
     }
 
     private void send(String body) {
@@ -169,14 +170,14 @@ class NotificationWorkerIntegrationTest {
         }
 
         @Override
-        public void send(String eventType, String aggregateId, String summary) {
-            // The consumer passes the aggregate id; we key both the failure switch
-            // and the send counter on it, so each test's distinct aggregate stays
-            // isolated.
-            if (failing.contains(aggregateId)) {
+        public void send(cloudnative.microservices.notification.dto.Notification notification) {
+            // Each test uses a distinct trip id; we key both the failure switch and
+            // the send counter on it, so the tests stay isolated.
+            String tripId = notification.tripId();
+            if (failing.contains(tripId)) {
                 throw new IllegalStateException("simulated send failure");
             }
-            counts.merge(aggregateId, 1, Integer::sum);
+            counts.merge(tripId, 1, Integer::sum);
         }
     }
 }

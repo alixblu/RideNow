@@ -107,12 +107,13 @@ public class Trip {
 
     /**
      * Creates a new trip that is already SEARCHING for a driver, so it can be offered
-     * to multiple drivers. Minimal fields for the concurrency lab; the full request
-     * flow (fare estimation, etc.) is a later stage.
+     * to multiple drivers. The estimated fare is what was authorized with
+     * payment-service when the trip was requested.
      */
     public Trip(UUID id, UUID passengerId, RideType rideType,
                 BigDecimal pickupLat, BigDecimal pickupLng,
-                BigDecimal destinationLat, BigDecimal destinationLng, Instant now) {
+                BigDecimal destinationLat, BigDecimal destinationLng,
+                BigDecimal estimatedFare, Instant now) {
         this.id = id;
         this.passengerId = passengerId;
         this.rideType = rideType;
@@ -120,6 +121,7 @@ public class Trip {
         this.pickupLng = pickupLng;
         this.destinationLat = destinationLat;
         this.destinationLng = destinationLng;
+        this.estimatedFare = estimatedFare;
         this.status = TripStatus.SEARCHING;
         this.requestedAt = now;
         this.createdAt = now;
@@ -181,6 +183,9 @@ public class Trip {
             throw new TripTransitionException(this.id, this.status, "completed");
         }
         this.status = TripStatus.COMPLETED;
+        // Hook for a real recompute (actual distance/time). Until then the final
+        // fare is the estimate that was authorized.
+        this.finalFare = this.estimatedFare;
         this.completedAt = now;
         this.updatedAt = now;
     }

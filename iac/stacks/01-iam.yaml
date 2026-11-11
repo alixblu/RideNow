@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RideNow IAM layer (01). Roles and policies for the EKS cluster and its Fargate
-  pods, plus a scoped application policy (ECR pull, Secrets Manager read, and
-  SQS/EventBridge access) that IRSA roles attach to later. Exported role ARNs
-  are imported by the EKS cluster stack (06).
+  pods, a scoped application policy (ECR pull, Secrets Manager read), and one
+  messaging policy per service scoped to the exact queue / bus it uses. The
+  per-service policies are attached by the IRSA roles in stack 07. Exported role
+  ARNs are imported by the EKS cluster stack (06).
 
 Parameters:
   Environment:
@@ -56,17 +57,18 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- Scoped application policy (attached by IRSA roles in 07) -------------
-  # Least privilege: ECR limited to ridenow/* repos, Secrets to ridenow-<env>-*,
-  # messaging to ridenow-<env>-* queues/buses. No resource wildcards where a
-  # scoped ARN is possible.
+  # ---- Shared application policy -------------------------------------------
+  # Least privilege: ECR limited to ridenow/* repos, Secrets to ridenow-<env>-*.
+  # Messaging is NOT here any more: each service gets its own policy below,
+  # scoped to the exact queue / bus it uses, so (for example) the notification
+  # worker cannot read the payment queue.
   AppAccessPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub "ridenow-${Environment}-app-access"
       Description: >-
-        Scoped runtime access for RideNow pods via IRSA: pull images, read DB
-        secrets, and (where present) use the environment's queues and event bus.
+        Scoped runtime access for RideNow pods via IRSA: pull images and read DB
+        secrets. Messaging access is per service (see *-messaging policies).
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -88,19 +90,81 @@ Resources:
               - secretsmanager:GetSecretValue
               - secretsmanager:DescribeSecret
             Resource: !Sub "arn:aws:secretsmanager:*:${AWS::AccountId}:secret:ridenow-${Environment}-*"
-          - Sid: UseRideNowQueues
+
+  # ---- Per-service messaging policies (attached by the IRSA roles in 07) ----
+  # ARNs are built from the fixed names stack 05 creates (ridenow-<env>-events,
+  # ridenow-<env>-<queue>), because 01 deploys before 05 and cannot import them.
+  # Consumers get only receive/delete/attributes on THEIR queue; publishers get
+  # only PutEvents on the one bus. Nobody can send to a queue directly - only the
+  # EventBridge rules can (see the queue policies in 05).
+  TripServiceMessagingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-trip-service-messaging"
+      Description: trip-service publishes trip events to the RideNow bus.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublishToRideNowBus
+            Effect: Allow
+            Action: events:PutEvents
+            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+
+  PaymentServiceMessagingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-payment-service-messaging"
+      Description: payment-service publishes payment events and consumes the payment queue.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublishToRideNowBus
+            Effect: Allow
+            Action: events:PutEvents
+            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+          - Sid: ConsumePaymentQueue
             Effect: Allow
             Action:
-              - sqs:SendMessage
               - sqs:ReceiveMessage
               - sqs:DeleteMessage
               - sqs:GetQueueAttributes
-              - sqs:GetQueueUrl
-            Resource: !Sub "arn:aws:sqs:*:${AWS::AccountId}:ridenow-${Environment}-*"
-          - Sid: UseRideNowEventBus
+            Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-payment"
+
+  MatchingServiceMessagingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-matching-service-messaging"
+      Description: matching-service publishes match events and consumes the matching queue.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublishToRideNowBus
             Effect: Allow
             Action: events:PutEvents
-            Resource: !Sub "arn:aws:events:*:${AWS::AccountId}:event-bus/ridenow-${Environment}-*"
+            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+          - Sid: ConsumeMatchingQueue
+            Effect: Allow
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+            Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-matching"
+
+  NotificationWorkerMessagingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-notification-worker-messaging"
+      Description: notification-worker consumes the notifications queue.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ConsumeNotificationsQueue
+            Effect: Allow
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+            Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-notifications"
 
 Outputs:
   ClusterRoleArn:
@@ -117,3 +181,23 @@ Outputs:
     Value: !Ref AppAccessPolicy
     Export:
       Name: !Sub "ridenow-${Environment}-iam-AppAccessPolicyArn"
+
+  TripServiceMessagingPolicyArn:
+    Value: !Ref TripServiceMessagingPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-TripServiceMessagingPolicyArn"
+
+  PaymentServiceMessagingPolicyArn:
+    Value: !Ref PaymentServiceMessagingPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-PaymentServiceMessagingPolicyArn"
+
+  MatchingServiceMessagingPolicyArn:
+    Value: !Ref MatchingServiceMessagingPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-MatchingServiceMessagingPolicyArn"
+
+  NotificationWorkerMessagingPolicyArn:
+    Value: !Ref NotificationWorkerMessagingPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-NotificationWorkerMessagingPolicyArn"

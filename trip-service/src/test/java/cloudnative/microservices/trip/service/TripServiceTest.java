@@ -2,6 +2,8 @@ package cloudnative.microservices.trip.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,6 +14,7 @@ import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.RideType;
 import cloudnative.microservices.trip.entity.Trip;
 import cloudnative.microservices.trip.entity.TripStatus;
+import cloudnative.microservices.trip.exception.PaymentUnavailableException;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.exception.TripNotCancellableException;
 import cloudnative.microservices.trip.exception.TripTransitionException;
@@ -40,6 +43,10 @@ class TripServiceTest {
     @Mock private TripRepository tripRepository;
     @Mock private TripOfferRepository tripOfferRepository;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
+    @Mock private TripRecorder tripRecorder;
+    @Mock private FareEstimator fareEstimator;
+    @Mock private cloudnative.microservices.trip.client.PaymentServiceClient paymentServiceClient;
+    @Mock private cloudnative.microservices.trip.event.DomainEventPublisher eventPublisher;
 
     @InjectMocks private TripService tripService;
 
@@ -47,7 +54,128 @@ class TripServiceTest {
     private Trip searchingTrip(UUID passengerId, Instant now) {
         return new Trip(UUID.randomUUID(), passengerId, RideType.CAR,
                 new BigDecimal("10.000000"), new BigDecimal("106.000000"),
-                new BigDecimal("10.100000"), new BigDecimal("106.100000"), now);
+                new BigDecimal("10.100000"), new BigDecimal("106.100000"),
+                new BigDecimal("45000.00"), now);
+    }
+
+    // --- createTrip: strict sync authorize -----------------------------------
+
+    private cloudnative.microservices.trip.dto.request.CreateTripRequest createRequest() {
+        return new cloudnative.microservices.trip.dto.request.CreateTripRequest(
+                UUID.randomUUID(), RideType.CAR,
+                new BigDecimal("10.000000"), new BigDecimal("106.000000"),
+                new BigDecimal("10.100000"), new BigDecimal("106.100000"),
+                cloudnative.microservices.trip.dto.request.PaymentMethod.SIMULATED_CARD);
+    }
+
+    @Test
+    void createTripAuthorizesEstimatedFareThenSavesTrip() {
+        var request = createRequest();
+        when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
+        when(tripRecorder.recordRequested(any(Trip.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TripResponse response = tripService.createTrip(request);
+
+        assertThat(response.status()).isEqualTo(TripStatus.SEARCHING);
+        assertThat(response.estimatedFare()).isEqualByComparingTo("45000.00");
+        // The trip id is the idempotency key, so authorize and the saved trip share it.
+        verify(paymentServiceClient).authorize(
+                eq(response.id()), eq(request.passengerId()), eq(new BigDecimal("45000.00")),
+                eq("VND"), eq(request.paymentMethod()));
+        verify(eventPublisher, never()).publish(any());
+    }
+
+    @Test
+    void createTripWhenDeclinedSavesNothingAndNeedsNoRelease() {
+        when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
+        org.mockito.Mockito.doThrow(new cloudnative.microservices.trip.exception.PaymentDeclinedException("no funds"))
+                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any());
+
+        assertThatThrownBy(() -> tripService.createTrip(createRequest()))
+                .isInstanceOf(cloudnative.microservices.trip.exception.PaymentDeclinedException.class);
+
+        verify(tripRecorder, never()).recordRequested(any());
+        verify(eventPublisher, never()).publish(any());
+    }
+
+    @Test
+    void createTripWhenPaymentUnavailableSavesNothingAndReleasesDefensively() {
+        when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
+        org.mockito.Mockito.doThrow(new PaymentUnavailableException("down"))
+                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any());
+
+        assertThatThrownBy(() -> tripService.createTrip(createRequest()))
+                .isInstanceOf(PaymentUnavailableException.class);
+
+        verify(tripRecorder, never()).recordRequested(any());
+        // The call may have reached payment-service before timing out, so release defensively.
+        org.mockito.ArgumentCaptor<cloudnative.microservices.trip.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.trip.event.DomainEvent.class);
+        verify(eventPublisher).publish(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.trip.event.TripEvents.TRIP_CANCELLED);
+    }
+
+    @Test
+    void createTripWhenSaveFailsAfterAuthorizeReleasesTheHold() {
+        when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
+        when(tripRecorder.recordRequested(any(Trip.class))).thenThrow(new IllegalStateException("db down"));
+
+        assertThatThrownBy(() -> tripService.createTrip(createRequest()))
+                .isInstanceOf(IllegalStateException.class);
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.trip.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.trip.event.DomainEvent.class);
+        verify(eventPublisher).publish(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.trip.event.TripEvents.TRIP_CANCELLED);
+        // The passenger already got the error synchronously; the compensation must
+        // not also notify them, so it carries no passengerId.
+        assertThat(captor.getValue().data())
+                .containsEntry("compensation", "true")
+                .doesNotContainKey("passengerId");
+    }
+
+    @Test
+    void createTripStillThrowsOriginalErrorWhenCompensationPublishFails() {
+        when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
+        when(tripRecorder.recordRequested(any(Trip.class))).thenThrow(new IllegalStateException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("bus down")).when(eventPublisher).publish(any());
+
+        assertThatThrownBy(() -> tripService.createTrip(createRequest()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("db down");
+    }
+
+    @Test
+    void startRaisesTripStartedEvent() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = searchingTrip(UUID.randomUUID(), Instant.now());
+        trip.acceptBy(UUID.randomUUID(), Instant.now());
+        trip.arrive(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        tripService.startTrip(tripId);
+
+        org.mockito.ArgumentCaptor<cloudnative.microservices.trip.event.DomainEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(cloudnative.microservices.trip.event.DomainEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().type())
+                .isEqualTo(cloudnative.microservices.trip.event.TripEvents.TRIP_STARTED);
+    }
+
+    @Test
+    void completeSetsFinalFareToTheEstimate() {
+        UUID tripId = UUID.randomUUID();
+        Trip trip = searchingTrip(UUID.randomUUID(), Instant.now());
+        trip.acceptBy(UUID.randomUUID(), Instant.now());
+        trip.arrive(Instant.now());
+        trip.start(Instant.now());
+        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
+
+        TripResponse response = tripService.completeTrip(tripId);
+
+        assertThat(response.finalFare()).isEqualByComparingTo("45000.00");
     }
 
     private List<Trip> trips(int n) {

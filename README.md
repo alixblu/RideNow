@@ -20,10 +20,11 @@ AWS SDK v2 (SQS + EventBridge), Docker, Kubernetes/EKS.
 |---------|------|------|-------|
 | `user-service` | 8081 | accounts / profiles | — |
 | `driver-service` | 8080 | drivers, vehicles; live driver state | live location/availability in **Redis** (not Postgres); publishes location on a Pub/Sub channel; profile reads are cache-aside |
-| `trip-service` | 8082 | trip lifecycle & state machine | optimistic-lock "exactly one driver wins"; publishes `trip.*`/`driver.*` events |
-| `payment-service` | 8083 | payments | idempotent charges; publishes `payment.*` events |
-| `matching-service` | 8085 | matching decisions, `trip_offers` | finds nearby drivers via **Redis GEO** (swappable from a Postgres scan); internal (no public route) |
-| `notification-worker` | 8084 | delivery state | consumes the SQS queue; idempotent, retries, dead-letter queue; no business HTTP API |
+| `trip-service` | 8082 | trip lifecycle & state machine | optimistic-lock "exactly one driver wins"; estimates the fare and **authorizes it synchronously** with payment-service (no hold, no trip); publishes `trip.*`/`driver.*` events |
+| `payment-service` | 8083 | payments | idempotent authorize -> capture / release; captures on `trip.completed` and releases on `trip.cancelled` from its own SQS queue; publishes `payment.*` events |
+| `matching-service` | 8085 | matching decisions, `trip_offers` | matches **asynchronously** on `trip.requested` (SQS); finds nearby drivers via **Redis GEO** (swappable from a Postgres scan); publishes `match.offered`; internal (no public route) |
+| `notification-worker` | 8084 | delivery state | consumes the notifications SQS queue; idempotent, retries, dead-letter queue; delivers via Redis Pub/Sub to realtime-gateway; no business HTTP API |
+| `realtime-gateway` | 8086 | nothing (no database) | holds the apps' **WebSocket** (STOMP) connections at `/ws` and pushes notifications to `/topic/users/{userId}` |
 
 Each service is an independently deployable Spring Boot app with its own Postgres
 database. Services never read each other's databases - they talk over HTTP or via
@@ -61,11 +62,15 @@ events, and store other services' identifiers as plain UUIDs.
 
 The two big distributed-systems boundaries:
 
-- **Async notifications** - trip/payment lifecycle changes publish domain events
-  (after the DB commits) to **EventBridge**; a rule routes them to an **SQS**
-  queue; `notification-worker` consumes them exactly once, with retries and a
-  dead-letter queue. The transport sits behind a `DomainEventPublisher` interface
-  (logging default, EventBridge impl), so it's a swap, not a rewrite.
+- **Sync where the answer is needed now, async everywhere else.** Lifecycle
+  changes publish domain events (after the DB commits) to **EventBridge**. One
+  rule per consumer routes by event type into that consumer's own **SQS** queue
+  (with a dead-letter queue): `trip.requested` -> matching,
+  `trip.completed`/`trip.cancelled` -> payment, every event -> notifications.
+  `notification-worker` hands each notification to `realtime-gateway` over Redis
+  Pub/Sub, and the gateway pushes it over **WebSocket**. The transport sits behind a
+  `DomainEventPublisher` interface (logging default, EventBridge impl), so it's a
+  swap, not a rewrite. See `docs/ARCHITECTURE.md` section 3.
 - **Redis**, four roles - primary store for live driver location/availability,
   **GEO** index for nearby-driver matching, **Pub/Sub** for live tracking, and
   **cache-aside** on the driver profile.
@@ -85,9 +90,11 @@ docker compose down -v       # stop and wipe data
 ```
 
 Ports are mapped to `localhost:<port>` per the table above (e.g.
-`curl localhost:8082/api/trips`). See
-[`docs/guides/stage-11a-local-async-messaging.md`](docs/guides/stage-11a-local-async-messaging.md)
-for the end-to-end async flow and how to observe it.
+`curl localhost:8082/api/trips`). Live notifications are at
+`ws://localhost:8086/ws` (STOMP; subscribe to `/topic/users/{userId}`). See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) sections 3 and 8 for the end-to-end
+async flow and the checks it was verified with, and
+[`realtime-gateway/README.md`](realtime-gateway/README.md) for the client contract.
 
 ### Build / test a single service
 

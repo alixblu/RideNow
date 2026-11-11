@@ -1,4 +1,21 @@
-# payment-service: Deployment + Service + HPA.
+# payment-service: ServiceAccount + Deployment + Service + HPA.
+#
+# Authorizes fares synchronously (POST /api/payments, called by trip-service),
+# captures / releases them asynchronously from the payment SQS queue
+# (trip.completed / trip.cancelled), and publishes payment events to the bus.
+# AWS access via IRSA (no static keys): the role is stack 07's
+# PaymentServiceRoleArn export.
+#
+# Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <ENV> <PAYMENT_DB_ENDPOINT>
+#               <PAYMENT_QUEUE_URL> <PAYMENT_SERVICE_ROLE_ARN>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: payment-service
+  namespace: ridenow
+  annotations:
+    eks.amazonaws.com/role-arn: "<PAYMENT_SERVICE_ROLE_ARN>"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,6 +33,7 @@ spec:
       labels:
         app: payment-service
     spec:
+      serviceAccountName: payment-service
       containers:
         - name: payment-service
           image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/ridenow/payment-service:<IMAGE_TAG>
@@ -36,6 +54,15 @@ spec:
                 secretKeyRef:
                   name: payment-db-credentials
                   key: password
+            # Publish payment events; consume the payment queue (capture/release).
+            - name: SPRING_PROFILES_ACTIVE
+              value: "eventbridge"
+            - name: RIDENOW_EVENTS_BUS_NAME
+              value: "ridenow-<ENV>-events"
+            - name: RIDENOW_PAYMENT_QUEUE_URL
+              value: "<PAYMENT_QUEUE_URL>"
+            - name: AWS_REGION
+              value: "<REGION>"
           resources:
             requests:
               cpu: "250m"

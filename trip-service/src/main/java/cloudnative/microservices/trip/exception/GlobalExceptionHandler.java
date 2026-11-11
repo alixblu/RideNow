@@ -55,6 +55,20 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, exception.getMessage(), request);
     }
 
+    // payment-service declined the up-front authorization: no trip was created.
+    @ExceptionHandler(PaymentDeclinedException.class)
+    public ResponseEntity<ApiErrorResponse> handlePaymentDeclined(
+            PaymentDeclinedException exception, HttpServletRequest request) {
+        return build(HttpStatus.PAYMENT_REQUIRED, exception.getMessage(), request);
+    }
+
+    // payment-service was unreachable/slow/erroring: strict mode, so no trip is created.
+    @ExceptionHandler(PaymentUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handlePaymentUnavailable(
+            PaymentUnavailableException exception, HttpServletRequest request) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request);
+    }
+
     // A @Valid request body failed bean validation. Report the first field error
     // as `field: message` and return a 400 client error.
     @ExceptionHandler(MethodArgumentNotValidException.class)

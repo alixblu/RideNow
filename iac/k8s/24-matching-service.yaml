@@ -5,8 +5,22 @@
 # answer "nearby drivers", so it needs the Redis (ElastiCache) endpoint. Until
 # that endpoint exists, matching cannot answer GEO queries (expected).
 #
-# Placeholders templated from the ECR (03), data (04), and ElastiCache endpoints:
-#   <ACCOUNT_ID> <REGION> <IMAGE_TAG> <MATCHING_DB_ENDPOINT> <REDIS_ENDPOINT>
+# Matching is triggered asynchronously: it consumes trip.requested from the
+# matching SQS queue and publishes match.offered to the bus. AWS access via
+# IRSA (no static keys): the role is stack 07's MatchingServiceRoleArn export.
+#
+# Placeholders templated from the ECR (03), data (04), messaging (05) and EKS
+# add-on (07) stacks:
+#   <ACCOUNT_ID> <REGION> <IMAGE_TAG> <ENV> <MATCHING_DB_ENDPOINT> <REDIS_ENDPOINT>
+#   <MATCHING_QUEUE_URL> <MATCHING_SERVICE_ROLE_ARN>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: matching-service
+  namespace: ridenow
+  annotations:
+    eks.amazonaws.com/role-arn: "<MATCHING_SERVICE_ROLE_ARN>"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +38,7 @@ spec:
       labels:
         app: matching-service
     spec:
+      serviceAccountName: matching-service
       containers:
         - name: matching-service
           image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/ridenow/matching-service:<IMAGE_TAG>
@@ -52,6 +67,15 @@ spec:
             # Use the Redis GEO finder (the real path) rather than the Postgres scan.
             - name: MATCHING_FINDER
               value: "redis"
+            # Consume trip.requested; publish match.offered.
+            - name: SPRING_PROFILES_ACTIVE
+              value: "eventbridge"
+            - name: RIDENOW_MATCHING_QUEUE_URL
+              value: "<MATCHING_QUEUE_URL>"
+            - name: RIDENOW_EVENTS_BUS_NAME
+              value: "ridenow-<ENV>-events"
+            - name: AWS_REGION
+              value: "<REGION>"
           resources:
             requests:
               cpu: "250m"

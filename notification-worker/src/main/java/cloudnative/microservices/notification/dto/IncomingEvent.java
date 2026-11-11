@@ -15,6 +15,8 @@ public record IncomingEvent(
         UUID eventId,
         String type,
         UUID aggregateId,
+        /** ISO-8601 time of the change; kept as text and passed straight through to the client. */
+        String occurredAt,
         Map<String, String> data
 ) {
 }

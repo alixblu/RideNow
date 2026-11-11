@@ -14,6 +14,8 @@ import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.RideType;
 import cloudnative.microservices.trip.entity.TripStatus;
 import cloudnative.microservices.trip.exception.GlobalExceptionHandler;
+import cloudnative.microservices.trip.exception.PaymentDeclinedException;
+import cloudnative.microservices.trip.exception.PaymentUnavailableException;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.exception.TripNotCancellableException;
 import cloudnative.microservices.trip.exception.TripTransitionException;
@@ -26,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -147,6 +150,53 @@ class TripControllerTest {
         mockMvc.perform(post("/api/trips/{id}/complete", id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    private static final String CREATE_BODY = """
+            {"passengerId":"11111111-1111-1111-1111-000000000001","rideType":"CAR",
+             "pickupLat":10.762622,"pickupLng":106.660172,
+             "destinationLat":10.776889,"destinationLng":106.700806,
+             "paymentMethod":"SIMULATED_CARD"}
+            """;
+
+    @Test
+    void createTripReturnsCreated() throws Exception {
+        when(tripService.createTrip(any())).thenReturn(sampleTrip(TripStatus.SEARCHING));
+
+        mockMvc.perform(post("/api/trips").contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SEARCHING"));
+    }
+
+    @Test
+    void createTripWithoutPaymentMethodIsRejected() throws Exception {
+        String body = """
+                {"passengerId":"11111111-1111-1111-1111-000000000001","rideType":"CAR",
+                 "pickupLat":10.762622,"pickupLng":106.660172,
+                 "destinationLat":10.776889,"destinationLng":106.700806}
+                """;
+
+        mockMvc.perform(post("/api/trips").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("paymentMethod")));
+    }
+
+    @Test
+    void createTripReturns402WhenPaymentDeclined() throws Exception {
+        when(tripService.createTrip(any())).thenThrow(new PaymentDeclinedException("Insufficient funds"));
+
+        mockMvc.perform(post("/api/trips").contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.status").value(402));
+    }
+
+    @Test
+    void createTripReturns503WhenPaymentServiceUnavailable() throws Exception {
+        when(tripService.createTrip(any())).thenThrow(new PaymentUnavailableException("payment-service is unavailable"));
+
+        mockMvc.perform(post("/api/trips").contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503));
     }
 
     @Test

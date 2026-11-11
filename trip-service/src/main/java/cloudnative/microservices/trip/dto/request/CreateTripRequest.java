@@ -11,6 +11,7 @@ public record CreateTripRequest(
         @NotNull BigDecimal pickupLat,
         @NotNull BigDecimal pickupLng,
         @NotNull BigDecimal destinationLat,
-        @NotNull BigDecimal destinationLng
+        @NotNull BigDecimal destinationLng,
+        @NotNull PaymentMethod paymentMethod
 ) {
 }

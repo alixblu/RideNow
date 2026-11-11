@@ -109,7 +109,7 @@ class EventBridgeToSqsIntegrationTest {
                 "VND", PaymentMethod.CASH, "idem-it-1", Instant.now());
         payment.markProcessing(Instant.now());
         payment.markPaid(Instant.now());
-        DomainEvent event = PaymentEvents.paymentSucceeded(payment);
+        DomainEvent event = PaymentEvents.paymentSucceeded(payment, null);
 
         publisher.publish(event);
 

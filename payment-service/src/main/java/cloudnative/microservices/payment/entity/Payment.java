@@ -81,11 +81,33 @@ public class Payment {
         this.updatedAt = now;
     }
 
+    /** PROCESSING -> AUTHORIZED: the gateway approved the hold for the estimated fare. */
+    public void markAuthorized(Instant now) {
+        this.status = PaymentStatus.AUTHORIZED;
+        this.failureReason = null;
+        this.updatedAt = now;
+    }
+
     /** PROCESSING -> PAID: the gateway approved the charge. */
     public void markPaid(Instant now) {
         this.status = PaymentStatus.PAID;
         this.failureReason = null;
         this.paidAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * AUTHORIZED -> PAID: the final fare was captured. The captured amount replaces
+     * the authorized estimate (the two can differ).
+     */
+    public void markCaptured(BigDecimal capturedAmount, Instant now) {
+        this.amount = capturedAmount;
+        markPaid(now);
+    }
+
+    /** AUTHORIZED -> RELEASED: the hold was given back (trip cancelled). */
+    public void markReleased(Instant now) {
+        this.status = PaymentStatus.RELEASED;
         this.updatedAt = now;
     }
 

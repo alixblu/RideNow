@@ -35,6 +35,13 @@ public record CreatePaymentRequest(
         PaymentMethod method,
 
         @NotBlank(message = "idempotencyKey is required")
-        String idempotencyKey
+        String idempotencyKey,
+
+        /**
+         * Optional: the passenger being charged. Not stored (payment-service owns no
+         * passenger data); it is only copied onto payment events so notifications
+         * know who to tell.
+         */
+        UUID passengerId
 ) {
 }

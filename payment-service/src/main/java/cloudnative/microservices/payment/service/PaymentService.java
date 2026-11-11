@@ -9,6 +9,7 @@ import cloudnative.microservices.payment.entity.PaymentStatus;
 import cloudnative.microservices.payment.event.PaymentEvents;
 import cloudnative.microservices.payment.gateway.PaymentGateway;
 import cloudnative.microservices.payment.repository.PaymentRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,15 +41,18 @@ public class PaymentService {
     }
 
     /**
-     * Charge a trip, exactly once per idempotency key.
+     * Authorize (hold funds for) a trip, exactly once per idempotency key. This is
+     * the synchronous first step of the authorize-then-capture lifecycle, called
+     * by trip-service when a trip is requested.
      *
      * Idempotency is the whole point: a client (or a retry after a timeout) may
      * send the same request more than once. The first call creates the payment
      * and runs it through the gateway; any later call carrying the same
-     * idempotencyKey returns that original payment unchanged - no second charge.
+     * idempotencyKey returns that original payment unchanged - no second hold.
      *
-     * The payment moves PENDING -> PROCESSING -> PAID/FAILED. The gateway is the
-     * swap seam: locally it is the SimulatedPaymentGateway; a real provider
+     * The payment moves PENDING -> PROCESSING -> AUTHORIZED (or FAILED). Capture
+     * and release happen later, asynchronously, from trip events. The gateway is
+     * the swap seam: locally it is the SimulatedPaymentGateway; a real provider
      * (e.g. PayPal) implements the same interface with no change here.
      */
     @Transactional
@@ -72,29 +76,79 @@ public class PaymentService {
                 UUID.randomUUID(), request.tripId(), request.amount(), request.currency(),
                 request.method(), request.idempotencyKey(), now);
 
-        // PENDING -> PROCESSING: hand the charge to the gateway.
+        // PENDING -> PROCESSING: hand the hold to the gateway.
         payment.markProcessing(now);
         PaymentGateway.ChargeResult result =
-                paymentGateway.charge(request.method(), request.amount(), request.currency());
+                paymentGateway.authorize(request.method(), request.amount(), request.currency());
 
         if (result.approved()) {
-            payment.markPaid(Instant.now());
+            payment.markAuthorized(Instant.now());
         } else {
             payment.markFailed(result.failureReason(), Instant.now());
         }
 
         Payment saved = paymentRepository.save(payment);
 
-        // Announce the outcome so downstream consumers (notifications) can react.
-        // Published after commit via the DomainEventListener; a failed publish
-        // never undoes the committed payment.
-        if (saved.getStatus() == PaymentStatus.PAID) {
-            events.publishEvent(PaymentEvents.paymentSucceeded(saved));
-        } else if (saved.getStatus() == PaymentStatus.FAILED) {
-            events.publishEvent(PaymentEvents.paymentFailed(saved));
+        // A successful hold is not announced (nothing was paid yet); only a decline
+        // is, so the passenger can be told. Published after commit via the
+        // DomainEventListener; a failed publish never undoes the committed payment.
+        if (saved.getStatus() == PaymentStatus.FAILED) {
+            events.publishEvent(PaymentEvents.paymentFailed(saved, request.passengerId()));
         }
 
         return toResponse(saved);
+    }
+
+    /**
+     * Capture the final fare against the trip's authorization (async, driven by
+     * {@code trip.completed}). Safe to repeat: a payment that is no longer
+     * AUTHORIZED is returned unchanged, so a duplicate SQS delivery cannot
+     * double-charge.
+     *
+     * @param finalAmount the final fare; falls back to the authorized amount if null
+     * @param passengerId optional, only copied onto the resulting event
+     */
+    @Transactional
+    public PaymentResponse capture(UUID tripId, BigDecimal finalAmount, UUID passengerId) {
+        Payment payment = paymentRepository.findByTripId(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment for trip", tripId));
+        if (payment.getStatus() != PaymentStatus.AUTHORIZED) {
+            return toResponse(payment);
+        }
+
+        BigDecimal amount = finalAmount != null ? finalAmount : payment.getAmount();
+        PaymentGateway.ChargeResult result =
+                paymentGateway.capture(payment.getMethod(), amount, payment.getCurrency());
+
+        if (result.approved()) {
+            payment.markCaptured(amount, Instant.now());
+        } else {
+            // Compensation path: the hold existed but the capture failed.
+            payment.markFailed(result.failureReason(), Instant.now());
+        }
+        Payment saved = paymentRepository.save(payment);
+
+        events.publishEvent(saved.getStatus() == PaymentStatus.PAID
+                ? PaymentEvents.paymentSucceeded(saved, passengerId)
+                : PaymentEvents.paymentFailed(saved, passengerId));
+        return toResponse(saved);
+    }
+
+    /**
+     * Release the hold (async, driven by {@code trip.cancelled}). Safe to repeat:
+     * anything that is not AUTHORIZED is returned unchanged.
+     */
+    @Transactional
+    public PaymentResponse release(UUID tripId) {
+        Payment payment = paymentRepository.findByTripId(tripId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment for trip", tripId));
+        if (payment.getStatus() != PaymentStatus.AUTHORIZED) {
+            return toResponse(payment);
+        }
+
+        paymentGateway.release(payment.getMethod(), payment.getAmount(), payment.getCurrency());
+        payment.markReleased(Instant.now());
+        return toResponse(paymentRepository.save(payment));
     }
 
     private PaymentResponse toResponse(Payment payment) {

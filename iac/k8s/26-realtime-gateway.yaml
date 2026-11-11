@@ -1,0 +1,125 @@
+# realtime-gateway: Deployment + Service + HPA.
+#
+# Holds the rider/driver WebSocket (STOMP) connections and pushes notifications
+# that notification-worker publishes on Redis Pub/Sub. No database and no AWS
+# API access (so no IRSA role); it only needs Redis.
+#
+# Reached from the internet through the ALB at /ws (see 30-ingress.yaml). Every
+# replica subscribes to Redis, so connections can land on any pod - no sticky
+# sessions needed.
+#
+# Graceful drain on a rolling deploy / scale-in:
+#   1. preStop sleeps so the ALB deregisters the pod before it stops accepting.
+#   2. On SIGTERM the app closes every socket with 1001 "reconnect"; clients
+#      reconnect (with jitter) to the remaining pods and resync over REST.
+#   3. terminationGracePeriodSeconds covers preStop + Spring's graceful shutdown.
+#
+# Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <REDIS_ENDPOINT> <APP_ORIGIN>
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-gateway
+  namespace: ridenow
+  labels:
+    app: realtime-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: realtime-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Replace one pod at a time so only a slice of clients reconnects at once.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: realtime-gateway
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: realtime-gateway
+          image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/ridenow/realtime-gateway:<IMAGE_TAG>
+          ports:
+            - containerPort: 8086
+          env:
+            - name: SERVER_PORT
+              value: "8086"
+            # Redis Pub/Sub (ElastiCache, in-transit TLS).
+            - name: REDIS_HOST
+              value: "<REDIS_ENDPOINT>"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_SSL
+              value: "true"
+            # Browser origin(s) of the app allowed to open a socket. Never "*" here.
+            - name: RIDENOW_GATEWAY_ALLOWED_ORIGINS
+              value: "<APP_ORIGIN>"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "10"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          # Readiness includes Redis: without it this pod cannot deliver, so the
+          # ALB stops sending it new sockets. Liveness does not: restarting would
+          # not fix a Redis outage, it would only drop every open socket.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8086
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8086
+            initialDelaySeconds: 60
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime-gateway
+  namespace: ridenow
+  annotations:
+    # The ALB health check for /ws targets uses the readiness group, not the
+    # ingress-wide /actuator/health default.
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+spec:
+  selector:
+    app: realtime-gateway
+  ports:
+    - port: 8086
+      targetPort: 8086
+  type: ClusterIP
+---
+# Scales on CPU. Open sockets are mostly idle, so CPU is a weak signal for a
+# connection-heavy service; scaling on connection count needs a custom metric
+# (a known gap - the gateway exposes health only today).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: realtime-gateway
+  namespace: ridenow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: realtime-gateway
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

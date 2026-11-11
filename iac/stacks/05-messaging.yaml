@@ -1,12 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  RideNow messaging layer (05) - PROVISIONED AHEAD OF ITS CONSUMERS, GATED OFF
-  BY DEFAULT. SQS work queue + dead-letter queue (the cloud home of the outbox
-  pattern), an EventBridge custom bus (trip events fan-out), and an ElastiCache
-  Redis replication group (driver GEO / live state). No RideNow service consumes
-  these yet (matching-service and notification-worker are not built), so every
-  resource sits behind a condition and dev leaves them OFF. Turn a capability on
-  only when the feature that uses it lands.
+  RideNow messaging layer (05). An EventBridge custom bus that every service
+  publishes domain events to, and one SQS work queue (+ dead-letter queue) per
+  consumer, each fed by an EventBridge rule that matches only the event types
+  that consumer handles (detail-type routing):
+    matching queue      <- trip.requested                  (matching-service)
+    payment queue       <- trip.completed, trip.cancelled  (payment-service)
+    notifications queue <- every ridenow.* event           (notification-worker)
+  Plus an ElastiCache Redis replication group (driver GEO / live state, and the
+  Pub/Sub channel notification-worker uses to reach realtime-gateway).
+  Mirrors localstack/init/01-messaging.sh. Each capability is gated by a
+  parameter so an environment can leave it off.
 
 Parameters:
   Environment:
@@ -17,7 +21,7 @@ Parameters:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: Create the SQS queues and EventBridge bus.
+    Description: Create the EventBridge bus, rules, and SQS queues.
 
   EnableRedis:
     Type: String
@@ -30,12 +34,27 @@ Parameters:
     Default: cache.t4g.micro
     Description: ElastiCache node type (sized per environment).
 
+  MaxReceiveCount:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Deliveries before a message is moved to its dead-letter queue.
+
 Conditions:
   MessagingOn: !Equals [!Ref EnableMessaging, "true"]
   RedisOn: !Equals [!Ref EnableRedis, "true"]
 
 Resources:
-  # ---- SQS: notification work queue + DLQ ----------------------------------
+  # ---- EventBridge: the one RideNow bus -------------------------------------
+  TripEventBus:
+    Type: AWS::Events::EventBus
+    Condition: MessagingOn
+    Properties:
+      Name: !Sub "ridenow-${Environment}-events"
+
+  # ---- SQS: notifications queue + DLQ (notification-worker) -----------------
+  # Logical ids and names unchanged from the single-queue version, so updating
+  # an existing stack keeps this queue (and any messages in it) in place.
   NotificationDlq:
     Type: AWS::SQS::Queue
     Condition: MessagingOn
@@ -56,19 +75,174 @@ Resources:
       SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt NotificationDlq.Arn
-        maxReceiveCount: 5
+        maxReceiveCount: !Ref MaxReceiveCount
       Tags:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- EventBridge: trip events fan-out bus --------------------------------
-  TripEventBus:
-    Type: AWS::Events::EventBus
+  # ---- SQS: matching queue + DLQ (matching-service) -------------------------
+  MatchingDlq:
+    Type: AWS::SQS::Queue
     Condition: MessagingOn
     Properties:
-      Name: !Sub "ridenow-${Environment}-events"
+      QueueName: !Sub "ridenow-${Environment}-matching-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
-  # ---- ElastiCache Redis (driver GEO / live state) -------------------------
+  MatchingQueue:
+    Type: AWS::SQS::Queue
+    Condition: MessagingOn
+    Properties:
+      QueueName: !Sub "ridenow-${Environment}-matching"
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt MatchingDlq.Arn
+        maxReceiveCount: !Ref MaxReceiveCount
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- SQS: payment queue + DLQ (payment-service) ---------------------------
+  PaymentDlq:
+    Type: AWS::SQS::Queue
+    Condition: MessagingOn
+    Properties:
+      QueueName: !Sub "ridenow-${Environment}-payment-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  PaymentQueue:
+    Type: AWS::SQS::Queue
+    Condition: MessagingOn
+    Properties:
+      QueueName: !Sub "ridenow-${Environment}-payment"
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PaymentDlq.Arn
+        maxReceiveCount: !Ref MaxReceiveCount
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ---- EventBridge rules: one per consumer, routed by detail-type -----------
+  TripRequestedRule:
+    Type: AWS::Events::Rule
+    Condition: MessagingOn
+    Properties:
+      Name: !Sub "ridenow-${Environment}-trip-requested"
+      Description: trip.requested -> matching queue
+      EventBusName: !Ref TripEventBus
+      State: ENABLED
+      EventPattern:
+        source:
+          - prefix: "ridenow."
+        detail-type:
+          - trip.requested
+      Targets:
+        - Id: matching-queue
+          Arn: !GetAtt MatchingQueue.Arn
+
+  TripEndedRule:
+    Type: AWS::Events::Rule
+    Condition: MessagingOn
+    Properties:
+      Name: !Sub "ridenow-${Environment}-trip-ended"
+      Description: trip.completed / trip.cancelled -> payment queue (capture / release)
+      EventBusName: !Ref TripEventBus
+      State: ENABLED
+      EventPattern:
+        source:
+          - prefix: "ridenow."
+        detail-type:
+          - trip.completed
+          - trip.cancelled
+      Targets:
+        - Id: payment-queue
+          Arn: !GetAtt PaymentQueue.Arn
+
+  AllEventsRule:
+    Type: AWS::Events::Rule
+    Condition: MessagingOn
+    Properties:
+      Name: !Sub "ridenow-${Environment}-all-events"
+      Description: every RideNow event -> notifications queue
+      EventBusName: !Ref TripEventBus
+      State: ENABLED
+      EventPattern:
+        source:
+          - prefix: "ridenow."
+      Targets:
+        - Id: notifications-queue
+          Arn: !GetAtt NotificationQueue.Arn
+
+  # ---- Queue policies: only the matching rule may deliver to each queue -----
+  # Scoped by aws:SourceArn to the specific rule, not to EventBridge at large.
+  MatchingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Condition: MessagingOn
+    Properties:
+      Queues:
+        - !Ref MatchingQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowTripRequestedRule
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt MatchingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt TripRequestedRule.Arn
+
+  PaymentQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Condition: MessagingOn
+    Properties:
+      Queues:
+        - !Ref PaymentQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowTripEndedRule
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt PaymentQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt TripEndedRule.Arn
+
+  NotificationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Condition: MessagingOn
+    Properties:
+      Queues:
+        - !Ref NotificationQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAllEventsRule
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotificationQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt AllEventsRule.Arn
+
+  # ---- ElastiCache Redis (driver GEO / live state, notification Pub/Sub) ----
   RedisSubnetGroup:
     Type: AWS::ElastiCache::SubnetGroup
     Condition: RedisOn
@@ -113,12 +287,26 @@ Resources:
       SecurityGroupIds:
         - !Ref RedisSecurityGroup
       AtRestEncryptionEnabled: true
+      # In-transit TLS: Redis clients must connect with SSL enabled
+      # (REDIS_SSL=true / spring.data.redis.ssl.enabled).
       TransitEncryptionEnabled: true
       Tags:
         - Key: Environment
           Value: !Ref Environment
 
 Outputs:
+  TripEventBusName:
+    Condition: MessagingOn
+    Value: !Ref TripEventBus
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusName"
+
+  TripEventBusArn:
+    Condition: MessagingOn
+    Value: !GetAtt TripEventBus.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusArn"
+
   NotificationQueueUrl:
     Condition: MessagingOn
     Value: !Ref NotificationQueue
@@ -131,11 +319,29 @@ Outputs:
     Export:
       Name: !Sub "ridenow-${Environment}-messaging-NotificationQueueArn"
 
-  TripEventBusName:
+  MatchingQueueUrl:
     Condition: MessagingOn
-    Value: !Ref TripEventBus
+    Value: !Ref MatchingQueue
     Export:
-      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusName"
+      Name: !Sub "ridenow-${Environment}-messaging-MatchingQueueUrl"
+
+  MatchingQueueArn:
+    Condition: MessagingOn
+    Value: !GetAtt MatchingQueue.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-MatchingQueueArn"
+
+  PaymentQueueUrl:
+    Condition: MessagingOn
+    Value: !Ref PaymentQueue
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-PaymentQueueUrl"
+
+  PaymentQueueArn:
+    Condition: MessagingOn
+    Value: !GetAtt PaymentQueue.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-PaymentQueueArn"
 
   RedisPrimaryEndpoint:
     Condition: RedisOn

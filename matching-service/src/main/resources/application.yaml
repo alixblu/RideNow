@@ -24,6 +24,13 @@ ridenow:
     # Which nearby-driver finder to use: "postgres" (boring scan, default) or
     # "redis" (Redis GEO). Flip to feel the difference / move to the real path.
     finder: ${MATCHING_FINDER:postgres}
+    # SQS consumer for trip.requested. The queue URL and AWS endpoint/region are
+    # injected by the environment (LocalStack locally; real AWS later - same
+    # code). Blank keeps the consumer off (plain test runs, or no AWS at all).
+    queue-url: ${RIDENOW_MATCHING_QUEUE_URL:}
+    poll:
+      wait-seconds: 10
+      max-messages: 10
 
 management:
   endpoints:

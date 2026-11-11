@@ -261,6 +261,8 @@ Table payments {
   // One payment record per trip for the initial project scope.
   trip_id uuid [unique, not null]
 
+  // Authorized amount at trip request (the estimated fare); replaced by the
+  // captured amount (the final fare) when the payment moves to PAID.
   amount decimal(12,2) [not null]
 
   currency varchar(3) [not null, default: 'VND']
@@ -271,10 +273,19 @@ Table payments {
     PAYPAL
   ''']
 
+  // Authorize-then-capture lifecycle:
+  //   PENDING -> PROCESSING -> AUTHORIZED   (sync, at trip request)
+  //   AUTHORIZED -> PAID                    (async, on trip.completed)
+  //   AUTHORIZED -> RELEASED                (async, on trip.cancelled)
+  //   PROCESSING -> FAILED, AUTHORIZED -> FAILED (declined authorize / failed capture)
+  // The column is a plain varchar with no check constraint, so adding
+  // AUTHORIZED and RELEASED needs no schema migration.
   status varchar [not null, default: 'PENDING', note: '''
     PENDING,
     PROCESSING,
+    AUTHORIZED,
     PAID,
+    RELEASED,
     FAILED
   ''']
 

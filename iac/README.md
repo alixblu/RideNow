@@ -17,13 +17,13 @@ reproduces the same footprint as reviewable, repeatable templates.
 
 | Layer | Template | Creates | Hardening |
 |-------|----------|---------|-----------|
-| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets / messaging policy for IRSA | Least privilege; ARNs scoped to `ridenow/*` and `ridenow-<env>-*` |
+| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / bus ARN its service uses |
 | 2 | `stacks/02-network.yaml` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
-| 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment}-service` | Scan-on-push, KMS encryption, lifecycle expiry |
+| 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment,matching}-service`, `ridenow/notification-worker`, `ridenow/realtime-gateway` | Scan-on-push, KMS encryption, lifecycle expiry |
 | 4 | `stacks/04-data.yaml` | One RDS PostgreSQL **per service** (database-per-service rule) | Multi-AZ, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
-| 5 | `stacks/05-messaging.yaml` | SQS + DLQ, EventBridge bus, ElastiCache Redis | Encrypted, private; consumed by matching-service / notification-worker |
+| 5 | `stacks/05-messaging.yaml` | EventBridge bus; matching / payment / notifications SQS queues, each with a DLQ; one rule per queue routed by `detail-type`; ElastiCache Redis | Encrypted; each queue policy admits only its own rule (`aws:SourceArn`); Redis private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
-| 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets | Gated; scoped trust to the cluster OIDC provider |
+| 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
 
 Kubernetes workload manifests (Deployment / Service / Ingress / HPA) live in `k8s/`.
 
@@ -171,8 +171,27 @@ free tier — tear down environments you are no longer using.
   you pass `--apply`, mirroring the safety pattern in `../scripts/push-to-ecr.sh`.
 - Secrets Manager **generates** every database master password. No plaintext
   password ever appears in a template, a parameter file, or git history.
-- SQS / EventBridge / Redis are **on**: matching-service consumes Redis and the
-  notification-worker consumes SQS.
+- SQS / EventBridge / Redis are **on**. Event routing (mirrors
+  `../localstack/init/01-messaging.sh`):
+
+  | Queue | Rule matches | Consumer |
+  |-------|--------------|----------|
+  | `ridenow-<env>-matching` | `trip.requested` | matching-service |
+  | `ridenow-<env>-payment` | `trip.completed`, `trip.cancelled` | payment-service |
+  | `ridenow-<env>-notifications` | every `ridenow.*` event | notification-worker |
+
+  Each has a `-dlq` (maxReceiveCount 5). Redis serves driver live state, the GEO
+  index, and the Pub/Sub channel notification-worker uses to reach
+  realtime-gateway (the WebSocket service at `/ws` on the ALB).
+- **Upgrading an existing stack 01:** the shared `ridenow-<env>-app-access`
+  policy no longer grants SQS / EventBridge. Anything that relied on it for
+  messaging (for example a hand-made notification-worker role from guide 08)
+  must move to the per-service role from stack 07 *before* stack 01 is updated,
+  or it loses queue access.
+- **Redis TLS:** ElastiCache has in-transit encryption on, so clients must
+  connect with TLS. notification-worker and realtime-gateway set `REDIS_SSL=true`;
+  driver-service and matching-service do not support it yet, a known gap to close
+  before they use ElastiCache.
 
 ---
 

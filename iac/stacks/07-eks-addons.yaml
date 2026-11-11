@@ -1,13 +1,15 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RideNow EKS add-on IAM layer (07), GATED. Registers the cluster OIDC provider
-  as an IAM identity provider, then creates IRSA roles that in-cluster add-ons
-  assume via their Kubernetes service accounts: the AWS Load Balancer Controller
-  (fronts Ingress with an ALB) and External Secrets (syncs the RDS Secrets
-  Manager secrets into Kubernetes Secrets the pods mount). Trust is scoped to the
-  cluster OIDC provider and the specific service account for each add-on.
+  as an IAM identity provider, then creates IRSA roles assumed via Kubernetes
+  service accounts: the AWS Load Balancer Controller (fronts Ingress with an
+  ALB), External Secrets (syncs the RDS Secrets Manager secrets into Kubernetes
+  Secrets the pods mount), and one role per application service that uses AWS
+  messaging (trip, payment, matching, notification-worker). Trust is scoped to
+  the cluster OIDC provider and the specific service account for each.
 
-  Depends on the EKS cluster stack (06) for the OIDC issuer URL.
+  Depends on the EKS cluster stack (06) for the OIDC issuer URL and on the IAM
+  stack (01) for the per-service messaging policies.
 
 Parameters:
   Environment:
@@ -125,7 +127,167 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # ---- Application IRSA roles (one per service that uses AWS messaging) -----
+  # Each trusts ONLY its own Kubernetes service account in the ridenow
+  # namespace, and carries only that service's messaging policy from stack 01.
+  # realtime-gateway, user-service and driver-service need no AWS API access.
+  TripServiceRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-trip-service"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:ridenow:trip-service",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ManagedPolicyArns:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-iam-TripServiceMessagingPolicyArn"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  PaymentServiceRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-payment-service"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:ridenow:payment-service",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ManagedPolicyArns:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-iam-PaymentServiceMessagingPolicyArn"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  MatchingServiceRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-matching-service"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:ridenow:matching-service",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ManagedPolicyArns:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-iam-MatchingServiceMessagingPolicyArn"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  NotificationWorkerRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-notification-worker"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:ridenow:notification-worker",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ManagedPolicyArns:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-iam-NotificationWorkerMessagingPolicyArn"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
 Outputs:
+  TripServiceRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt TripServiceRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-TripServiceRoleArn"
+
+  PaymentServiceRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt PaymentServiceRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-PaymentServiceRoleArn"
+
+  MatchingServiceRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt MatchingServiceRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-MatchingServiceRoleArn"
+
+  NotificationWorkerRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt NotificationWorkerRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-NotificationWorkerRoleArn"
+
   AlbControllerRoleArn:
     Condition: AddonsOn
     Value: !GetAtt AlbControllerRole.Arn

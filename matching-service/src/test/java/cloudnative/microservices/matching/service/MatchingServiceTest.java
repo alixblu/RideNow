@@ -31,6 +31,7 @@ class MatchingServiceTest {
 
     @Mock private NearbyDriverFinder finder;
     @Mock private TripOfferRepository offerRepository;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @InjectMocks private MatchingService matchingService;
 
@@ -54,6 +55,29 @@ class MatchingServiceTest {
     }
 
     @Test
+    void matchPublishesOneMatchOfferedEventPerOffer() {
+        UUID tripId = UUID.randomUUID();
+        UUID d1 = UUID.randomUUID();
+        UUID d2 = UUID.randomUUID();
+        when(finder.findNearby(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of(new CandidateDriver(d1, 100), new CandidateDriver(d2, 250)));
+        when(offerRepository.save(any(TripOffer.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        matchingService.match(new MatchRequest(
+                tripId, VehicleType.CAR, new BigDecimal("10.0"), new BigDecimal("106.0"), null, null));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                cloudnative.microservices.matching.event.DomainEvent.class);
+        verify(events, times(2)).publishEvent(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(e -> {
+            assertThat(e.type()).isEqualTo("match.offered");
+            assertThat(e.data()).containsEntry("tripId", tripId.toString());
+        });
+        assertThat(captor.getAllValues()).extracting(e -> e.data().get("driverId"))
+                .containsExactly(d1.toString(), d2.toString());
+    }
+
+    @Test
     void matchWithNoCandidatesMakesNoOffers() {
         UUID tripId = UUID.randomUUID();
         when(finder.findNearby(any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
@@ -64,5 +88,6 @@ class MatchingServiceTest {
 
         assertThat(response.candidates()).isEmpty();
         assertThat(response.offers()).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(events);
     }
 }

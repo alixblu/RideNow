@@ -1,5 +1,6 @@
 package cloudnative.microservices.trip.service;
 
+import cloudnative.microservices.trip.client.PaymentServiceClient;
 import cloudnative.microservices.trip.dto.request.CreateTripRequest;
 import cloudnative.microservices.trip.dto.response.PageResponse;
 import cloudnative.microservices.trip.dto.response.TripOfferResponse;
@@ -7,14 +8,19 @@ import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.Trip;
 import cloudnative.microservices.trip.entity.TripOffer;
 import cloudnative.microservices.trip.entity.TripStatus;
+import cloudnative.microservices.trip.event.DomainEventPublisher;
 import cloudnative.microservices.trip.event.TripEvents;
+import cloudnative.microservices.trip.exception.PaymentUnavailableException;
 import cloudnative.microservices.trip.exception.ResourceNotFoundException;
 import cloudnative.microservices.trip.repository.TripOfferRepository;
 import cloudnative.microservices.trip.repository.TripRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,21 +29,66 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class TripService {
 
+    private static final Logger log = LoggerFactory.getLogger(TripService.class);
+
     private final TripRepository tripRepository;
     private final TripOfferRepository tripOfferRepository;
     private final ApplicationEventPublisher events;
+    private final TripRecorder tripRecorder;
+    private final FareEstimator fareEstimator;
+    private final PaymentServiceClient paymentServiceClient;
+    private final DomainEventPublisher eventPublisher;
 
     /**
-     * Creates a trip already in SEARCHING, ready to be offered to drivers.
-     * (Minimal creation for the concurrency lab.)
+     * Requests a trip: estimate the fare, authorize it synchronously with
+     * payment-service, then save the trip (already SEARCHING) and raise
+     * {@code trip.requested} so matching can start asynchronously.
+     *
+     * Strict by design: if the authorization is declined or payment-service is
+     * unavailable, no trip is created. If the hold may exist but the trip could
+     * not be saved, a compensating {@code trip.cancelled} event releases it.
+     *
+     * Deliberately not {@code @Transactional}: the payment call must not run inside
+     * a database transaction, and the compensation must be able to run after a
+     * failed commit. The local transaction lives in {@link TripRecorder}.
      */
-    @Transactional
     public TripResponse createTrip(CreateTripRequest request) {
+        UUID tripId = UUID.randomUUID();
+        BigDecimal estimatedFare = fareEstimator.estimate(
+                request.rideType(), request.pickupLat(), request.pickupLng(),
+                request.destinationLat(), request.destinationLng());
+
+        try {
+            paymentServiceClient.authorize(
+                    tripId, request.passengerId(), estimatedFare, FareEstimator.CURRENCY,
+                    request.paymentMethod());
+        } catch (PaymentUnavailableException e) {
+            // The request may have reached payment-service before it timed out, so a
+            // hold could exist. Releasing a hold that does not exist is a no-op.
+            compensate(tripId, "Payment authorization was unavailable");
+            throw e;
+        }
+        // PaymentDeclinedException propagates untouched: a declined hold needs no release.
+
         Trip trip = new Trip(
-                UUID.randomUUID(), request.passengerId(), request.rideType(),
+                tripId, request.passengerId(), request.rideType(),
                 request.pickupLat(), request.pickupLng(),
-                request.destinationLat(), request.destinationLng(), Instant.now());
-        return toResponse(tripRepository.save(trip));
+                request.destinationLat(), request.destinationLng(), estimatedFare, Instant.now());
+        try {
+            return toResponse(tripRecorder.recordRequested(trip));
+        } catch (RuntimeException e) {
+            compensate(tripId, "Trip could not be created");
+            throw e;
+        }
+    }
+
+    /** Best-effort release of a possibly-held authorization; never masks the original failure. */
+    private void compensate(UUID tripId, String reason) {
+        try {
+            eventPublisher.publish(TripEvents.tripCreationFailed(tripId, reason));
+        } catch (RuntimeException ex) {
+            log.error("Could not publish compensation for trip {}: {}", tripId, ex.getMessage());
+        }
     }
 
     /**
@@ -81,6 +132,7 @@ public class TripService {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip", tripId));
         trip.start(Instant.now());
+        events.publishEvent(TripEvents.tripStarted(trip));
         return toResponse(trip);
     }
 

@@ -113,7 +113,8 @@ class EventBridgeToSqsIntegrationTest {
 
         Trip trip = new Trip(UUID.randomUUID(), UUID.randomUUID(), RideType.CAR,
                 new BigDecimal("10.000000"), new BigDecimal("106.000000"),
-                new BigDecimal("10.100000"), new BigDecimal("106.100000"), Instant.now());
+                new BigDecimal("10.100000"), new BigDecimal("106.100000"),
+                new BigDecimal("45000.00"), Instant.now());
         DomainEvent event = TripEvents.tripCompleted(trip);
 
         publisher.publish(event);

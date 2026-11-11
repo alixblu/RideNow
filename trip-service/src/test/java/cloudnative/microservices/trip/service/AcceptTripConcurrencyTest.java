@@ -2,7 +2,9 @@ package cloudnative.microservices.trip.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import cloudnative.microservices.trip.client.PaymentServiceClient;
 import cloudnative.microservices.trip.dto.request.CreateTripRequest;
+import cloudnative.microservices.trip.dto.request.PaymentMethod;
 import cloudnative.microservices.trip.dto.response.TripResponse;
 import cloudnative.microservices.trip.entity.RideType;
 import cloudnative.microservices.trip.entity.TripStatus;
@@ -17,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * THE signature test of the project: many drivers try to accept the same ride at the
@@ -30,13 +33,19 @@ class AcceptTripConcurrencyTest {
     @Autowired
     private TripService tripService;
 
+    // This test is about the accept race, not payment: stub the sync authorize call
+    // so it runs without payment-service.
+    @MockitoBean
+    private PaymentServiceClient paymentServiceClient;
+
     @Test
     void exactlyOneDriverWinsWhenManyAcceptSimultaneously() throws InterruptedException {
         // Arrange: one trip, SEARCHING, visible to many drivers.
         TripResponse trip = tripService.createTrip(new CreateTripRequest(
                 UUID.randomUUID(), RideType.CAR,
                 new BigDecimal("10.762622"), new BigDecimal("106.660172"),
-                new BigDecimal("10.776889"), new BigDecimal("106.700806")));
+                new BigDecimal("10.776889"), new BigDecimal("106.700806"),
+                PaymentMethod.CASH));
 
         int driverCount = 50;
         ExecutorService pool = Executors.newFixedThreadPool(driverCount);

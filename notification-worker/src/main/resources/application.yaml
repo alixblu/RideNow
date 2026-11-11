@@ -12,6 +12,14 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
+  # Redis carries notifications to the realtime-gateway (delivery=redis).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # ElastiCache is provisioned with in-transit TLS; set REDIS_SSL=true there.
+      ssl:
+        enabled: ${REDIS_SSL:false}
 
 # SQS consumer configuration. The queue URL and AWS endpoint/region are injected
 # by the environment (LocalStack locally; real AWS later - same code).
@@ -19,6 +27,10 @@ ridenow:
   notifications:
     # When blank, the SQS consumer stays disabled (e.g. plain unit test runs).
     queue-url: ${RIDENOW_NOTIFICATIONS_QUEUE_URL:}
+    # How notifications are delivered: "logging" (default, no dependency) or
+    # "redis" (publish to the realtime-gateway, which pushes over WebSocket).
+    delivery: ${RIDENOW_NOTIFICATIONS_DELIVERY:logging}
+    redis-channel: ${RIDENOW_NOTIFICATIONS_REDIS_CHANNEL:ridenow.notifications}
     poll:
       # Long-poll wait and how many messages to pull per receive.
       wait-seconds: 10
@@ -29,3 +41,8 @@ management:
     web:
       exposure:
         include: health
+  # A Redis outage must not mark the worker unhealthy (that would restart it for
+  # nothing): failed sends already stay on SQS and are retried / dead-lettered.
+  health:
+    redis:
+      enabled: false
