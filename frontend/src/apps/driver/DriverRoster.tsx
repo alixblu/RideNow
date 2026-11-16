@@ -453,6 +453,8 @@ function DriverVehicles({
 interface AvailableRidesProps {
   tripClient: TripServiceClient;
   openedDriverId: string | null;
+  /** Called with the accepted trip. */
+  onAccepted?: ((trip: TripResponse) => void) | undefined;
 }
 
 function formatTimestamp(iso: string): string {
@@ -460,7 +462,7 @@ function formatTimestamp(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
-function AvailableRides({ tripClient, openedDriverId }: AvailableRidesProps) {
+export function AvailableRides({ tripClient, openedDriverId, onAccepted }: AvailableRidesProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -474,8 +476,9 @@ function AvailableRides({ tripClient, openedDriverId }: AvailableRidesProps) {
     mutationFn: (vars: { tripId: string; driverId: string }) =>
       tripClient.acceptTrip(vars.tripId, vars.driverId),
     onSettled: () => setAcceptingId(null),
-    onSuccess: () => {
+    onSuccess: (trip) => {
       toast("Ride accepted.", "success");
+      onAccepted?.(trip);
       void queryClient.invalidateQueries({ queryKey: ["searching-trips"] });
     },
     onError: (error) => {

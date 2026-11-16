@@ -64,6 +64,9 @@ spec:
               value: "<REDIS_ENDPOINT>"
             - name: REDIS_PORT
               value: "6379"
+            # ElastiCache has in-transit TLS on.
+            - name: REDIS_SSL
+              value: "true"
             # Use the Redis GEO finder (the real path) rather than the Postgres scan.
             - name: MATCHING_FINDER
               value: "redis"

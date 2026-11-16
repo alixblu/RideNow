@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import cloudnative.microservices.notification.dto.IncomingEvent;
-import cloudnative.microservices.notification.dto.Notification;
+import cloudnative.microservices.notification.dto.NotificationMessage;
 import cloudnative.microservices.notification.entity.ProcessedNotification;
 import cloudnative.microservices.notification.repository.ProcessedNotificationRepository;
 import java.util.Map;
@@ -27,6 +27,7 @@ class NotificationServiceTest {
 
     @Mock private ProcessedNotificationRepository processedRepository;
     @Mock private NotificationSender sender;
+    @Mock private TrackingPairingService trackingPairing;
 
     private NotificationService service;
 
@@ -37,7 +38,7 @@ class NotificationServiceTest {
     @BeforeEach
     void setUp() {
         // The real resolver: these tests check the end-to-end "who gets what".
-        service = new NotificationService(processedRepository, sender, new RecipientResolver());
+        service = new NotificationService(processedRepository, sender, new RecipientResolver(), trackingPairing);
     }
 
     private IncomingEvent event(String type) {
@@ -53,9 +54,9 @@ class NotificationServiceTest {
 
         service.handle(event);
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
+        ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
         verify(sender).send(captor.capture());
-        Notification sent = captor.getValue();
+        NotificationMessage sent = captor.getValue();
         assertThat(sent.userId()).isEqualTo(passenger);
         assertThat(sent.eventId()).isEqualTo(event.eventId());
         assertThat(sent.message()).isEqualTo("A driver has accepted your trip.");
@@ -68,10 +69,10 @@ class NotificationServiceTest {
     void cancellationSendsOneNotificationPerRecipient() {
         service.handle(event("trip.cancelled"));
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
+        ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
         verify(sender, times(2)).send(captor.capture());
-        assertThat(captor.getAllValues()).extracting(Notification::userId).containsExactly(passenger, driver);
-        assertThat(captor.getAllValues()).extracting(Notification::eventId).containsOnly(
+        assertThat(captor.getAllValues()).extracting(NotificationMessage::userId).containsExactly(passenger, driver);
+        assertThat(captor.getAllValues()).extracting(NotificationMessage::eventId).containsOnly(
                 captor.getAllValues().getFirst().eventId());
     }
 
@@ -81,11 +82,18 @@ class NotificationServiceTest {
         service.handle(event("trip.started"));
         service.handle(event("match.offered"));
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
+        ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
         verify(sender, times(3)).send(captor.capture());
-        assertThat(captor.getAllValues()).extracting(Notification::message).containsExactly(
+        assertThat(captor.getAllValues()).extracting(NotificationMessage::message).containsExactly(
                 "Looking for a driver near you.", "Your trip has started.", "New ride request near you.");
         assertThat(captor.getAllValues().get(2).userId()).isEqualTo(driver);
+    }
+
+    @Test
+    void theTrackingPairingSeesEveryNewEvent() {
+        IncomingEvent event = event("driver.accepted");
+        service.handle(event);
+        verify(trackingPairing).apply(event);
     }
 
     @Test
@@ -95,6 +103,7 @@ class NotificationServiceTest {
 
         assertThat(service.handle(event)).isTrue();
 
+        verify(trackingPairing, never()).apply(any());
         verify(sender, never()).send(any());
         verify(processedRepository, never()).save(any());
     }

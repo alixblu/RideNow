@@ -253,7 +253,7 @@ services:
       retries: 12
       start_period: 40s
 
-  # ---- Notification worker: consumes the SQS notifications queue -------------
+  # ---- Notification worker: SQS notifications queue -> inbox table + API -----
   notification-worker:
     build: ./notification-worker
     depends_on:
@@ -265,8 +265,8 @@ services:
         condition: service_healthy
     environment:
       SERVER_PORT: 8084
-      # Real delivery: publish each notification on Redis for realtime-gateway.
-      RIDENOW_NOTIFICATIONS_DELIVERY: redis
+      # Redis holds the trip tracking pairing keys that realtime-gateway reads.
+      # Notifications themselves go to the inbox table (GET /api/notifications).
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SPRING_DATASOURCE_URL: jdbc:postgresql://notification-db:5432/${NOTIFICATION_DB_NAME:-notification_service}
@@ -322,10 +322,9 @@ services:
       retries: 12
       start_period: 40s
 
-  # ---- Realtime gateway: WebSocket (STOMP) push to rider/driver apps ----------
-  # Subscribes to the Redis channel notification-worker publishes to and pushes
-  # each notification to the recipient's socket. Connect a client to
-  # ws://localhost:8086/ws and SUBSCRIBE /topic/users/{userId}.
+  # ---- Realtime gateway: SSE live driver location to the trip's passenger ------
+  # Subscribes to ridenow:driver:locations and ridenow:tracking:ended on Redis.
+  # Stream: curl -N "http://localhost:8086/live/trips/{tripId}/location?userId={passengerId}"
   realtime-gateway:
     build: ./realtime-gateway
     depends_on:

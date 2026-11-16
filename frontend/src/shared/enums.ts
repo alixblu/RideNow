@@ -29,7 +29,15 @@ export type TripStatus =
   | "COMPLETED"
   | "CANCELLED";
 
-export type PaymentStatus = "PENDING" | "PROCESSING" | "PAID" | "FAILED";
+export type PaymentStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "AUTHORIZED"
+  | "PAID"
+  | "RELEASED"
+  | "FAILED";
+/** How the rider pays (mirrors the trip/payment `PaymentMethod` enum). */
+export type PaymentMethod = "CASH" | "SIMULATED_CARD" | "PAYPAL";
 
 // ---------------------------------------------------------------------------
 // Allowed-value lists — the single source of truth selectors render from.
@@ -54,9 +62,12 @@ export const TRIP_STATUS_VALUES = [
 export const PAYMENT_STATUS_VALUES = [
   "PENDING",
   "PROCESSING",
+  "AUTHORIZED",
   "PAID",
+  "RELEASED",
   "FAILED",
 ] as const;
+export const PAYMENT_METHOD_VALUES = ["CASH", "SIMULATED_CARD", "PAYPAL"] as const;
 
 // ---------------------------------------------------------------------------
 // Type-guard / validation helpers (back Property 6).
@@ -85,6 +96,12 @@ export function isTripStatus(value: unknown): value is TripStatus {
   );
 }
 
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return (
+    typeof value === "string" &&
+    (PAYMENT_METHOD_VALUES as readonly string[]).includes(value)
+  );
+}
 export function isPaymentStatus(value: unknown): value is PaymentStatus {
   return (
     typeof value === "string" &&

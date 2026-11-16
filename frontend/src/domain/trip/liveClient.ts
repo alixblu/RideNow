@@ -73,6 +73,21 @@ export function createTripLiveClient(): TripServiceClient {
       );
     },
 
+    arriveTrip(id: string): Promise<TripResponse> {
+      return httpRequest<TripResponse>(`${TRIPS_PATH}/${encodeURIComponent(id)}/arrive`, {
+        method: "POST",
+      });
+    },
+    startTrip(id: string): Promise<TripResponse> {
+      return httpRequest<TripResponse>(`${TRIPS_PATH}/${encodeURIComponent(id)}/start`, {
+        method: "POST",
+      });
+    },
+    completeTrip(id: string): Promise<TripResponse> {
+      return httpRequest<TripResponse>(`${TRIPS_PATH}/${encodeURIComponent(id)}/complete`, {
+        method: "POST",
+      });
+    },
     listTrips(params: ListTripsParams): Promise<Page<TripResponse>> {
       return httpRequest<Page<TripResponse>>(`${TRIPS_PATH}${buildTripsQuery(params)}`);
     },

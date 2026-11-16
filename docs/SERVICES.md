@@ -17,13 +17,14 @@ Base package for all Java services: `cloudnative.microservices.<name>`
 | `driver-service` | 8080 | `driver-db` (Postgres) | live state, GEO publish, Pub/Sub, profile cache | - | yes `/api/drivers` |
 | `trip-service` | 8082 | `trip-db` (Postgres) | - | publishes to EventBridge | yes `/api/trips` |
 | `payment-service` | 8083 | `payment-db` (Postgres) | - | publishes to EventBridge, consumes SQS payment queue | yes `/api/payments` |
-| `notification-worker` | 8084 | `notification-db` (Postgres) | publishes to Pub/Sub | consumes SQS notifications queue | no |
-| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index | consumes SQS matching queue, publishes to EventBridge | no |
-| `realtime-gateway` | 8086 | none | subscribes to Pub/Sub | - | WebSocket (STOMP) |
+| `notification-worker` | 8084 | `notification-db` (Postgres) | tracking pairing keys, publishes trip-ended | consumes SQS notifications queue | yes `/api/notifications` |
+| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index, subscribes to driver locations | consumes SQS matching queue, publishes to EventBridge | no |
+| `realtime-gateway` | 8086 | none | subscribes to driver locations and trip-ended, reads pairing keys | - | SSE `/live` |
 | `frontend` | - | - | - | - | static SPA (React + Vite) |
 
-Ports are the local `docker-compose.yml` values. Connect a WebSocket client to
-`ws://localhost:8086/ws` and subscribe to `/topic/users/{userId}`.
+Ports are the local `docker-compose.yml` values. Open the live position stream with
+`curl -N "http://localhost:8086/live/trips/{tripId}/location?userId={passengerId}"`
+(see `docs/REALTIME.md`).
 
 ---
 
@@ -39,7 +40,9 @@ Driver accounts, vehicles, and live driver state.
 - `GET|POST /api/drivers/{driverId}/vehicles`, `GET /api/vehicles/{id}`
 - `PATCH /api/drivers/{driverId}/status`
 - Live (Redis is the primary store): `POST /api/drivers/{driverId}/online|offline|location`,
-  `GET /api/drivers/{driverId}/live`
+  `GET /api/drivers/{driverId}/live`. `online` takes an optional `{"vehicleId"}`; without it the
+  newest active vehicle is used, and with none it returns 409. Positions are published on
+  `ridenow:driver:locations` with `recordedAt` and `vehicleType`; going offline publishes `online:false`.
 - Sync dependency: calls user-service to validate the user when creating a driver.
 
 ### trip-service
@@ -70,20 +73,23 @@ Driver-to-trip matching decisions and offers.
 - Consumes: `trip.requested`. Publishes: `match.offered`.
 
 ### notification-worker
-Pure SQS consumer; no business HTTP API (health endpoint only).
+SQS consumer plus the inbox API.
 - Consumes every `ridenow.*` event and deduplicates through the `ProcessedNotification`
   idempotency ledger. `RecipientResolver` picks who to tell from the ids in the event
   (the passenger for most events, the driver for `match.offered`, both for a cancellation
-  with an assigned driver). It then sends through a `NotificationSender`:
-  `RedisNotificationSender` (`RIDENOW_NOTIFICATIONS_DELIVERY=redis`, used in compose
-  and EKS) publishes to Redis Pub/Sub for realtime-gateway, and the logging sender is the
-  no-dependency default.
-
+  with an assigned driver). `InboxNotificationSender` writes one `notifications` row per
+  recipient in the same transaction as the ledger row.
+- `GET /api/notifications?userId=&since=&limit=` returns items after the `since` id,
+  oldest first, at most 100. `POST /api/notifications/{id}/read` marks one read.
+- `TrackingPairingService` sets `ridenow:tracking:trip:{tripId}` and
+  `ridenow:tracking:driver:{driverId}` on `driver.accepted` (3h TTL), and on trip end
+  deletes them and publishes `ridenow:tracking:ended`.
 ### realtime-gateway
-Owns the WebSocket (STOMP) sessions. No database, no business API.
-- Subscribes to Redis Pub/Sub and pushes messages to connected clients
-  (`NotificationRelay`, `SessionRegistry`, `InboundGuardInterceptor`).
-
+Streams the driver's position to the trip's passenger over SSE. No database, no business API.
+- `GET /live/trips/{tripId}/location?userId=`: 400 for a bad UUID, 410 with no pairing,
+  403 for anyone but the passenger. Events `location` and `trip-ended`; `: ping` every 15s.
+- `LocationRelay` and `TripEndedRelay` handle the two Redis channels; `StreamRegistry`
+  holds this pod's streams (at most 3 per trip). Contract: `realtime-gateway/README.md`.
 ### frontend
 React + Vite + Tailwind SPA with `apps/`, `domain/`, `http/`, `identity/`, `shared/`,
 `config/` under `src/`.
@@ -119,7 +125,7 @@ Service-specific packages beyond the standard layers:
 | payment-service | `config`, `event`, `gateway` |
 | matching-service | `config`, `event` |
 | notification-worker | `config`, `dto` |
-| realtime-gateway | `channel`, `config`, `dto`, `service`, `websocket` (no `entity`/`repository`) |
+| realtime-gateway | `config`, `controller`, `dto`, `service` (no `entity`/`repository`) |
 
 ---
 
@@ -145,10 +151,11 @@ Bus: `ridenow-local-events`. Each queue has a DLQ (`maxReceiveCount` 5).
 ```text
 trip-service --trip.requested--> [matching queue] --> matching-service --match.offered--> bus
 trip-service --trip.completed/cancelled--> [payment queue] --> payment-service --payment.*--> bus
-all events --> [notifications queue] --> notification-worker
-                                              |  Redis Pub/Sub
+all events --> [notifications queue] --> notification-worker --> inbox table <-- apps poll
+                                              |  pairing keys, trip-ended (Redis)
                                               v
-                                       realtime-gateway --WebSocket--> apps
+driver-service --ridenow:driver:locations--> realtime-gateway --SSE--> passenger app
+                                         \--> matching-service (GEO index)
 ```
 
 ### Redis roles
@@ -171,7 +178,7 @@ stored as scalar UUIDs.
 | trip-service | trips, trip offers |
 | payment-service | payments |
 | matching-service | driver positions, trip offers (matching view) |
-| notification-worker | processed-notification ledger |
+| notification-worker | processed-notification ledger, notification inbox |
 | realtime-gateway | none |
 
 Ratings ownership is intentionally undecided; no ratings service or tables exist.
@@ -197,8 +204,8 @@ ridenow/
 ```
 
 Kubernetes manifests exist for user, driver, trip, payment, matching,
-notification-worker and realtime-gateway (`iac/k8s/20-26`). The ingress routes `/ws`
-to realtime-gateway.
+notification-worker and realtime-gateway (`iac/k8s/20-26`). The ingress routes
+`/api/notifications` to notification-worker and `/live` to realtime-gateway.
 
 ---
 

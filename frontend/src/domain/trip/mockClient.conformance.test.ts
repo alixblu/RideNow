@@ -41,6 +41,7 @@ const createTripRequest: fc.Arbitrary<CreateTripRequest> = fc.record({
   pickupLng: coordinate,
   destinationLat: coordinate,
   destinationLng: coordinate,
+  paymentMethod: fc.constantFrom("CASH" as const, "SIMULATED_CARD" as const, "PAYPAL" as const),
 });
 
 /** True when `value` is an ISO-8601 string that round-trips through Date. */

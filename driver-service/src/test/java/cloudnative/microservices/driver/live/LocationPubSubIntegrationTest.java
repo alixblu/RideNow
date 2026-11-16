@@ -74,7 +74,9 @@ class LocationPubSubIntegrationTest {
 
             UUID driverId = UUID.randomUUID();
             await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-                publisher.publish(driverId, new BigDecimal("10.5"), new BigDecimal("106.5"));
+                publisher.publish(driverId, new BigDecimal("10.5"), new BigDecimal("106.5"),
+                        java.time.Instant.parse("2026-11-11T07:00:00Z"),
+                        cloudnative.microservices.driver.entity.VehicleType.CAR);
                 assertThat(received).anyMatch(m -> m.contains(driverId.toString()));
             });
         } finally {

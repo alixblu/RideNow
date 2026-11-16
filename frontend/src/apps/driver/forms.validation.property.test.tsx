@@ -40,6 +40,7 @@ import type { ReactElement } from "react";
 import fc from "fast-check";
 import type { DriverResponse, DriverServiceClient } from "../../domain/driver";
 import type { VehicleResponse } from "../../domain/vehicle";
+import { ApiError } from "../../http/ApiError";
 import { CreateDriverScreen } from "./CreateDriverScreen";
 import { VehiclesScreen } from "./VehiclesScreen";
 
@@ -60,6 +61,10 @@ function makeSpyClient(): DriverServiceClient {
     listVehicles: vi.fn((): Promise<VehicleResponse[]> => Promise.resolve([])),
     changeStatus: vi.fn((): Promise<DriverResponse> => new Promise(() => {})),
     getVehicle: vi.fn((): Promise<VehicleResponse> => new Promise(() => {})),
+    goOnline: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    goOffline: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    updateLocation: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    getLiveState: vi.fn(() => Promise.reject(ApiError.unavailable())),
   };
 }
 

@@ -25,6 +25,7 @@ const createTripRequest: fc.Arbitrary<CreateTripRequest> = fc.record({
   pickupLng: fc.double({ min: -180, max: 180, noNaN: true }),
   destinationLat: fc.double({ min: -90, max: 90, noNaN: true }),
   destinationLng: fc.double({ min: -180, max: 180, noNaN: true }),
+  paymentMethod: fc.constantFrom("CASH" as const, "SIMULATED_CARD" as const, "PAYPAL" as const),
 });
 
 describe("Feature: ridenow-frontend, Property 16: Cancelling an eligible trip yields CANCELLED", () => {

@@ -18,7 +18,7 @@
  * `../vehicle/contract`; driver's add/list/get-vehicle operations reference them so
  * the two live clients speak the same vehicle shapes (driver-service owns vehicles).
  */
-import type { DriverStatus } from "../../shared/enums";
+import type { DriverStatus, VehicleType } from "../../shared/enums";
 import type { Page } from "../../shared/page";
 import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract";
 
@@ -52,6 +52,20 @@ export interface DriverResponse {
   updatedAt: string;
 }
 
+/** ONLINE/OFFLINE availability kept in driver-service's Redis live state. */
+export type Availability = "ONLINE" | "OFFLINE";
+/** Live state (mirrors `DriverLiveStateResponse`). Position fields are null until reported. */
+export interface DriverLiveStateResponse {
+  driverId: string;
+  availability: Availability | null;
+  lat: number | null;
+  lng: number | null;
+  updatedAt: string | null;
+  /** When the current position was recorded (driver-service clock). */
+  recordedAt: string | null;
+  /** The vehicle type the driver went online with. */
+  vehicleType: VehicleType | null;
+}
 /** Query parameters for listing drivers (`GET /api/drivers`). */
 export interface ListDriversParams {
   limit?: number;
@@ -78,4 +92,15 @@ export interface DriverServiceClient {
   changeStatus(driverId: string, status: DriverStatus): Promise<DriverResponse>;
   /** `GET /api/vehicles/{id}` → `VehicleResponse`. */
   getVehicle(id: string): Promise<VehicleResponse>;
+  /**
+   * `POST /api/drivers/{id}/online`. Without `vehicleId` the newest active vehicle is
+   * used; a driver with no active vehicle gets ApiError.conflict (409).
+   */
+  goOnline(driverId: string, vehicleId?: string): Promise<DriverLiveStateResponse>;
+  /** `POST /api/drivers/{id}/offline` (204). */
+  goOffline(driverId: string): Promise<void>;
+  /** `POST /api/drivers/{id}/location`. */
+  updateLocation(driverId: string, lat: number, lng: number): Promise<DriverLiveStateResponse>;
+  /** `GET /api/drivers/{id}/live` (404 when offline). */
+  getLiveState(driverId: string): Promise<DriverLiveStateResponse>;
 }

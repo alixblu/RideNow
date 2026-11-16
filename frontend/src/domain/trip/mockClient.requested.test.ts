@@ -39,6 +39,7 @@ const createTripRequest: fc.Arbitrary<CreateTripRequest> = fc.record({
   pickupLng: coordinate,
   destinationLat: coordinate,
   destinationLng: coordinate,
+  paymentMethod: fc.constantFrom("CASH" as const, "SIMULATED_CARD" as const, "PAYPAL" as const),
 });
 
 describe("Feature: ridenow-frontend, Property 13: New trip starts SEARCHING and echoes its request", () => {

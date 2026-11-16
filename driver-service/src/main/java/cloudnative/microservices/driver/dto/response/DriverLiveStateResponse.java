@@ -1,5 +1,6 @@
 package cloudnative.microservices.driver.dto.response;
 
+import cloudnative.microservices.driver.entity.VehicleType;
 import cloudnative.microservices.driver.live.Availability;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -14,6 +15,10 @@ public record DriverLiveStateResponse(
         Availability availability,
         BigDecimal lat,
         BigDecimal lng,
-        Instant updatedAt
+        Instant updatedAt,
+        /** When the current position was recorded; null until the driver reports one. */
+        Instant recordedAt,
+        /** The type of the vehicle the driver is online with. */
+        VehicleType vehicleType
 ) {
 }

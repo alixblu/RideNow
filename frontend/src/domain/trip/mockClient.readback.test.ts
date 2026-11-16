@@ -31,6 +31,7 @@ const createTripRequest: fc.Arbitrary<CreateTripRequest> = fc.record({
   pickupLng: finiteCoordinate,
   destinationLat: finiteCoordinate,
   destinationLng: finiteCoordinate,
+  paymentMethod: fc.constantFrom("CASH" as const, "SIMULATED_CARD" as const, "PAYPAL" as const),
 });
 
 describe("Feature: ridenow-frontend, Property 15: Trip read-back round-trip", () => {

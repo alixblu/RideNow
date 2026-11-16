@@ -31,11 +31,16 @@ const STATUS_TONE: Record<string, Tone> = {
   // Payment
   PENDING: "warning",
   PROCESSING: "info",
+  AUTHORIZED: "info",
   PAID: "success",
+  RELEASED: "neutral",
   FAILED: "danger",
   // Driver
   ACTIVE: "success",
   SUSPENDED: "danger",
+  // Driver availability
+  ONLINE: "success",
+  OFFLINE: "neutral",
 };
 
 interface StatusPillProps {

@@ -1,5 +1,6 @@
 package cloudnative.microservices.driver.live;
 
+import cloudnative.microservices.driver.entity.VehicleType;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,6 +25,7 @@ public class RedisDriverLocationStore implements DriverLocationStore {
     private static final String FIELD_LAT = "lat";
     private static final String FIELD_LNG = "lng";
     private static final String FIELD_UPDATED_AT = "updatedAt";
+    private static final String FIELD_VEHICLE_TYPE = "vehicleType";
 
     /** How long a live record survives without an update (driver app heartbeat). */
     private static final Duration TTL = Duration.ofMinutes(5);
@@ -39,10 +41,18 @@ public class RedisDriverLocationStore implements DriverLocationStore {
     }
 
     @Override
-    public void goOnline(UUID driverId) {
+    public void goOnline(UUID driverId, VehicleType vehicleType) {
         String key = key(driverId);
         redis.opsForHash().put(key, FIELD_AVAILABILITY, Availability.ONLINE.name());
+        redis.opsForHash().put(key, FIELD_VEHICLE_TYPE, vehicleType.name());
         redis.opsForHash().put(key, FIELD_UPDATED_AT, Instant.now().toString());
+        redis.expire(key, TTL);
+    }
+
+    @Override
+    public void setVehicleType(UUID driverId, VehicleType vehicleType) {
+        String key = key(driverId);
+        redis.opsForHash().put(key, FIELD_VEHICLE_TYPE, vehicleType.name());
         redis.expire(key, TTL);
     }
 
@@ -76,11 +86,13 @@ public class RedisDriverLocationStore implements DriverLocationStore {
         String lat = (String) raw.get(FIELD_LAT);
         String lng = (String) raw.get(FIELD_LNG);
         String updatedAt = (String) raw.get(FIELD_UPDATED_AT);
+        String vehicleType = (String) raw.get(FIELD_VEHICLE_TYPE);
         return Optional.of(new DriverLiveState(
                 driverId,
                 availability != null ? Availability.valueOf(availability) : Availability.OFFLINE,
                 lat != null ? new BigDecimal(lat) : null,
                 lng != null ? new BigDecimal(lng) : null,
-                updatedAt != null ? Instant.parse(updatedAt) : null));
+                updatedAt != null ? Instant.parse(updatedAt) : null,
+                vehicleType != null ? VehicleType.valueOf(vehicleType) : null));
     }
 }

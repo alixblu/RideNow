@@ -1,7 +1,7 @@
 server:
   port: ${SERVER_PORT:8086}
   # On SIGTERM: stop taking new requests and give in-flight work time to finish.
-  # The WebSocket sessions are closed first with 1001 "reconnect" (SessionRegistry).
+  # The SSE streams are completed first (StreamRegistry); clients then reconnect.
   shutdown: graceful
 
 spring:
@@ -9,8 +9,9 @@ spring:
     name: realtime-gateway
   lifecycle:
     timeout-per-shutdown-phase: 20s
-  # Redis Pub/Sub carries notifications from notification-worker to every gateway
-  # pod. Config-driven: a local redis container or Amazon ElastiCache by env only.
+  # Redis Pub/Sub carries driver positions and trip-ended signals to every gateway
+  # pod, and the pairing keys live there too. Config-driven: a local redis container
+  # or Amazon ElastiCache by env only.
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -21,15 +22,23 @@ spring:
 
 ridenow:
   gateway:
-    notifications-channel: ${RIDENOW_GATEWAY_CHANNEL:ridenow.notifications}
-    # Browser origins allowed to open a socket. "*" is for local use only; set the
+    locations-channel: ridenow:driver:locations
+    ended-channel: ridenow:tracking:ended
+    # Browser origins allowed to open a stream. "*" is for local use only; set the
     # real app origin(s) in the cloud. (Native mobile clients send no Origin.)
     allowed-origins: ${RIDENOW_GATEWAY_ALLOWED_ORIGINS:*}
-    max-message-bytes: 8192
-    max-subscriptions-per-session: 5
-    max-frames-per-window: 60
-    frame-window: 10s
-    heartbeat: 10s
+    # A new stream beyond this evicts the trip's oldest one.
+    max-streams-per-trip: 3
+    # At most one location event per trip per interval.
+    min-event-interval: 1s
+    pairing-cache-ttl: 5s
+    negative-cache-ttl: 1s
+    # Server-side stream lifetime; the browser reconnects after it.
+    stream-timeout: 30m
+    # Base SSE retry: delay, jittered +/-50% per stream.
+    retry: 3s
+    # Interval of the ": ping" comment, in milliseconds.
+    heartbeat-millis: 15000
 
 # No database, no business API: the actuator health endpoint is for probes only.
 # Split probes: readiness includes Redis (without it this pod cannot deliver, so

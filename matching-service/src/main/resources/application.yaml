@@ -18,6 +18,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # ElastiCache is provisioned with in-transit TLS; set REDIS_SSL=true there.
+      ssl:
+        enabled: ${REDIS_SSL:false}
 
 ridenow:
   matching:

@@ -23,8 +23,8 @@ AWS SDK v2 (SQS + EventBridge), Docker, Kubernetes/EKS.
 | `trip-service` | 8082 | trip lifecycle & state machine | optimistic-lock "exactly one driver wins"; estimates the fare and **authorizes it synchronously** with payment-service (no hold, no trip); publishes `trip.*`/`driver.*` events |
 | `payment-service` | 8083 | payments | idempotent authorize -> capture / release; captures on `trip.completed` and releases on `trip.cancelled` from its own SQS queue; publishes `payment.*` events |
 | `matching-service` | 8085 | matching decisions, `trip_offers` | matches **asynchronously** on `trip.requested` (SQS); finds nearby drivers via **Redis GEO** (swappable from a Postgres scan); publishes `match.offered`; internal (no public route) |
-| `notification-worker` | 8084 | delivery state | consumes the notifications SQS queue; idempotent, retries, dead-letter queue; delivers via Redis Pub/Sub to realtime-gateway; no business HTTP API |
-| `realtime-gateway` | 8086 | nothing (no database) | holds the apps' **WebSocket** (STOMP) connections at `/ws` and pushes notifications to `/topic/users/{userId}` |
+| `notification-worker` | 8084 | notification inbox, delivery ledger | consumes the notifications SQS queue; idempotent, retries, dead-letter queue; writes each notification to an **inbox** the apps poll at `/api/notifications`; keeps the trip tracking pairing in Redis |
+| `realtime-gateway` | 8086 | nothing (no database) | streams the driver's live position to the trip's passenger over **SSE** at `/live/trips/{tripId}/location` |
 
 Each service is an independently deployable Spring Boot app with its own Postgres
 database. Services never read each other's databases - they talk over HTTP or via
@@ -67,13 +67,15 @@ The two big distributed-systems boundaries:
   rule per consumer routes by event type into that consumer's own **SQS** queue
   (with a dead-letter queue): `trip.requested` -> matching,
   `trip.completed`/`trip.cancelled` -> payment, every event -> notifications.
-  `notification-worker` hands each notification to `realtime-gateway` over Redis
-  Pub/Sub, and the gateway pushes it over **WebSocket**. The transport sits behind a
+  `notification-worker` writes each notification to its inbox table, which the apps
+  poll. The driver's live position reaches the passenger over **SSE** from
+  `realtime-gateway` (see `docs/REALTIME.md`). The event transport sits behind a
   `DomainEventPublisher` interface (logging default, EventBridge impl), so it's a
   swap, not a rewrite. See `docs/ARCHITECTURE.md` section 3.
 - **Redis**, four roles - primary store for live driver location/availability,
   **GEO** index for nearby-driver matching, **Pub/Sub** for live tracking, and
-  **cache-aside** on the driver profile.
+  **cache-aside** on the driver profile. It also holds the short-lived trip
+  tracking pairing that tells the gateway who may watch whom.
 
 ---
 
@@ -90,11 +92,13 @@ docker compose down -v       # stop and wipe data
 ```
 
 Ports are mapped to `localhost:<port>` per the table above (e.g.
-`curl localhost:8082/api/trips`). Live notifications are at
-`ws://localhost:8086/ws` (STOMP; subscribe to `/topic/users/{userId}`). See
+`curl localhost:8082/api/trips`). Notifications are at
+`localhost:8084/api/notifications?userId=...`, and the live driver position at
+`curl -N "localhost:8086/live/trips/{tripId}/location?userId={passengerId}"`. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) sections 3 and 8 for the end-to-end
-async flow and the checks it was verified with, and
-[`realtime-gateway/README.md`](realtime-gateway/README.md) for the client contract.
+async flow and the checks it was verified with, [`docs/REALTIME.md`](docs/REALTIME.md) for the
+real-time design, and [`realtime-gateway/README.md`](realtime-gateway/README.md) for
+the stream contract.
 
 ### Build / test a single service
 
@@ -104,7 +108,11 @@ cd trip-service
 ```
 
 Integration tests (Testcontainers for Postgres / Redis / LocalStack) are skipped
-automatically when Docker isn't available.
+automatically when Docker isn't available. They need Docker running (verified with
+Docker Engine 29 and Testcontainers 1.21.4). The `*ApplicationTests` context tests in
+user, driver, trip and payment (and trip's `AcceptTripConcurrencyTest`) connect to a
+Postgres on `localhost` (for example `5434` for user-service). `docker compose` does
+not publish the database ports, so these fail unless such a database is running.
 
 ---
 
@@ -113,7 +121,7 @@ automatically when Docker isn't available.
 Two routes, same footprint:
 
 - **Console, click-by-click** (backend -> EKS): start at
-  [`localfile/aws/README.md`](localfile/aws/README.md) - IAM -> VPC -> ECR ->
+  [`guides/aws/README.md`](guides/aws/README.md) - IAM -> VPC -> ECR ->
   RDS/Secrets -> EKS -> deploy, with ElastiCache and SQS/EventBridge as later ops.
 - **Infrastructure as Code** (CloudFormation + k8s manifests):
   [`iac/README.md`](iac/README.md).

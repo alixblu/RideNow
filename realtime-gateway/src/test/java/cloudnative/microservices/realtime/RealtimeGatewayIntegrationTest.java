@@ -3,244 +3,316 @@ package cloudnative.microservices.realtime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import cloudnative.microservices.realtime.service.NotificationRelay;
-import cloudnative.microservices.realtime.websocket.SessionRegistry;
+import cloudnative.microservices.realtime.dto.Pairing;
+import cloudnative.microservices.realtime.service.LocationRelay;
+import cloudnative.microservices.realtime.service.PairingStore;
+import cloudnative.microservices.realtime.service.StreamRegistry;
+import cloudnative.microservices.realtime.service.TripEndedRelay;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.messaging.converter.StringMessageConverter;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
-import org.springframework.messaging.simp.stomp.StompFrameHandler;
-import org.springframework.messaging.simp.stomp.StompHeaders;
-import org.springframework.messaging.simp.stomp.StompSession;
-import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.WebSocketHandler;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.handler.TextWebSocketHandler;
-import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.context.annotation.Bean;
 
 /**
- * End-to-end through the real STOMP stack on a random port, with REAL clients.
- * Redis is switched off; the tests call {@link NotificationRelay#onMessage} - the
- * exact method the Redis listener calls - so everything after Redis is genuine.
+ * End-to-end through the real HTTP/SSE stack on a random port, with a real HTTP
+ * client. Redis is switched off: the tests call {@link LocationRelay#onMessage} and
+ * {@link TripEndedRelay#onMessage} - the exact methods the Redis listeners call - and
+ * an in-memory {@link PairingStore} stands in for the keys notification-worker writes.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "ridenow.gateway.redis.enabled=false")
+        properties = {
+                "ridenow.gateway.redis.enabled=false",
+                "ridenow.gateway.heartbeat-millis=300"
+        })
 class RealtimeGatewayIntegrationTest {
 
+    private static final String END = "<end-of-stream>";
+
     @LocalServerPort private int port;
-    @Autowired private NotificationRelay relay;
-    @Autowired private SessionRegistry registry;
+    @Autowired private LocationRelay locationRelay;
+    @Autowired private TripEndedRelay tripEndedRelay;
+    @Autowired private StreamRegistry registry;
+    @Autowired private InMemoryPairingStore pairings;
 
-    private String url() {
-        return "ws://localhost:" + port + "/ws";
-    }
+    private final HttpClient http = HttpClient.newHttpClient();
+    private final List<Thread> readers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
-    private String notification(String userId, String eventId) {
-        return """
-                {"eventId":"%s","userId":"%s","type":"driver.accepted",
-                 "message":"A driver has accepted your trip.","tripId":"t-1",
-                 "occurredAt":"2026-11-11T07:00:00Z"}
-                """.formatted(eventId, userId);
-    }
+    private final UUID tripId = UUID.randomUUID();
+    private final UUID passengerId = UUID.randomUUID();
+    private final UUID driverId = UUID.randomUUID();
 
-    private WebSocketStompClient newClient() {
-        WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
-        client.setMessageConverter(new StringMessageConverter());
-        // Receipts (used to know a subscription is live) need a scheduler on the client.
-        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setDaemon(true);
-        scheduler.setThreadNamePrefix("test-stomp-client-");
-        scheduler.initialize();
-        client.setTaskScheduler(scheduler);
-        return client;
-    }
-
-    private StompSession connect(WebSocketStompClient client) throws Exception {
-        return client.connectAsync(url(), new StompSessionHandlerAdapter() { })
-                .get(10, TimeUnit.SECONDS);
-    }
-
-    /**
-     * Publishes the notification repeatedly until it shows up in the inbox. A
-     * SUBSCRIBE is asynchronous and the simple broker sends no confirmation, so the
-     * first publish can race ahead of it; republishing the SAME event until the
-     * first delivery avoids a sleep and still fails (after 10s) if delivery is broken.
-     */
-    private String publishUntilReceived(BlockingQueue<String> inbox, String userId, String eventId)
-            throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (System.nanoTime() < deadline) {
-            relay.onMessage(notification(userId, eventId));
-            String pushed = inbox.poll(200, TimeUnit.MILLISECONDS);
-            if (pushed != null) {
-                return pushed;
-            }
+    @TestConfiguration
+    static class Config {
+        @Bean
+        InMemoryPairingStore pairingStore() {
+            return new InMemoryPairingStore();
         }
-        return null;
     }
 
-    private BlockingQueue<String> subscribe(StompSession session, String userId) {
-        BlockingQueue<String> received = new LinkedBlockingQueue<>();
-        session.subscribe("/topic/users/" + userId, new StompFrameHandler() {
-            @Override
-            public java.lang.reflect.Type getPayloadType(StompHeaders headers) {
-                return String.class;
-            }
+    static class InMemoryPairingStore implements PairingStore {
+        private final Map<UUID, Pairing> byTrip = new ConcurrentHashMap<>();
+        private final Map<UUID, Pairing> byDriver = new ConcurrentHashMap<>();
 
-            @Override
-            public void handleFrame(StompHeaders headers, Object payload) {
-                received.add((String) payload);
+        void pair(Pairing p) {
+            byTrip.put(p.tripId(), p);
+            byDriver.put(p.driverId(), p);
+        }
+
+        void unpair(Pairing p) {
+            byTrip.remove(p.tripId());
+            byDriver.remove(p.driverId());
+        }
+
+        @Override
+        public Optional<Pairing> findByTrip(UUID tripId) {
+            return Optional.ofNullable(byTrip.get(tripId));
+        }
+
+        @Override
+        public Optional<Pairing> findByDriver(UUID driverId) {
+            return Optional.ofNullable(byDriver.get(driverId));
+        }
+    }
+
+    /** An open stream: every line the server sends lands in {@link #lines}; the end is marked. */
+    private static final class Stream {
+        final int status;
+        final HttpResponse<java.util.stream.Stream<String>> response;
+        final BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+
+        Stream(HttpResponse<java.util.stream.Stream<String>> response) {
+            this.response = response;
+            this.status = response.statusCode();
+        }
+
+        String await(java.util.function.Predicate<String> match, Duration timeout) throws InterruptedException {
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (System.nanoTime() < deadline) {
+                String line = lines.poll(100, TimeUnit.MILLISECONDS);
+                if (line != null && match.test(line)) {
+                    return line;
+                }
             }
-        });
-        return received;
+            return null;
+        }
+
+        long count(java.util.function.Predicate<String> match) {
+            return lines.stream().filter(match).count();
+        }
+    }
+
+    private URI uri(UUID trip, String userId) {
+        return URI.create("http://localhost:" + port + "/live/trips/" + trip + "/location?userId=" + userId);
+    }
+
+    private Stream open(UUID trip, String userId) throws Exception {
+        HttpResponse<java.util.stream.Stream<String>> response = http.send(
+                HttpRequest.newBuilder(uri(trip, userId)).header("Accept", "text/event-stream").build(),
+                HttpResponse.BodyHandlers.ofLines());
+        Stream stream = new Stream(response);
+        if (stream.status == 200) {
+            Thread reader = new Thread(() -> {
+                try {
+                    response.body().forEach(stream.lines::add);
+                } catch (RuntimeException ignored) {
+                    // the connection was closed under us
+                } finally {
+                    stream.lines.add(END);
+                }
+            }, "sse-test-reader");
+            reader.setDaemon(true);
+            reader.start();
+            readers.add(reader);
+        }
+        return stream;
+    }
+
+    private Pairing pairTrip() {
+        Pairing pairing = new Pairing(tripId, passengerId, driverId);
+        pairings.pair(pairing);
+        return pairing;
+    }
+
+    private String position(UUID driver, String lat, String lng) {
+        return "{\"driverId\":\"" + driver + "\",\"lat\":" + lat + ",\"lng\":" + lng
+                + ",\"recordedAt\":\"2026-11-11T07:00:00Z\",\"vehicleType\":\"CAR\",\"online\":true}";
+    }
+
+    @AfterEach
+    void cleanUp() {
+        registry.closeAll();
     }
 
     @Test
-    void aNotificationReachesTheSubscribedUserAndOnlyThatUser() throws Exception {
-        String alice = UUID.randomUUID().toString();
-        String bob = UUID.randomUUID().toString();
-        WebSocketStompClient client = newClient();
-        StompSession session = connect(client);
-        BlockingQueue<String> aliceInbox = subscribe(session, alice);
-        BlockingQueue<String> bobInbox = subscribe(session, bob);
+    void thePairedPassengerGetsLocationEventsWithNoIdAndStreamHeaders() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
 
-        String pushed = publishUntilReceived(aliceInbox, alice, "evt-1");
+        assertThat(stream.status).isEqualTo(200);
+        assertThat(stream.response.headers().firstValue("Content-Type").orElse("")).startsWith("text/event-stream");
+        assertThat(stream.response.headers().firstValue("Cache-Control")).contains("no-cache");
+        assertThat(stream.response.headers().firstValue("X-Accel-Buffering")).contains("no");
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
 
-        assertThat(pushed).isNotNull()
-                .contains("\"eventId\":\"evt-1\"")
-                .contains("\"message\":\"A driver has accepted your trip.\"")
-                .contains("\"occurredAt\":\"2026-11-11T07:00:00Z\"");
-        assertThat(bobInbox.poll(500, TimeUnit.MILLISECONDS)).isNull();
-        session.disconnect();
-        client.stop();
+        locationRelay.onMessage(position(driverId, "10.7769", "106.7009"));
+
+        assertThat(stream.await(l -> l.equals("event:location"), Duration.ofSeconds(5))).isNotNull();
+        String data = stream.await(l -> l.startsWith("data:"), Duration.ofSeconds(5));
+        assertThat(data).contains("\"driverId\":\"" + driverId + "\"")
+                .contains("\"tripId\":\"" + tripId + "\"")
+                .contains("\"lat\":10.7769")
+                .contains("\"lng\":106.7009")
+                .contains("\"recordedAt\":\"2026-11-11T07:00:00Z\"")
+                .doesNotContain("vehicleType");
+        assertThat(stream.count(l -> l.startsWith("id:"))).isZero();
     }
 
     @Test
-    void aDroppedClientCanReconnectAndReceiveNewMessages() throws Exception {
-        String user = UUID.randomUUID().toString();
-        // Other tests share this server; measure against what was open before us.
-        int baseline = registry.size();
+    void anUnpairedDriversPositionsAreDropped() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
 
-        WebSocketStompClient first = newClient();
-        StompSession firstSession = connect(first);
-        BlockingQueue<String> firstInbox = subscribe(firstSession, user);
-        assertThat(publishUntilReceived(firstInbox, user, "before-drop")).contains("before-drop");
+        locationRelay.onMessage(position(UUID.randomUUID(), "1.0", "2.0"));
 
-        // The connection drops.
-        firstSession.disconnect();
-        first.stop();
-        await().atMost(Duration.ofSeconds(10)).until(() -> registry.size() <= baseline);
-
-        // A message sent while the user is offline is not buffered: Pub/Sub is
-        // at-most-once. This is why clients re-fetch state over REST on reconnect.
-        relay.onMessage(notification(user, "while-offline"));
-
-        // The client reconnects (new socket, new subscription) and gets new messages.
-        WebSocketStompClient second = newClient();
-        StompSession secondSession = connect(second);
-        BlockingQueue<String> secondInbox = subscribe(secondSession, user);
-        String pushed = publishUntilReceived(secondInbox, user, "after-reconnect");
-
-        assertThat(pushed).contains("after-reconnect").doesNotContain("while-offline");
-        assertThat(secondInbox.stream().anyMatch(m -> m.contains("while-offline"))).isFalse();
-        secondSession.disconnect();
-        second.stop();
+        assertThat(stream.await(l -> l.equals("event:location"), Duration.ofMillis(700))).isNull();
+        // the paired driver still gets through afterwards
+        locationRelay.onMessage(position(driverId, "10.0", "106.0"));
+        assertThat(stream.await(l -> l.equals("event:location"), Duration.ofSeconds(5))).isNotNull();
     }
 
     @Test
-    void aWildcardSubscriptionIsRejectedAndNeverSeesOtherUsersMessages() throws Exception {
-        List<Throwable> errors = new CopyOnWriteArrayList<>();
-        BlockingQueue<String> snooped = new LinkedBlockingQueue<>();
-        WebSocketStompClient client = newClient();
-        StompSession session = client.connectAsync(url(), new StompSessionHandlerAdapter() {
-            @Override
-            public void handleFrame(StompHeaders headers, Object payload) {
-                errors.add(new IllegalStateException("STOMP ERROR frame"));
-            }
+    void anOfflineMarkerAndMalformedMessagesAreDropped() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
 
-            @Override
-            public void handleTransportError(StompSession s, Throwable exception) {
-                errors.add(exception);
-            }
-        }).get(10, TimeUnit.SECONDS);
+        locationRelay.onMessage("{\"driverId\":\"" + driverId + "\",\"online\":false}");
+        locationRelay.onMessage("not json");
+        locationRelay.onMessage("{\"driverId\":\"" + driverId + "\"}");
 
-        session.subscribe("/topic/users/**", new StompFrameHandler() {
-            @Override
-            public java.lang.reflect.Type getPayloadType(StompHeaders headers) {
-                return String.class;
-            }
+        assertThat(stream.await(l -> l.equals("event:location"), Duration.ofMillis(700))).isNull();
+    }
 
-            @Override
-            public void handleFrame(StompHeaders headers, Object payload) {
-                snooped.add((String) payload);
-            }
-        });
+    @Test
+    void anotherUserIsForbiddenAndAnUnknownTripIsGone() throws Exception {
+        pairTrip();
 
-        await().atMost(Duration.ofSeconds(10)).until(() -> !errors.isEmpty() || !session.isConnected());
-        relay.onMessage(notification(UUID.randomUUID().toString(), "private-1"));
+        assertThat(open(tripId, UUID.randomUUID().toString()).status).isEqualTo(403);
+        assertThat(open(UUID.randomUUID(), passengerId.toString()).status).isEqualTo(410);
+        assertThat(registry.totalStreams()).isZero();
+    }
 
-        assertThat(snooped.poll(500, TimeUnit.MILLISECONDS)).isNull();
-        assertThat(session.isConnected()).isFalse();
-        client.stop();
+    @Test
+    void aBadUuidIs400() throws Exception {
+        pairTrip();
+
+        assertThat(open(tripId, "not-a-uuid").status).isEqualTo(400);
+        HttpResponse<String> badTrip = http.send(HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/live/trips/nope/location?userId=" + passengerId)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(badTrip.statusCode()).isEqualTo(400);
+    }
+
+    @Test
+    void tripEndedSendsTheEventClosesTheStreamAndAReconnectIsGone() throws Exception {
+        Pairing pairing = pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
+
+        // what notification-worker does: delete the keys, then publish the end
+        pairings.unpair(pairing);
+        tripEndedRelay.onMessage("{\"tripId\":\"" + tripId + "\"}");
+
+        assertThat(stream.await(l -> l.equals("event:trip-ended"), Duration.ofSeconds(5))).isNotNull();
+        assertThat(stream.await(l -> l.equals(END), Duration.ofSeconds(5))).isEqualTo(END);
+        assertThat(registry.streamCount(tripId)).isZero();
+        assertThat(open(tripId, passengerId.toString()).status).isEqualTo(410);
+    }
+
+    @Test
+    void locationEventsAreThrottledToOnePerSecondPerTrip() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
+
+        for (int i = 0; i < 5; i++) {
+            locationRelay.onMessage(position(driverId, "10." + i, "106.0"));
+        }
+        await().atMost(Duration.ofSeconds(5)).until(() -> stream.count(l -> l.equals("event:location")) >= 1);
+        Thread.sleep(300);
+        assertThat(stream.count(l -> l.equals("event:location"))).isEqualTo(1);
+
+        // after the interval the next position goes through
+        Thread.sleep(1_000);
+        locationRelay.onMessage(position(driverId, "11.0", "106.0"));
+        await().atMost(Duration.ofSeconds(5)).until(() -> stream.count(l -> l.equals("event:location")) == 2);
+    }
+
+    @Test
+    void aHeartbeatCommentIsSentPeriodically() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+
+        // ":connected" is the first comment; a ":ping" follows from the scheduler
+        assertThat(stream.await(l -> l.startsWith(":") && l.contains("ping"), Duration.ofSeconds(5))).isNotNull();
+    }
+
+    @Test
+    void aFourthStreamForATripEvictsTheOldest() throws Exception {
+        pairTrip();
+        Stream first = open(tripId, passengerId.toString());
+        open(tripId, passengerId.toString());
+        open(tripId, passengerId.toString());
+        assertThat(registry.streamCount(tripId)).isEqualTo(3);
+
+        open(tripId, passengerId.toString());
+
+        await().atMost(Duration.ofSeconds(5)).until(() -> registry.streamCount(tripId) == 3);
+        assertThat(first.await(l -> l.equals(END), Duration.ofSeconds(5))).isEqualTo(END);
+    }
+
+    @Test
+    void shutdownCompletesEveryOpenStream() throws Exception {
+        pairTrip();
+        Stream stream = open(tripId, passengerId.toString());
+        assertThat(stream.await(l -> l.startsWith("retry:"), Duration.ofSeconds(5))).isNotNull();
+
+        int closed = registry.closeAll();
+
+        assertThat(closed).isGreaterThanOrEqualTo(1);
+        assertThat(stream.await(l -> l.equals(END), Duration.ofSeconds(5))).isEqualTo(END);
+        assertThat(registry.totalStreams()).isZero();
     }
 
     @Test
     void livenessIsUpEvenWithoutRedisButReadinessReflectsRedis() throws Exception {
-        java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
         var base = "http://localhost:" + port + "/actuator/health/";
-
-        var liveness = http.send(java.net.http.HttpRequest.newBuilder(URI.create(base + "liveness")).build(),
-                java.net.http.HttpResponse.BodyHandlers.ofString());
-        var readiness = http.send(java.net.http.HttpRequest.newBuilder(URI.create(base + "readiness")).build(),
-                java.net.http.HttpResponse.BodyHandlers.ofString());
-
+        var liveness = http.send(HttpRequest.newBuilder(URI.create(base + "liveness")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        var readiness = http.send(HttpRequest.newBuilder(URI.create(base + "readiness")).build(),
+                HttpResponse.BodyHandlers.ofString());
         // No Redis in this test: a Redis outage must not restart the pod (liveness
         // UP) but must take it out of rotation (readiness DOWN -> 503).
         assertThat(liveness.statusCode()).isEqualTo(200);
         assertThat(liveness.body()).contains("\"UP\"");
         assertThat(readiness.statusCode()).isEqualTo(503);
-    }
-
-    @Test
-    void shuttingDownClosesOpenSocketsWithGoingAwayAndAReconnectReason() throws Exception {
-        AtomicReference<CloseStatus> closed = new AtomicReference<>();
-        CountDownLatch closedLatch = new CountDownLatch(1);
-        WebSocketHandler handler = new TextWebSocketHandler() {
-            @Override
-            public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-                closed.set(status);
-                closedLatch.countDown();
-            }
-        };
-        CompletableFuture<WebSocketSession> connecting =
-                new StandardWebSocketClient().execute(handler, null, URI.create(url()));
-        WebSocketSession raw = connecting.get(10, TimeUnit.SECONDS);
-        await().atMost(Duration.ofSeconds(10)).until(() -> registry.size() >= 1);
-
-        int closedCount = registry.closeAllForRestart();
-
-        assertThat(closedCount).isGreaterThanOrEqualTo(1);
-        assertThat(closedLatch.await(10, TimeUnit.SECONDS)).isTrue();
-        assertThat(closed.get().getCode()).isEqualTo(1001);
-        assertThat(closed.get().getReason()).isEqualTo("reconnect");
-        assertThat(raw.isOpen()).isFalse();
-        // closeAllForRestart closes EVERY session on the pod, so none may remain.
-        await().atMost(Duration.ofSeconds(10)).until(() -> registry.size() == 0);
     }
 }

@@ -25,6 +25,7 @@ export const PATH_PREFIX_MAP: Record<string, string | null> = {
   // Documented placeholders — no service yet (Req 3.4). Live mode for these
   // will fail with a service-unavailable error at the request layer until an
   // origin is provided.
-  "/api/matching": null, // matching-service (future)
-  "/api/notifications": null, // notification-worker (future)
+  "/api/matching": null, // matching-service (internal; no public route)
+  "/api/notifications": "http://localhost:8084", // notification-worker (inbox)
+  "/live": "http://localhost:8086", // realtime-gateway (SSE)
 };

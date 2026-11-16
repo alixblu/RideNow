@@ -15,7 +15,7 @@
  * SEARCHING (the trip-service immediately begins matching), not REQUESTED.
  */
 import type { Page } from "../../shared/page";
-import type { TripStatus, VehicleType } from "../../shared/enums";
+import type { PaymentMethod, TripStatus, VehicleType } from "../../shared/enums";
 
 export type { Page } from "../../shared/page";
 
@@ -31,6 +31,8 @@ export interface CreateTripRequest {
   pickupLng: number;
   destinationLat: number;
   destinationLng: number;
+  /** Required: the fare is authorized with this method before the trip exists. */
+  paymentMethod: PaymentMethod;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +113,12 @@ export interface TripServiceClient {
   cancelTrip(id: string): Promise<TripResponse>;
   /** A driver accepts a trip → the trip with driverId set and status DRIVER_ASSIGNED. */
   acceptTrip(id: string, driverId: string): Promise<TripResponse>;
+  /** The assigned driver reached the pickup: DRIVER_ASSIGNED -> DRIVER_ARRIVED. */
+  arriveTrip(id: string): Promise<TripResponse>;
+  /** The ride begins: DRIVER_ARRIVED -> IN_PROGRESS. */
+  startTrip(id: string): Promise<TripResponse>;
+  /** The ride ends: IN_PROGRESS -> COMPLETED (the server sets the final fare). */
+  completeTrip(id: string): Promise<TripResponse>;
   /** List trips, filtered/paginated, as a `Page<TripResponse>`. */
   listTrips(params: ListTripsParams): Promise<Page<TripResponse>>;
 }

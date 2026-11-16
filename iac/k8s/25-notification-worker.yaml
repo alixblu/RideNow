@@ -1,11 +1,13 @@
-# notification-worker: Deployment only (no Service/Ingress - it has no business
-# HTTP API, just an actuator health endpoint for probes).
+# notification-worker: ServiceAccount + Deployment + Service.
+#
+# Serves the notification inbox at /api/notifications (routed by 30-ingress.yaml),
+# read by frontend polling.
 #
 # It consumes the SQS notifications queue, so it needs the queue URL and AWS
 # region, plus permission to read SQS. Permission comes via IRSA: the service
 # account below is annotated with an IAM role ARN that grants SQS access (no
-# static keys). It delivers each notification by publishing it on Redis Pub/Sub,
-# where realtime-gateway picks it up and pushes it over WebSocket.
+# static keys). It writes each notification to its inbox table, and keeps the
+# trip tracking pairing keys in Redis that realtime-gateway reads.
 #
 # Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <NOTIFICATION_DB_ENDPOINT>
 #               <NOTIFICATIONS_QUEUE_URL> <NOTIFICATION_WORKER_ROLE_ARN>
@@ -66,10 +68,8 @@ spec:
               value: "<NOTIFICATIONS_QUEUE_URL>"
             - name: AWS_REGION
               value: "<REGION>"
-            # Real delivery: publish each notification on Redis Pub/Sub for the
-            # realtime-gateway (ElastiCache, in-transit TLS).
-            - name: RIDENOW_NOTIFICATIONS_DELIVERY
-              value: "redis"
+            # Trip tracking pairing keys for realtime-gateway (ElastiCache,
+            # in-transit TLS).
             - name: REDIS_HOST
               value: "<REDIS_ENDPOINT>"
             - name: REDIS_PORT
@@ -95,3 +95,16 @@ spec:
               port: 8084
             initialDelaySeconds: 60
             periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-worker
+  namespace: ridenow
+spec:
+  selector:
+    app: notification-worker
+  ports:
+    - port: 8084
+      targetPort: 8084
+  type: ClusterIP

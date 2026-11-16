@@ -59,6 +59,34 @@ class MatchingRedisGeoIntegrationTest {
 
     @Autowired
     MatchingService matchingService;
+    @Autowired
+    org.springframework.data.redis.core.StringRedisTemplate redis;
+
+    /**
+     * The handoff: a driver who only posts to driver-service is found because
+     * matching subscribes to the location channel; going offline removes them.
+     */
+    @Test
+    void aPositionOnTheLocationChannelMakesTheDriverMatchable() {
+        UUID driver = UUID.randomUUID();
+        String position = "{\"driverId\":\"" + driver + "\",\"lat\":10.200000,\"lng\":106.200000,"
+                + "\"recordedAt\":\"2026-11-11T07:00:00Z\",\"vehicleType\":\"MOTORBIKE\",\"online\":true}";
+        MatchRequest request = new MatchRequest(UUID.randomUUID(), VehicleType.MOTORBIKE,
+                new BigDecimal("10.200000"), new BigDecimal("106.200000"), 1000, 5);
+
+        // Re-publish until the subscription is live (Pub/Sub drops messages sent before it).
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(15)).untilAsserted(() -> {
+            redis.convertAndSend("ridenow:driver:locations", position);
+            assertThat(matchingService.match(request).candidates())
+                    .extracting(CandidateDriver::driverId).contains(driver);
+        });
+
+        redis.convertAndSend("ridenow:driver:locations", "{\"driverId\":\"" + driver + "\",\"online\":false}");
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(matchingService.match(new MatchRequest(UUID.randomUUID(), VehicleType.MOTORBIKE,
+                        new BigDecimal("10.200000"), new BigDecimal("106.200000"), 1000, 5)).candidates())
+                        .extracting(CandidateDriver::driverId).doesNotContain(driver));
+    }
 
     @Test
     void geoSearchReturnsNearbyDriversNearestFirst() {

@@ -1,5 +1,5 @@
-# Ingress: one internet-facing ALB fronting the four public APIs and the
-# realtime-gateway WebSocket endpoint (/ws) by path.
+# Ingress: one internet-facing ALB fronting the public APIs, the notification
+# inbox (/api/notifications) and the realtime-gateway SSE stream (/live) by path.
 #
 # Requires the AWS Load Balancer Controller installed in the cluster and using
 # the AlbControllerRoleArn exported by stack 07-eks-addons. The controller reads
@@ -18,10 +18,10 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    # WebSockets (/ws) are long-lived. The ALB closes a connection after this
-    # many idle seconds; the gateway's 10s STOMP heartbeats keep live sockets
+    # SSE streams (/live) are long-lived. The ALB closes a connection after this
+    # many idle seconds; the gateway's ": ping" every 15s keeps live streams
     # busy, and the raised limit gives headroom over the 60s default for clients
-    # on slow networks whose heartbeats arrive late.
+    # on slow networks.
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
 spec:
   ingressClassName: alb
@@ -56,9 +56,17 @@ spec:
                 name: payment-service
                 port:
                   number: 8083
-          # WebSocket (STOMP) endpoint for live notifications. The ALB upgrades
-          # HTTP to WebSocket natively; no extra annotation is needed.
-          - path: /ws
+          # Notification inbox, read by frontend polling.
+          - path: /api/notifications
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-worker
+                port:
+                  number: 8084
+          # SSE stream of the driver's live position for the trip's passenger.
+          # Plain HTTP; the ALB needs no extra annotation.
+          - path: /live
             pathType: Prefix
             backend:
               service:

@@ -48,6 +48,10 @@ function makeStubClient(
     listVehicles: vi.fn(() => Promise.resolve([])),
     changeStatus: vi.fn(() => Promise.reject(ApiError.unavailable())),
     getVehicle: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    goOnline: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    goOffline: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    updateLocation: vi.fn(() => Promise.reject(ApiError.unavailable())),
+    getLiveState: vi.fn(() => Promise.reject(ApiError.unavailable())),
     ...overrides,
   };
 }

@@ -25,7 +25,7 @@ const CLIENTS: Record<DomainKey, DomainClientMode> = {
 };
 
 function configWith(apiBaseUrl: string | null): AppConfig {
-  return { apiBaseUrl, clients: CLIENTS };
+  return { apiBaseUrl, clients: CLIENTS, osrmUrl: null };
 }
 
 // Documented path prefixes that resolve to a real service origin in fallback mode.
@@ -37,12 +37,13 @@ const LIVE_PREFIXES: ReadonlyArray<{ prefix: string; origin: string }> = [
   { prefix: "/api/trips", origin: "http://localhost:8082" },
   { prefix: "/api/trip-offers", origin: "http://localhost:8082" },
   { prefix: "/api/payments", origin: "http://localhost:8083" },
+  { prefix: "/api/notifications", origin: "http://localhost:8084" },
+  { prefix: "/live", origin: "http://localhost:8086" },
 ];
 
 // Documented null-placeholder prefixes: matched in fallback mode but with no origin.
 const NULL_PREFIXES: ReadonlyArray<string> = [
   "/api/matching",
-  "/api/notifications",
 ];
 
 // A path-tail generator producing documented sub-paths like "", "/{id}", "/{id}/vehicles".

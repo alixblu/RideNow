@@ -34,6 +34,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # ElastiCache is provisioned with in-transit TLS; set REDIS_SSL=true there.
+      ssl:
+        enabled: ${REDIS_SSL:false}
 
 # Actuator exposes a /actuator/health endpoint so you (and later Kubernetes)
 # can ask "is this service healthy?" without hitting business endpoints.
@@ -47,3 +50,5 @@ management:
 services:
   user-service:
     base-url: ${SERVICES_USER_SERVICE_BASE_URL:http://localhost:8081}
+    connect-timeout: ${SERVICES_USER_SERVICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${SERVICES_USER_SERVICE_READ_TIMEOUT:3s}

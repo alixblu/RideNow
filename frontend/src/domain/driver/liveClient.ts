@@ -18,6 +18,7 @@ import type { Page } from "../../shared/page";
 import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract";
 import type {
   CreateDriverRequest,
+  DriverLiveStateResponse,
   DriverResponse,
   DriverServiceClient,
   ListDriversParams,
@@ -89,6 +90,28 @@ export function createDriverLiveClient(): DriverServiceClient {
 
     getVehicle(id: string): Promise<VehicleResponse> {
       return httpRequest<VehicleResponse>(`/api/vehicles/${encodeURIComponent(id)}`);
+    },
+    goOnline(driverId: string, vehicleId?: string): Promise<DriverLiveStateResponse> {
+      return httpRequest<DriverLiveStateResponse>(
+        `/api/drivers/${encodeURIComponent(driverId)}/online`,
+        vehicleId ? { method: "POST", body: { vehicleId } } : { method: "POST" },
+      );
+    },
+    goOffline(driverId: string): Promise<void> {
+      return httpRequest<void>(`/api/drivers/${encodeURIComponent(driverId)}/offline`, {
+        method: "POST",
+      });
+    },
+    updateLocation(driverId: string, lat: number, lng: number): Promise<DriverLiveStateResponse> {
+      return httpRequest<DriverLiveStateResponse>(
+        `/api/drivers/${encodeURIComponent(driverId)}/location`,
+        { method: "POST", body: { lat, lng } },
+      );
+    },
+    getLiveState(driverId: string): Promise<DriverLiveStateResponse> {
+      return httpRequest<DriverLiveStateResponse>(
+        `/api/drivers/${encodeURIComponent(driverId)}/live`,
+      );
     },
   };
 }

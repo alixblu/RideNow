@@ -4,25 +4,22 @@ import { createNotificationMockClient } from "./mockClient";
 import type { NotificationResponse } from "./contract";
 
 /**
- * Property 11: Mock responses conform to the shared contract (notification domain).
- *
- * Validates: Requirements 4.4, 4.5, 12.1.
- *
- * Tag: Feature: ridenow-frontend, Property 11: Mock responses conform to the shared contract
- *
- * For any identityId (non-empty string), `listForIdentity` returns an array, and every
- * element conforms to the documented NotificationResponse shape used by the notifications
- * view to render each message and when it arrived: `id` is a non-empty string,
- * `recipientId` equals the requested identityId, `message` is a non-empty string, and
- * `createdAt` is an ISO-8601 timestamp string. An empty array (the empty-state bucket) is
- * valid and conforms trivially. A fresh createNotificationMockClient() is used per run, and
- * determinism is asserted by calling listForIdentity twice and comparing the results.
+ * Mock responses conform to the shared contract (notification domain), and the
+ * mock behaves like the inbox API: per-user, oldest first, `since` returns only
+ * newer items, `markRead` keeps the first read time.
  */
 
-// A non-empty identity identifier.
-const identityId = fc.string({ minLength: 1, maxLength: 36 });
+const EXPECTED_KEYS = [
+  "id",
+  "userId",
+  "type",
+  "message",
+  "tripId",
+  "occurredAt",
+  "createdAt",
+  "readAt",
+].sort();
 
-/** True when `value` is an ISO-8601 string that round-trips through Date. */
 function isIsoTimestamp(value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
@@ -31,61 +28,63 @@ function isIsoTimestamp(value: unknown): boolean {
   return !Number.isNaN(parsed) && new Date(parsed).toISOString() === value;
 }
 
-/**
- * Runtime conformance check: asserts `value` has exactly the documented
- * NotificationResponse keys, each with the correct type, and that `recipientId`
- * equals the requested identity. Throws via expect on the first violation.
- */
-function assertConformsToContract(
-  value: unknown,
-  expectedRecipientId: string,
-): asserts value is NotificationResponse {
-  // Must be a plain, non-null object.
+function assertConforms(value: unknown, userId: string): asserts value is NotificationResponse {
   expect(typeof value).toBe("object");
   expect(value).not.toBeNull();
-  const notification = value as Record<string, unknown>;
-
-  // Exactly the documented keys — no missing and no extra fields.
-  const expectedKeys = ["id", "recipientId", "message", "createdAt"].sort();
-  expect(Object.keys(notification).sort()).toEqual(expectedKeys);
-
-  // id: non-empty string.
-  expect(typeof notification.id).toBe("string");
-  expect((notification.id as string).length).toBeGreaterThan(0);
-
-  // recipientId: non-empty string equal to the requested identity.
-  expect(typeof notification.recipientId).toBe("string");
-  expect(notification.recipientId).toBe(expectedRecipientId);
-
-  // message: non-empty string (what the view renders).
-  expect(typeof notification.message).toBe("string");
-  expect((notification.message as string).length).toBeGreaterThan(0);
-
-  // createdAt: ISO-8601 timestamp string (when it arrived).
-  expect(isIsoTimestamp(notification.createdAt)).toBe(true);
+  const n = value as Record<string, unknown>;
+  expect(Object.keys(n).sort()).toEqual(EXPECTED_KEYS);
+  expect(typeof n.id).toBe("string");
+  expect(n.userId).toBe(userId);
+  expect(typeof n.type).toBe("string");
+  expect((n.message as string).length).toBeGreaterThan(0);
+  expect(n.tripId === null || typeof n.tripId === "string").toBe(true);
+  expect(n.occurredAt === null || isIsoTimestamp(n.occurredAt)).toBe(true);
+  expect(isIsoTimestamp(n.createdAt)).toBe(true);
+  expect(n.readAt === null || isIsoTimestamp(n.readAt)).toBe(true);
 }
 
-describe("Feature: ridenow-frontend, Property 11: Mock responses conform to the shared contract", () => {
-  it("returns contract-conforming notification arrays for any identity (empty or not)", async () => {
+const userId = fc.uuid();
+const messages = fc.array(fc.string({ minLength: 1, maxLength: 40 }), { minLength: 0, maxLength: 8 });
+
+describe("notification mock client", () => {
+  it("returns contract-conforming items for the user only, oldest first", async () => {
     await fc.assert(
-      fc.asyncProperty(identityId, async (id) => {
-        // Fresh client per run keeps each run isolated.
+      fc.asyncProperty(userId, userId, messages, async (me, other, texts) => {
+        fc.pre(me !== other);
         const client = createNotificationMockClient();
+        const pushed = texts.map((message) =>
+          client.push({ userId: me, type: "trip.started", message, tripId: null, occurredAt: null }),
+        );
+        client.push({ userId: other, type: "trip.started", message: "x", tripId: null, occurredAt: null });
 
-        const notifications = await client.listForIdentity(id);
-
-        // Always an array; an empty array conforms trivially.
-        expect(Array.isArray(notifications)).toBe(true);
-
-        for (const notification of notifications) {
-          assertConformsToContract(notification, id);
-        }
-
-        // Determinism: calling twice yields deeply-equal results.
-        const again = await client.listForIdentity(id);
-        expect(again).toEqual(notifications);
+        const listed = await client.listSince(me);
+        expect(listed.map((n) => n.id)).toEqual(pushed.map((n) => n.id));
+        listed.forEach((n) => assertConforms(n, me));
       }),
-      { numRuns: 100 },
+      { numRuns: 50 },
     );
+  });
+
+  it("listSince returns only the items after the cursor", async () => {
+    const client = createNotificationMockClient();
+    const me = crypto.randomUUID();
+    const a = client.push({ userId: me, type: "trip.requested", message: "a", tripId: null, occurredAt: null });
+    const b = client.push({ userId: me, type: "driver.accepted", message: "b", tripId: null, occurredAt: null });
+
+    expect((await client.listSince(me, a.id)).map((n) => n.id)).toEqual([b.id]);
+    expect(await client.listSince(me, b.id)).toEqual([]);
+    await expect(client.listSince(me, crypto.randomUUID())).rejects.toBeDefined();
+  });
+
+  it("markRead sets readAt once", async () => {
+    const client = createNotificationMockClient();
+    const n = client.push({ userId: "u", type: "trip.started", message: "m", tripId: null, occurredAt: null });
+
+    const first = await client.markRead(n.id);
+    const second = await client.markRead(n.id);
+
+    expect(first.readAt).not.toBeNull();
+    expect(second.readAt).toBe(first.readAt);
+    await expect(client.markRead("missing")).rejects.toBeDefined();
   });
 });

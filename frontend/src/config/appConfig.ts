@@ -33,6 +33,8 @@ export interface AppConfig {
   apiBaseUrl: string | null;
   /** Per-domain Live/Mock selection. */
   clients: Record<DomainKey, DomainClientMode>;
+  /** OSRM server for road snapping; null => off (raw points, straight-line simulation). */
+  osrmUrl: string | null;
 }
 
 /** Default mode per domain: LIVE domains serve `live`, STUBBED serve `mock`. */
@@ -42,9 +44,9 @@ const DEFAULT_MODES: Record<DomainKey, ClientMode> = {
   user: "live",
   trip: "live",
   payment: "live",
-  // No backend service exists yet — these stay mock-only.
+  notification: "live",
+  // matching-service is internal (no public route) — mock-only in the browser.
   matching: "mock",
-  notification: "mock",
 };
 
 /** Env var that overrides each domain's mode, e.g. VITE_CLIENT_DRIVER. */
@@ -88,9 +90,12 @@ export function buildConfig(env: ImportMetaEnv): AppConfig {
   for (const domain of Object.keys(DEFAULT_MODES) as DomainKey[]) {
     clients[domain] = { mode: resolveDomainMode(env, domain) };
   }
+  const osrmRaw = env.VITE_OSRM_URL;
+  const osrmUrl = typeof osrmRaw === "string" && osrmRaw.trim().length > 0 ? osrmRaw.trim() : null;
   return {
     apiBaseUrl: readApiBaseUrl(env),
     clients,
+    osrmUrl,
   };
 }
 

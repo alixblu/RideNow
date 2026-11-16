@@ -38,17 +38,38 @@ class DriverLiveControllerTest {
 
     private DriverLiveStateResponse online(UUID id) {
         return new DriverLiveStateResponse(id, Availability.ONLINE,
-                new BigDecimal("10.5"), new BigDecimal("106.5"), Instant.now());
+                new BigDecimal("10.5"), new BigDecimal("106.5"), Instant.now(), Instant.now(),
+                cloudnative.microservices.driver.entity.VehicleType.CAR);
     }
 
     @Test
     void goOnlineReturnsState() throws Exception {
         UUID id = UUID.randomUUID();
-        when(driverLiveService.goOnline(eq(id))).thenReturn(online(id));
+        when(driverLiveService.goOnline(eq(id), any())).thenReturn(online(id));
 
         mockMvc.perform(post("/api/drivers/{id}/online", id))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.availability").value("ONLINE"));
+                .andExpect(jsonPath("$.availability").value("ONLINE"))
+                .andExpect(jsonPath("$.vehicleType").value("CAR"));
+    }
+    @Test
+    void goOnlinePassesThePickedVehicle() throws Exception {
+        UUID id = UUID.randomUUID();
+        UUID vehicleId = UUID.randomUUID();
+        when(driverLiveService.goOnline(eq(id), eq(vehicleId))).thenReturn(online(id));
+        mockMvc.perform(post("/api/drivers/{id}/online", id)
+                        .contentType("application/json")
+                        .content("{\"vehicleId\":\"" + vehicleId + "\"}"))
+                .andExpect(status().isOk());
+    }
+    @Test
+    void goOnlineWithNoActiveVehicleIs409() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(driverLiveService.goOnline(eq(id), any())).thenThrow(
+                new cloudnative.microservices.driver.exception.NoActiveVehicleException("Driver has no active vehicle"));
+        mockMvc.perform(post("/api/drivers/{id}/online", id))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Driver has no active vehicle"));
     }
 
     @Test

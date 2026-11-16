@@ -56,9 +56,11 @@ class RedisDriverLocationStoreIntegrationTest {
     void onlineThenLocationIsReadableThenOfflineClears() {
         UUID driverId = UUID.randomUUID();
 
-        store.goOnline(driverId);
+        store.goOnline(driverId, cloudnative.microservices.driver.entity.VehicleType.CAR);
         assertThat(store.getState(driverId)).isPresent()
                 .get().extracting(DriverLiveState::availability).isEqualTo(Availability.ONLINE);
+        assertThat(store.getState(driverId).get().vehicleType())
+                .isEqualTo(cloudnative.microservices.driver.entity.VehicleType.CAR);
 
         store.updateLocation(driverId, new BigDecimal("10.762622"), new BigDecimal("106.660172"));
         Optional<DriverLiveState> withLoc = store.getState(driverId);
@@ -73,7 +75,7 @@ class RedisDriverLocationStoreIntegrationTest {
     @Test
     void liveRecordHasATtl() {
         UUID driverId = UUID.randomUUID();
-        store.goOnline(driverId);
+        store.goOnline(driverId, cloudnative.microservices.driver.entity.VehicleType.CAR);
 
         Long ttl = redis.getExpire("ridenow:driver:live:" + driverId, TimeUnit.SECONDS);
         assertThat(ttl).isNotNull().isGreaterThan(0L);

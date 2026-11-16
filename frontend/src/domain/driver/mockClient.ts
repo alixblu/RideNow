@@ -21,6 +21,7 @@ import type { CreateVehicleRequest, VehicleResponse } from "../vehicle/contract"
 import { createVehicleMockClient } from "../vehicle/mockClient";
 import type {
   CreateDriverRequest,
+  DriverLiveStateResponse,
   DriverResponse,
   DriverServiceClient,
   ListDriversParams,
@@ -56,9 +57,62 @@ export function createDriverMockClient(): DriverServiceClient {
   // One shared vehicle mock instance so the driver's vehicle operations read and write
   // the same underlying store.
   const vehicles = createVehicleMockClient();
-
+  // Live state, like driver-service's Redis hash: present only while ONLINE.
+  const live = new Map<string, DriverLiveStateResponse>();
   return {
-    createDriver(req: CreateDriverRequest): Promise<DriverResponse> {
+    async goOnline(driverId: string, vehicleId?: string): Promise<DriverLiveStateResponse> {
+      if (!store.has(driverId)) {
+        throw ApiError.notFound();
+      }
+      const owned = (await vehicles.listVehicles(driverId)).filter((v) => v.active);
+      const vehicle = vehicleId
+        ? owned.find((v) => v.id === vehicleId)
+        : [...owned].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (!vehicle) {
+        throw ApiError.conflict(
+          "Driver has no active vehicle; add a vehicle, or pick one with vehicleId",
+        );
+      }
+      const state: DriverLiveStateResponse = {
+        driverId,
+        availability: "ONLINE",
+        lat: null,
+        lng: null,
+        updatedAt: new Date().toISOString(),
+        recordedAt: null,
+        vehicleType: vehicle.vehicleType,
+      };
+      live.set(driverId, state);
+      return state;
+    },
+    goOffline(driverId: string): Promise<void> {
+      if (!store.has(driverId)) {
+        return Promise.reject(ApiError.notFound());
+      }
+      live.delete(driverId);
+      return Promise.resolve();
+    },
+    updateLocation(driverId: string, lat: number, lng: number): Promise<DriverLiveStateResponse> {
+      if (!store.has(driverId)) {
+        return Promise.reject(ApiError.notFound());
+      }
+      const now = new Date().toISOString();
+      const state: DriverLiveStateResponse = {
+        driverId,
+        availability: "ONLINE",
+        lat,
+        lng,
+        updatedAt: now,
+        recordedAt: now,
+        vehicleType: live.get(driverId)?.vehicleType ?? null,
+      };
+      live.set(driverId, state);
+      return Promise.resolve(state);
+    },
+    getLiveState(driverId: string): Promise<DriverLiveStateResponse> {
+      const state = live.get(driverId);
+      return state ? Promise.resolve(state) : Promise.reject(ApiError.notFound());
+    },    createDriver(req: CreateDriverRequest): Promise<DriverResponse> {
       const now = new Date().toISOString();
       const driver: DriverResponse = {
         id: newId(),

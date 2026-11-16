@@ -11,8 +11,9 @@ consumer handles into its own SQS queue, and each queue has a dead-letter queue 
 | `ridenow-prod-payment` | `trip.completed`, `trip.cancelled` | payment-service | capture / release the hold made at request time |
 | `ridenow-prod-notifications` | every `ridenow.*` event | notification-worker | tell the passenger / driver |
 
-Independent of Redis (guide 07), so you can provision either first. The worker's real
-delivery path (worker -> Redis -> realtime-gateway -> WebSocket) needs both.
+Independent of Redis (guide 07), so you can provision either first. The worker writes
+notifications to its inbox table; it also needs Redis (guide 07) for the trip tracking
+pairing that realtime-gateway reads.
 
 > **IaC path:** stack `05-messaging` creates all of the resources below, including the
 > queue policies scoped to each rule. Stack `07-eks-addons` creates the four IRSA
@@ -120,7 +121,6 @@ RIDENOW_MATCHING_QUEUE_URL = https://sqs.ap-southeast-1.amazonaws.com/<ACCOUNT_I
 
 # notification-worker
 RIDENOW_NOTIFICATIONS_QUEUE_URL = https://sqs.ap-southeast-1.amazonaws.com/<ACCOUNT_ID>/ridenow-prod-notifications
-RIDENOW_NOTIFICATIONS_DELIVERY = redis      # deliver through realtime-gateway (needs guide 07)
 
 # all of them
 AWS_REGION = ap-southeast-1
@@ -149,8 +149,8 @@ kubectl rollout restart deployment/payment-service deployment/trip-service \
   `GET /api/matching/trips/{tripId}/offers` lists offers. Nobody called `/match`.
 - Accept -> arrive -> start -> complete the trip. The payment moves to `PAID`
   through `ridenow-prod-payment`, with no HTTP call to payment-service.
-- `ridenow-prod-notifications` receives every event. A WebSocket client on `/ws`
-  subscribed to `/topic/users/{passengerId}` receives the notifications.
+- `ridenow-prod-notifications` receives every event, and
+  `GET /api/notifications?userId={passengerId}` lists them in order.
 - Force a failure (for example, a malformed message sent to a queue by hand) and watch it land in
   that queue's `-dlq` after 5 receives.
 

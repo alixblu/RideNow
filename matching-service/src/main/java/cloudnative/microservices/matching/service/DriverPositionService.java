@@ -36,6 +36,21 @@ public class DriverPositionService {
         positionRepository.save(position);
 
         // Keep the Redis GEO index (the query path for the redis finder) in sync.
+        // A driver who switched vehicle type must leave the other type's index.
+        for (VehicleType other : VehicleType.values()) {
+            if (other != vehicleType) {
+                geoIndex.remove(driverId, other);
+            }
+        }
         geoIndex.upsert(driverId, vehicleType, lat, lng);
+    }
+
+    /** The driver went offline: drop them from both stores so no new offer reaches them. */
+    @Transactional
+    public void removeDriver(UUID driverId) {
+        positionRepository.deleteById(driverId);
+        for (VehicleType type : VehicleType.values()) {
+            geoIndex.remove(driverId, type);
+        }
     }
 }

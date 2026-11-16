@@ -1,5 +1,6 @@
 package cloudnative.microservices.driver.live;
 
+import cloudnative.microservices.driver.entity.VehicleType;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,8 +13,11 @@ import java.util.UUID;
  */
 public interface DriverLocationStore {
 
-    /** Marks the driver ONLINE (available for offers). Resets the live TTL. */
-    void goOnline(UUID driverId);
+    /** Marks the driver ONLINE with the given vehicle type (available for offers). Resets the live TTL. */
+    void goOnline(UUID driverId, VehicleType vehicleType);
+
+    /** Records the vehicle type on an existing live record (e.g. one recreated by a location write). */
+    void setVehicleType(UUID driverId, VehicleType vehicleType);
 
     /** Marks the driver OFFLINE and clears live state. */
     void goOffline(UUID driverId);

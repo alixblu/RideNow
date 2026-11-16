@@ -23,12 +23,16 @@ import { appConfig } from "../../config/appConfig";
 import { resolveDriverClient } from "../../domain/driver";
 import { resolveTripClient } from "../../domain/trip";
 import { DriverRoster } from "./DriverRoster";
+import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
+import { NotificationBell } from "../../notifications/NotificationBell";
 import { CreateDriverScreen } from "./CreateDriverScreen";
+import { TripDesk } from "./TripDesk";
 
-type Section = "roster" | "register";
+type Section = "roster" | "desk" | "register";
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "roster", label: "Roster" },
+  { id: "desk", label: "Trip desk" },
   { id: "register", label: "Register driver" },
 ];
 
@@ -52,15 +56,19 @@ function DriverAppContent({
   tripClient: ReturnType<typeof resolveTripClient>;
 }) {
   const [section, setSection] = useState<Section>("roster");
+  const driverId = useCurrentIdentity().current("driver")?.id ?? "";
 
   return (
     <section aria-label="Driver area" className="flex flex-col gap-5">
-      <header>
-        <h2 className="font-serif text-3xl font-semibold tracking-tight">Driver desk</h2>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-serif text-3xl font-semibold tracking-tight">Driver desk</h2>
         <p className="mt-1 text-sm text-content-muted">
           Browse your drivers, keep their vehicles current, and pick up the rides that
           are waiting.
         </p>
+        </div>
+        {driverId && <NotificationBell userId={driverId} intervalMs={2000} />}
       </header>
 
       <IdentityPrompt role="driver">
@@ -92,6 +100,9 @@ function DriverAppContent({
         <div className="mt-6">
           {section === "roster" && (
             <DriverRoster client={client} tripClient={tripClient} />
+          )}
+          {section === "desk" && driverId && (
+            <TripDesk driverId={driverId} client={client} tripClient={tripClient} />
           )}
           {section === "register" && <CreateDriverScreen client={client} />}
         </div>

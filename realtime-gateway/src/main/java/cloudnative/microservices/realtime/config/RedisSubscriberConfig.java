@@ -1,6 +1,7 @@
 package cloudnative.microservices.realtime.config;
 
-import cloudnative.microservices.realtime.service.NotificationRelay;
+import cloudnative.microservices.realtime.service.LocationRelay;
+import cloudnative.microservices.realtime.service.TripEndedRelay;
 import java.nio.charset.StandardCharsets;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -10,28 +11,35 @@ import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 /**
- * Subscribes this pod to the notifications channel. EVERY gateway pod subscribes
- * (Pub/Sub fans out to all subscribers), and the pod that holds the target user's
- * socket is the one whose broker has a subscriber for that user's topic; the
- * others simply have nobody to deliver to.
+ * Subscribes this pod to the driver-location and trip-ended channels. EVERY
+ * gateway pod subscribes (Pub/Sub fans out to all subscribers); a pod with no
+ * stream for the trip simply drops the message.
  *
  * Switchable off ({@code ridenow.gateway.redis.enabled=false}) so tests can drive
- * the relay directly without a Redis server.
+ * the relays directly without a Redis server.
  */
 @Configuration
 @ConditionalOnProperty(name = "ridenow.gateway.redis.enabled", havingValue = "true", matchIfMissing = true)
 public class RedisSubscriberConfig {
 
     @Bean
-    RedisMessageListenerContainer notificationListenerContainer(
+    RedisMessageListenerContainer gatewayListenerContainer(
             RedisConnectionFactory connectionFactory,
-            NotificationRelay relay,
+            LocationRelay locationRelay,
+            TripEndedRelay tripEndedRelay,
             GatewayProperties properties) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
         container.addMessageListener(
-                (message, pattern) -> relay.onMessage(new String(message.getBody(), StandardCharsets.UTF_8)),
-                new ChannelTopic(properties.notificationsChannel()));
+                (message, pattern) -> locationRelay.onMessage(body(message.getBody())),
+                new ChannelTopic(properties.locationsChannel()));
+        container.addMessageListener(
+                (message, pattern) -> tripEndedRelay.onMessage(body(message.getBody())),
+                new ChannelTopic(properties.endedChannel()));
         return container;
+    }
+
+    private static String body(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

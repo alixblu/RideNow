@@ -16,9 +16,7 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CircleDot,
   MapPin,
-  Navigation,
   Car,
   Clock,
   CreditCard,
@@ -29,9 +27,11 @@ import type { CreateTripRequest, TripResponse } from "../../domain/trip";
 import { resolvePaymentClient } from "../../domain/payment";
 import type { PaymentResponse } from "../../domain/payment";
 import { appConfig } from "../../config/appConfig";
-import { VEHICLE_TYPE_VALUES } from "../../shared/enums";
-import type { VehicleType } from "../../shared/enums";
+import { PAYMENT_METHOD_VALUES, VEHICLE_TYPE_VALUES } from "../../shared/enums";
+import type { PaymentMethod, VehicleType } from "../../shared/enums";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
+import { NotificationBell } from "../../notifications/NotificationBell";
+import { TripMap } from "../../map/TripMap";
 import {
   Button,
   Card,
@@ -90,11 +90,14 @@ export function RiderApp() {
 
   return (
     <section aria-label="Rider area" className="flex flex-col gap-6">
-      <header>
-        <h2 className="font-serif text-3xl font-semibold tracking-tight">Book a ride</h2>
-        <p className="mt-1 text-sm text-content-muted">
-          Pick your pickup and drop-off, then follow your ride all the way through.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-serif text-3xl font-semibold tracking-tight">Book a ride</h2>
+          <p className="mt-1 text-sm text-content-muted">
+            Pick your pickup and drop-off, then follow your ride all the way through.
+          </p>
+        </div>
+        {riderId && <NotificationBell userId={riderId} intervalMs={3000} />}
       </header>
 
       <IdentityPrompt role="rider">
@@ -208,6 +211,11 @@ function RideJourney({ riderId, activeTripId, onActiveTripChange }: RideJourneyP
 // "Where to?" booking form — named places + ride type.
 // ---------------------------------------------------------------------------
 
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  CASH: "Cash",
+  SIMULATED_CARD: "Card (simulated)",
+  PAYPAL: "PayPal",
+};
 interface WhereToFormProps {
   riderId: string;
   pending: boolean;
@@ -219,6 +227,7 @@ function WhereToForm({ riderId, pending, error, onSubmit }: WhereToFormProps) {
   const [pickupId, setPickupId] = useState(DEFAULT_PICKUP.id);
   const [destinationId, setDestinationId] = useState(DEFAULT_DESTINATION.id);
   const [rideType, setRideType] = useState<VehicleType>(VEHICLE_TYPE_VALUES[0]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
 
   // Optional advanced mode exposes raw coordinates; named places remain primary.
   const [advanced, setAdvanced] = useState(false);
@@ -242,6 +251,7 @@ function WhereToForm({ riderId, pending, error, onSubmit }: WhereToFormProps) {
           pickupLng: Number(pickupLng),
           destinationLat: Number(destinationLat),
           destinationLng: Number(destinationLng),
+          paymentMethod,
         }
       : {
           passengerId: riderId,
@@ -250,6 +260,7 @@ function WhereToForm({ riderId, pending, error, onSubmit }: WhereToFormProps) {
           pickupLng: pickupPreset.lng,
           destinationLat: destinationPreset.lat,
           destinationLng: destinationPreset.lng,
+          paymentMethod,
         };
     onSubmit(req);
   }
@@ -264,22 +275,12 @@ function WhereToForm({ riderId, pending, error, onSubmit }: WhereToFormProps) {
         </CardHeader>
         <CardBody>
           <div className="grid gap-5 sm:grid-cols-2">
-            {/* Decorative map-style panel; the named selects are the source of truth. */}
-            <div className="rn-map-grid relative hidden min-h-[240px] rounded-2xl border border-border sm:block">
-              <div className="absolute left-5 top-6 flex items-center gap-2 text-content-muted">
-                <CircleDot className="h-4 w-4 text-accent" aria-hidden="true" />
-                <span className="text-xs">{pickupPreset.label}</span>
-              </div>
-              <div className="absolute bottom-6 right-5 flex items-center gap-2 text-content-muted">
-                <MapPin className="h-4 w-4 text-danger" aria-hidden="true" />
-                <span className="text-xs">{destinationPreset.label}</span>
-              </div>
-              <Navigation
-                className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-content-subtle"
-                aria-hidden="true"
-              />
-            </div>
-
+            {/* The map shows the selected places; the named selects are the source of truth. */}
+            <TripMap
+              className="hidden min-h-[240px] overflow-hidden rounded-2xl border border-border sm:block"
+              pickup={pickupPreset}
+              destination={destinationPreset}
+            />
             <form
               className="flex flex-col gap-3"
               onSubmit={handleSubmit}
@@ -322,6 +323,19 @@ function WhereToForm({ riderId, pending, error, onSubmit }: WhereToFormProps) {
                   {VEHICLE_TYPE_VALUES.map((value) => (
                     <option key={value} value={value}>
                       {value === "MOTORBIKE" ? "Motorbike" : "Car"}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field htmlFor="payment-method" label="Payment">
+                <Select
+                  id="payment-method"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                >
+                  {PAYMENT_METHOD_VALUES.map((value) => (
+                    <option key={value} value={value}>
+                      {PAYMENT_METHOD_LABELS[value]}
                     </option>
                   ))}
                 </Select>
@@ -471,6 +485,12 @@ function LiveTrip({ riderId, tripId, onNewRide }: LiveTripProps) {
             errorView(tripQuery.error, () => void tripQuery.refetch())
           ) : trip !== null ? (
             <div className="flex flex-col gap-5">
+              <TripMap
+                pickup={{ lat: trip.pickupLat, lng: trip.pickupLng }}
+                destination={{ lat: trip.destinationLat, lng: trip.destinationLng }}
+                trip={trip}
+                onStreamEnded={() => void tripQuery.refetch()}
+              />
               <TripStatusHeader trip={trip} />
               <TripTimeline trip={trip} />
               {trip.status !== "SEARCHING" &&

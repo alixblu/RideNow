@@ -59,7 +59,11 @@ Pub/Sub, cache-aside) and **matching-service** (GEO), then restart them:
 ```
 REDIS_HOST = ridenow-redis.xxxx.ng.0001.apse1.cache.amazonaws.com
 REDIS_PORT = 6379
+REDIS_SSL  = true
 ```
+`REDIS_SSL=true` is required because step 3 enabled encryption in transit. The
+default is `false` (the local Redis container has no TLS); with TLS on and
+`REDIS_SSL` unset, the connection fails at startup.
 
 Edit their Deployment env (or re-apply the manifests with these values) and:
 

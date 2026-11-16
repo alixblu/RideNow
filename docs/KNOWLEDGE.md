@@ -59,23 +59,28 @@ See `ARCHITECTURE.md` for how these fit together.
 |-----------|-------------------|-------------------------------|
 | Redis as primary store | Redis is the only home of some data | BUILT: driver live availability and position (hash with TTL), never in Postgres |
 | Redis GEO | In-memory geospatial radius queries | BUILT: matching-service's GEO index answers "drivers near this pickup" with GEOSEARCH |
-| Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel, and the `ridenow.notifications` channel from notification-worker to every gateway pod |
+| Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel. BUILT: the `ridenow:tracking:ended` channel to the gateway (replaced `ridenow.notifications`) |
 | Cache-aside | A disposable copy of hot DB data with a TTL | BUILT (scoped): driver profile only; evicted on writes. Never trip status or the accept read |
 
 ## Real-time
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| WebSockets + STOMP | Persistent two-way connection; STOMP adds topics and subscriptions | BUILT: realtime-gateway at `/ws`; clients subscribe to `/topic/users/{userId}` |
-| Stateless socket tier via Pub/Sub | Every pod subscribes to the backplane; the pod holding the socket delivers | BUILT: no sticky sessions; the gateway scales horizontally |
-| Socket is not the source of truth | Re-fetch state over REST on (re)connect; the stream only adds updates | BUILT (contract): documented in the gateway README; messages carry `eventId` and `occurredAt` for dedupe |
-| Heartbeats | Periodic pings so dead connections are noticed | BUILT: STOMP heartbeats every 10s in both directions |
-| Graceful drain | On shutdown, ask clients to reconnect instead of cutting them | BUILT: close code `1001` "reconnect", with `preStop` sleep and a termination grace period in Kubernetes |
-| Reconnect with backoff + jitter | Retry later and later, randomized, so clients do not stampede | BUILT (verified with a test client): plus a connect timeout for half-open handshakes |
-| Inbound guard | Limit what a client may do over the socket | BUILT: receive-only; exact per-user topics only (no wildcards); caps on frame size, subscriptions and frame rate |
-| Transport choice | WebSocket vs SSE vs UDP / WebRTC / QUIC | DECISION: WebSocket. Traffic is small and low-rate, so the others are deferred unless load tests show head-of-line blocking |
-| Mobile push | Reach a closed or backgrounded app via FCM / APNs | PLANNED (out of scope): a WebSocket reaches only foreground apps |
-
+| Server-Sent Events (SSE) | One-way server-to-client stream over HTTP with automatic reconnect | BUILT (verified): realtime-gateway `GET /live/trips/{tripId}/location`; events `location` and `trip-ended` (replaces STOMP/WebSocket) |
+| Stateless stream tier via Pub/Sub | Every pod subscribes to the backplane; the pod holding the stream delivers | BUILT: no sticky sessions; the gateway scales horizontally |
+| Stream is not the source of truth | Re-fetch state over REST first; the stream only adds updates | BUILT (contract in `REALTIME.md`): REST snapshot, then `EventSource` |
+| Pairing keys | Short-lived Redis keys saying who may watch whom | BUILT: notification-worker sets them on `driver.accepted`, deletes them on trip end |
+| Heartbeats | Periodic pings so dead connections are noticed | BUILT: `: ping` comment every 15s |
+| Graceful drain | On shutdown, complete the streams so clients reconnect | BUILT (verified with a gateway restart): complete every emitter; `preStop` sleep and a termination grace period in Kubernetes |
+| Reconnect with jitter | Randomized retry delay so clients do not stampede | BUILT: jittered `retry:` field; 400/403/410 stop retries |
+| Throttling | Cap event rate per stream | BUILT: at most 1 `location` event per second per trip; at most 3 streams per trip per pod |
+| Inbox + polling | Durable per-user rows, read with `?since=` | BUILT (verified): `notifications` table in notification-worker; frontend polls every 3s (2s for drivers), pausing while the tab is hidden |
+| Smooth marker | Buffer points, render ~1s behind, interpolate | BUILT (unit-tested; not checked in a browser): Leaflet marker with `requestAnimationFrame`; ordered by `recordedAt`; stale after 10s |
+| Road snapping (OSRM) | Snap GPS to roads (`match`) or route along roads (`route`) | BUILT (tested with a mocked OSRM): display only, behind a `RoadSnapper` interface; `VITE_OSRM_URL` empty = off; demo server is dev-only |
+| Transport choice | SSE vs WebSocket vs UDP / WebRTC / QUIC | DECISION: SSE. Location is one-way, low-rate data; WebSocket and the others are not needed |
+| Mobile push | Reach a closed or backgrounded app via FCM / APNs | PLANNED (out of scope): the inbox is polled, so it reaches only open apps |
+| Malformed JSON -> 400 | Client mistakes never return 500 | BUILT (verified): `HttpMessageNotReadableException` handler in every service |
+| Redis TLS in transit | Encrypt the Redis connection | BUILT: every Redis client reads `REDIS_SSL`; the manifests set it to `true` |
 ## Resilience
 
 | Technique | Basic description | How it is used in this project |
@@ -83,7 +88,7 @@ See `ARCHITECTURE.md` for how these fit together.
 | Dead-letter queue | Messages that keep failing move aside for inspection | BUILT: each queue dead-letters after 5 receives (verified) |
 | Idempotent consumer | A repeated delivery has no duplicate effect | BUILT: notification ledger (`processed_notifications`); a matching skip if offers exist; payment no-op transitions |
 | Drop vs retry | Retry only what can succeed later; drop poison data | BUILT: consumers drop malformed events and let real failures retry into the DLQ |
-| Timeouts | Bound how long to wait on a dependency | PARTIAL: trip -> payment has connect and read timeouts (2s / 3s); driver -> user has none |
+| Timeouts | Bound how long to wait on a dependency | BUILT: trip -> payment and driver -> user have connect and read timeouts (2s / 3s) |
 | Retries + backoff | Re-attempt with growing delays | PARTIAL: SQS redelivery covers consumers; sync HTTP calls have none |
 | Circuit breaker | Stop calling a failing dependency for a while | PLANNED |
 | Health probes split | Liveness = restart me; readiness = route to me | PARTIAL: realtime-gateway splits them (Redis affects readiness only); others share `/actuator/health` |
@@ -98,9 +103,9 @@ See `ARCHITECTURE.md` for how these fit together.
 | IRSA (IAM Roles for Service Accounts) | Pods get AWS credentials from their service account, not static keys | BUILT: trip, payment, matching, notification-worker; plus the ALB controller and External Secrets |
 | Secrets management | Keep credentials out of source and config | BUILT: Secrets Manager -> External Secrets -> Kubernetes Secret. Local: `.env` |
 | Network isolation | Data tiers private; one public entry point | BUILT: RDS and Redis in private subnets; only the ALB is public; services are `ClusterIP` |
-| Encryption | At rest and in transit | PARTIAL: RDS, SQS and Redis are encrypted at rest; Redis in transit for worker and gateway. Not driver / matching, and no TLS at the ALB |
+| Encryption | At rest and in transit | PARTIAL: RDS, SQS and Redis are encrypted at rest; Redis in transit for every service. No TLS at the ALB |
 | Safe error responses | Clean errors, never internals | BUILT: `GlobalExceptionHandler` DTOs |
-| Application authN/Z | Verify who the caller is and what they may do | PLANNED: JWT / Spring Security, including at WebSocket `CONNECT`. Today anyone knowing a user id can subscribe |
+| Application authN/Z | Verify who the caller is and what they may do | PLANNED: JWT / Spring Security, including on the SSE endpoint and the inbox API. Today anyone knowing a user id can read |
 | East-west restriction | Limit which pods may call which | PLANNED: per-service security groups naming allowed callers (NetworkPolicy is not enforced on Fargate) |
 | Edge protection | TLS, WAF and source restriction at the load balancer | PLANNED: the ALB is HTTP:80 today |
 
@@ -114,7 +119,7 @@ See `ARCHITECTURE.md` for how these fit together.
 | Docker Compose | Run the whole system on one machine | BUILT: 6 Postgres, Redis, LocalStack and 7 services with health checks |
 | Infrastructure as code | Declarative, reviewable infrastructure | BUILT: seven CloudFormation stacks wired by exports and imports; `cfn-lint` clean; dry-run by default |
 | EKS on Fargate | Managed Kubernetes with serverless pods | BUILT (codified, not deployed in this pass): no node groups to patch or scale |
-| Deployment / Service / Ingress | Replicas, stable internal names, external routing | BUILT: one manifest per service in `iac/k8s/`; the ALB routes four APIs plus `/ws` |
+| Deployment / Service / Ingress | Replicas, stable internal names, external routing | BUILT: one manifest per service in `iac/k8s/`; the ALB routes the APIs plus `/live` |
 | Rolling update tuning | Control how many pods are replaced at once | BUILT: realtime-gateway uses `maxUnavailable: 0`, `maxSurge: 1` |
 | HPA | Scale pods on a metric | BUILT (CPU): connection- or queue-depth-based scaling is a gap |
 | Requests / limits | Reserve and cap CPU and memory | BUILT on every service |
@@ -126,9 +131,9 @@ See `ARCHITECTURE.md` for how these fit together.
 |-----------|-------------------|-------------------------------|
 | Unit tests with mocks | Test rules in isolation | BUILT: service, handler and consumer tests in every service |
 | Web-slice tests | Test the HTTP boundary only | BUILT: `@WebMvcTest` for status codes and the error shape |
-| Contract tests for events | Pin the JSON each event carries | BUILT: `TripEventsTest`, `RedisNotificationSenderTest` |
-| Real-socket integration test | Drive the real STOMP stack with real clients | BUILT: gateway delivery, reconnect, wildcard rejection, graceful close, probes |
+| Contract tests for events | Pin the JSON each event carries | BUILT: `TripEventsTest`, `LocationPublisherTest` |
+| Real-HTTP stream test | Drive the real SSE endpoint over HTTP | BUILT: gateway delivery, 403/410, `trip-ended`, throttle, heartbeat, shutdown, probes |
 | Concurrency test | Many threads race; assert the invariant | BUILT: `AcceptTripConcurrencyTest` |
-| Testcontainers | Real Postgres / LocalStack in tests | BUILT, but blocked on the dev machine (cannot reach Docker Engine 29) |
-| End-to-end failure drills | Kill or duplicate things on purpose and observe | BUILT (manual): payment down, consumer down, duplicate event, poison message, gateway restart (see `ARCHITECTURE.md` section 8) |
+| Testcontainers | Real Postgres / LocalStack in tests | BUILT (runs on Docker Engine 29 with Testcontainers 1.21.4): includes queue -> consumer -> database tests for payment and matching |
+| End-to-end failure drills | Kill or duplicate things on purpose and observe | BUILT (manual): user-service down, gateway restart mid-trip, refused streams, duplicate event, poison message (see `ARCHITECTURE.md` section 8) |
 | Load testing | Measure latency, throughput, scaling | PLANNED (k6) |

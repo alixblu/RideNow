@@ -24,8 +24,14 @@ describe("PATH_PREFIX_MAP — LIVE service origins (Req 3.3)", () => {
   });
 });
 
+describe("PATH_PREFIX_MAP — notifications and live stream", () => {
+  it("maps /api/notifications to notification-worker and /live to realtime-gateway", () => {
+    expect(PATH_PREFIX_MAP["/api/notifications"]).toBe("http://localhost:8084");
+    expect(PATH_PREFIX_MAP["/live"]).toBe("http://localhost:8086");
+  });
+});
 describe("PATH_PREFIX_MAP — documented placeholders (Req 3.4)", () => {
-  const PLACEHOLDER_PREFIXES = ["/api/matching", "/api/notifications"] as const;
+  const PLACEHOLDER_PREFIXES = ["/api/matching"] as const;
 
   it("defines a null placeholder entry for each future domain", () => {
     for (const prefix of PLACEHOLDER_PREFIXES) {
@@ -43,6 +49,8 @@ describe("PATH_PREFIX_MAP — documented placeholders (Req 3.4)", () => {
         "/api/trips",
         "/api/trip-offers",
         "/api/payments",
+        "/api/notifications",
+        "/live",
         ...PLACEHOLDER_PREFIXES,
       ].sort(),
     );

@@ -1,5 +1,6 @@
 package cloudnative.microservices.driver.live;
 
+import cloudnative.microservices.driver.entity.VehicleType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -15,6 +16,8 @@ public record DriverLiveState(
         Availability availability,
         BigDecimal lat,
         BigDecimal lng,
-        Instant updatedAt
+        Instant updatedAt,
+        /** The type of the vehicle the driver is online with; null if unknown. */
+        VehicleType vehicleType
 ) {
 }

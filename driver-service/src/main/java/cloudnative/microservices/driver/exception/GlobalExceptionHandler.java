@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -26,6 +27,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, exception.getMessage(), request);
     }
 
+    // The driver tried to go online with no usable vehicle. They must add or pick one.
+    @ExceptionHandler(NoActiveVehicleException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoActiveVehicle(
+            NoActiveVehicleException exception, HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT, exception.getMessage(), request);
+    }
     @ExceptionHandler(DuplicateResourceException.class)
     public ResponseEntity<ApiErrorResponse> handleDuplicate(
             DuplicateResourceException exception,
@@ -86,6 +93,14 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "A resource with these details already exists", request);
     }
 
+    // The body is missing, is not valid JSON, or has the wrong shape (e.g. a bad enum
+    // or UUID). A client mistake -> 400 with a generic message: parser details are
+    // never returned.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiErrorResponse> handleUnreadableBody(
+            HttpMessageNotReadableException exception, HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, "Malformed request body", request);
+    }
     // Final catch-all: anything unexpected becomes a clean 500. The real cause is
     // logged server-side only; the client never sees a stack trace or internals.
     @ExceptionHandler(Exception.class)

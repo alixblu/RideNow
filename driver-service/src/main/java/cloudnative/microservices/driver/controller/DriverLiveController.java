@@ -1,5 +1,6 @@
 package cloudnative.microservices.driver.controller;
 
+import cloudnative.microservices.driver.dto.request.GoOnlineRequest;
 import cloudnative.microservices.driver.dto.request.UpdateLocationRequest;
 import cloudnative.microservices.driver.dto.response.DriverLiveStateResponse;
 import cloudnative.microservices.driver.service.DriverLiveService;
@@ -26,9 +27,11 @@ public class DriverLiveController {
 
     private final DriverLiveService driverLiveService;
 
+    /** Body is optional: {@code {"vehicleId": "..."}} picks the vehicle; without it the newest active one is used. */
     @PostMapping("/online")
-    public DriverLiveStateResponse goOnline(@PathVariable UUID driverId) {
-        return driverLiveService.goOnline(driverId);
+    public DriverLiveStateResponse goOnline(
+            @PathVariable UUID driverId, @RequestBody(required = false) GoOnlineRequest request) {
+        return driverLiveService.goOnline(driverId, request != null ? request.vehicleId() : null);
     }
 
     @PostMapping("/offline")

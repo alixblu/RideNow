@@ -23,8 +23,8 @@ function env(overrides: Record<string, string> = {}): ImportMetaEnv {
   } as unknown as ImportMetaEnv;
 }
 
-const LIVE_DOMAINS: DomainKey[] = ["driver", "vehicle", "user", "trip", "payment"];
-const STUBBED_DOMAINS: DomainKey[] = ["matching", "notification"];
+const LIVE_DOMAINS: DomainKey[] = ["driver", "vehicle", "user", "trip", "payment", "notification"];
+const STUBBED_DOMAINS: DomainKey[] = ["matching"];
 const ALL_DOMAINS: DomainKey[] = [...LIVE_DOMAINS, ...STUBBED_DOMAINS];
 
 describe("buildConfig — API base URL parsing (Req 3.1)", () => {
@@ -70,7 +70,7 @@ describe("buildConfig — per-domain mode defaults (Req 3.4)", () => {
     }
   });
 
-  it("defaults STUBBED domains (matching, notification) to 'mock'", () => {
+  it("defaults STUBBED domains (matching) to 'mock'", () => {
     const config = buildConfig(env());
     for (const domain of STUBBED_DOMAINS) {
       expect(config.clients[domain].mode).toBe("mock");
@@ -95,7 +95,7 @@ describe("buildConfig — per-domain mode defaults (Req 3.4)", () => {
       env({ VITE_CLIENT_DRIVER: "bogus", VITE_CLIENT_NOTIFICATION: "" }),
     );
     expect(config.clients.driver.mode).toBe("live");
-    expect(config.clients.notification.mode).toBe("mock");
+    expect(config.clients.notification.mode).toBe("live");
   });
 });
 

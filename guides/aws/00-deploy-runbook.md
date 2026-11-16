@@ -156,7 +156,7 @@ aws cloudformation list-exports --region ap-southeast-1 \
    - **Queue URLs** (`<MATCHING_QUEUE_URL>`, `<PAYMENT_QUEUE_URL>`,
      `<NOTIFICATIONS_QUEUE_URL>`) are the `ridenow-prod-messaging-*QueueUrl`
      exports from stack 05.
-   - **`<REDIS_ENDPOINT>`** (matching, notification-worker, realtime-gateway) is
+   - **`<REDIS_ENDPOINT>`** (driver, matching, notification-worker, realtime-gateway) is
      the `ridenow-prod-messaging-RedisPrimaryEndpoint` export.
    - **`<APP_ORIGIN>`** (realtime-gateway) is the browser origin of the app,
      e.g. `https://app.example.com`. Do not use `*` in the cloud.
@@ -169,8 +169,9 @@ aws cloudformation list-exports --region ap-southeast-1 \
      --output table --no-cli-pager
    ```
 2. **Ingress** (30): `kubectl apply -f iac/k8s/30-ingress.yaml`. The ALB
-   controller provisions the internet-facing ALB. It routes the four APIs and
-   the WebSocket endpoint `/ws` (realtime-gateway).
+   controller provisions the internet-facing ALB. It routes the four APIs, the
+   notification inbox `/api/notifications` (notification-worker), and the SSE
+   stream `/live` (realtime-gateway).
 3. **Verify end to end:**
    ```bash
    ADDR=$(kubectl get ingress ridenow -n ridenow \

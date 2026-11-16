@@ -12,7 +12,7 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
-  # Redis carries notifications to the realtime-gateway (delivery=redis).
+  # Redis holds the trip tracking pairing keys read by the realtime-gateway.
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -27,10 +27,6 @@ ridenow:
   notifications:
     # When blank, the SQS consumer stays disabled (e.g. plain unit test runs).
     queue-url: ${RIDENOW_NOTIFICATIONS_QUEUE_URL:}
-    # How notifications are delivered: "logging" (default, no dependency) or
-    # "redis" (publish to the realtime-gateway, which pushes over WebSocket).
-    delivery: ${RIDENOW_NOTIFICATIONS_DELIVERY:logging}
-    redis-channel: ${RIDENOW_NOTIFICATIONS_REDIS_CHANNEL:ridenow.notifications}
     poll:
       # Long-poll wait and how many messages to pull per receive.
       wait-seconds: 10

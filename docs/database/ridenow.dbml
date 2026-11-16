@@ -308,6 +308,33 @@ Table payments {
 
 
 // ============================================================
+// NOTIFICATION WORKER
+// ============================================================
+//
+// notification-worker owns the user-readable inbox. One row per recipient
+// per event. The frontend polls GET /api/notifications?since=.
+// user_id and trip_id are logical references (scalar values, not FKs).
+// event_id is the id of the domain event that produced the row; the
+// unique (event_id, user_id) makes redelivery of an event add nothing.
+//
+Table notifications {
+  id uuid [primary key]
+  // Logical reference to User Service (the recipient: rider or driver user).
+  user_id uuid [not null]
+  event_id uuid [not null]
+  type varchar [not null, note: 'The event type, e.g. driver.accepted, trip.completed']
+  message varchar [not null]
+  // Logical reference to Trip Service.
+  trip_id uuid
+  occurred_at timestamp
+  created_at timestamp [not null]
+  read_at timestamp
+  indexes {
+    (user_id, created_at, id)
+    (event_id, user_id) [unique]
+  }
+}
+// ============================================================
 // RATING
 // ============================================================
 //

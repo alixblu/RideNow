@@ -132,7 +132,7 @@ warns and leaves it blank, which is harmless for the change-set preview.)
 
 > This provisions **infrastructure only**. The image build, the in-cluster Helm /
 > `kubectl` add-ons, and the service manifests are separate steps. Follow
-> `../localfile/aws/00-deploy-runbook.md` for the full dependency-ordered sequence
+> `../guides/aws/00-deploy-runbook.md` for the full dependency-ordered sequence
 > (stacks + images + add-ons + services).
 
 ## Teardown
@@ -181,17 +181,18 @@ free tier — tear down environments you are no longer using.
   | `ridenow-<env>-notifications` | every `ridenow.*` event | notification-worker |
 
   Each has a `-dlq` (maxReceiveCount 5). Redis serves driver live state, the GEO
-  index, and the Pub/Sub channel notification-worker uses to reach
-  realtime-gateway (the WebSocket service at `/ws` on the ALB).
+  index, the driver location Pub/Sub channel, and the trip tracking pairing keys
+  that notification-worker writes and realtime-gateway (the SSE service at `/live`
+  on the ALB) reads.
 - **Upgrading an existing stack 01:** the shared `ridenow-<env>-app-access`
   policy no longer grants SQS / EventBridge. Anything that relied on it for
   messaging (for example a hand-made notification-worker role from guide 08)
   must move to the per-service role from stack 07 *before* stack 01 is updated,
   or it loses queue access.
 - **Redis TLS:** ElastiCache has in-transit encryption on, so clients must
-  connect with TLS. notification-worker and realtime-gateway set `REDIS_SSL=true`;
-  driver-service and matching-service do not support it yet, a known gap to close
-  before they use ElastiCache.
+  connect with TLS. Every Redis client (driver-service, matching-service,
+  notification-worker, realtime-gateway) reads `REDIS_SSL` (default `false` locally)
+  and the Kubernetes manifests set it to `true`.
 
 ---
 

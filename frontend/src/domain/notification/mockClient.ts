@@ -1,67 +1,56 @@
 /**
- * Notification Mock_Client — in-memory stub that conforms to
- * {@link NotificationServiceClient} (Req 12.1, 12.3).
+ * Notification Mock_Client — an in-memory inbox that behaves like notification-worker's
+ * API: items per user, ordered oldest first, `listSince` returns only items after the
+ * given id, and `markRead` keeps the first read time.
  *
- * `listForIdentity(identityId)` is deterministic per identity: the same id always
- * yields the same notifications. Each returned {@link NotificationResponse} has a
- * stable `id`, its `recipientId` equal to the requested `identityId`, a non-empty
- * `message`, and an ISO-8601 `createdAt` timestamp.
- *
- * The empty-state is exercised on purpose (Req 12.2, verified by task 18.3): identities
- * whose hash falls into the empty bucket return `[]`, while all others return a short
- * deterministic list. This lets the notifications view show both the populated and the
- * empty case without any backend.
+ * `push` is mock-only (not on the contract): screens never call it, but other mocks
+ * and tests use it to simulate the worker writing a notification.
  */
-import type {
-  NotificationResponse,
-  NotificationServiceClient,
-} from "./contract";
+import { ApiError } from "../../http/ApiError";
+import type { NotificationResponse, NotificationServiceClient } from "./contract";
 
-/** A fixed epoch base so generated timestamps are deterministic, not clock-dependent. */
-const BASE_EPOCH_MS = Date.UTC(2024, 0, 1, 0, 0, 0);
+/** Matches the server's cap on one page. */
+const MAX_PAGE = 100;
 
-/** Small stable string hash (FNV-1a style) used to bucket identities deterministically. */
-function hashIdentity(identityId: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < identityId.length; i += 1) {
-    hash ^= identityId.charCodeAt(i);
-    // 32-bit FNV prime multiply, kept in unsigned range.
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash >>> 0;
+export interface NotificationMockClient extends NotificationServiceClient {
+  /** Simulate notification-worker writing an item; returns the stored item. */
+  push(item: Omit<NotificationResponse, "id" | "createdAt" | "readAt">): NotificationResponse;
 }
 
-/**
- * Create a fresh notification Mock_Client.
- *
- * Deterministic per identity: identities hashing to the empty bucket (hash % 4 === 0)
- * return an empty array; every other identity returns a short, stable list whose
- * entries all carry the requested id as their `recipientId`.
- */
-export function createNotificationMockClient(): NotificationServiceClient {
+export function createNotificationMockClient(): NotificationMockClient {
+  const items: NotificationResponse[] = [];
+
   return {
-    async listForIdentity(
-      identityId: string,
-    ): Promise<NotificationResponse[]> {
-      const hash = hashIdentity(identityId);
-
-      // Empty-state bucket: some identities legitimately have no notifications.
-      if (hash % 4 === 0) {
-        return [];
+    push(item) {
+      const stored: NotificationResponse = {
+        ...item,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        readAt: null,
+      };
+      items.push(stored);
+      return stored;
+    },
+    listSince(userId: string, sinceId?: string): Promise<NotificationResponse[]> {
+      const mine = items.filter((n) => n.userId === userId);
+      if (sinceId === undefined) {
+        return Promise.resolve(mine.slice(-MAX_PAGE).map((n) => ({ ...n })));
       }
-
-      // Otherwise 1–3 deterministic notifications for this identity.
-      const count = (hash % 3) + 1;
-      const notifications: NotificationResponse[] = [];
-      for (let i = 0; i < count; i += 1) {
-        notifications.push({
-          id: `notif-${identityId}-${i}`,
-          recipientId: identityId,
-          message: `Notification ${i + 1} for ${identityId}`,
-          createdAt: new Date(BASE_EPOCH_MS + hash + i * 60_000).toISOString(),
-        });
+      const index = mine.findIndex((n) => n.id === sinceId);
+      if (index < 0) {
+        return Promise.reject(ApiError.validation("Unknown 'since' cursor"));
       }
-      return notifications;
+      return Promise.resolve(mine.slice(index + 1, index + 1 + MAX_PAGE).map((n) => ({ ...n })));
+    },
+    markRead(id: string): Promise<NotificationResponse> {
+      const item = items.find((n) => n.id === id);
+      if (!item) {
+        return Promise.reject(ApiError.notFound("Notification not found"));
+      }
+      if (item.readAt === null) {
+        item.readAt = new Date().toISOString();
+      }
+      return Promise.resolve({ ...item });
     },
   };
 }

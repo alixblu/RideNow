@@ -32,6 +32,31 @@ const MAX_LIMIT = 100;
  */
 export function createTripMockClient(): TripServiceClient {
   const store = new Map<string, TripResponse>();
+  /** One legal lifecycle step; anything else is a conflict, like trip-service's 409. */
+  function transition(
+    id: string,
+    from: TripResponse["status"],
+    to: TripResponse["status"],
+    stamp: (now: string, trip: TripResponse) => Partial<TripResponse>,
+  ): Promise<TripResponse> {
+    const existing = store.get(id);
+    if (!existing) {
+      return Promise.reject(ApiError.notFound("The requested trip could not be found."));
+    }
+    if (existing.status !== from) {
+      return Promise.reject(ApiError.conflict(`Trip is ${existing.status}; expected ${from}.`));
+    }
+    const now = new Date().toISOString();
+    const next: TripResponse = {
+      ...existing,
+      ...stamp(now, existing),
+      status: to,
+      version: existing.version + 1,
+      updatedAt: now,
+    };
+    store.set(id, next);
+    return Promise.resolve(next);
+  }
 
   return {
     requestTrip(req: CreateTripRequest): Promise<TripResponse> {
@@ -119,6 +144,18 @@ export function createTripMockClient(): TripServiceClient {
       return Promise.resolve(cancelled);
     },
 
+    arriveTrip(id: string): Promise<TripResponse> {
+      return transition(id, "DRIVER_ASSIGNED", "DRIVER_ARRIVED", (now) => ({ arrivedAt: now }));
+    },
+    startTrip(id: string): Promise<TripResponse> {
+      return transition(id, "DRIVER_ARRIVED", "IN_PROGRESS", (now) => ({ startedAt: now }));
+    },
+    completeTrip(id: string): Promise<TripResponse> {
+      return transition(id, "IN_PROGRESS", "COMPLETED", (now, trip) => ({
+        completedAt: now,
+        finalFare: trip.estimatedFare,
+      }));
+    },
     listTrips(params: ListTripsParams): Promise<Page<TripResponse>> {
       const limit = Math.min(
         Math.max(params.limit ?? DEFAULT_LIMIT, 0),

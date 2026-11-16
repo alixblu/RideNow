@@ -25,7 +25,7 @@ started with the simplest local mechanism and is swapped for the managed one by
 | Live driver state, GEO, Pub/Sub, cache | Redis container | ElastiCache | Redis host/port (+ TLS flag) |
 | Nearby-driver search | Postgres scan | Redis GEO | `NearbyDriverFinder` |
 | Payment provider | `SimulatedPaymentGateway` | a real provider | `PaymentGateway` |
-| Delivery to apps | logging sender | Redis -> realtime-gateway -> WebSocket | `NotificationSender`, `ClientChannel` |
+| Delivery to apps | inbox table, read by polling; driver position over SSE | the same; the gateway sits behind the ALB `/live` path | `NotificationSender`, `RoadSnapper` (frontend) |
 | Running a service | `mvnw spring-boot:run`, then Docker Compose | EKS on Fargate | image + env vars |
 | Secrets | `application.yaml` / `.env` | Secrets Manager via External Secrets + IRSA | env vars |
 
@@ -57,8 +57,8 @@ logic, the boundary has leaked. Fix that before adding anything new.
                     |
                     v
    +-------------------------+  Redis Pub/Sub  +------------------+
-   | notification-worker     |---------------->| realtime-gateway |--WebSocket--> apps
-   | idempotent SQS consumer |                 | holds sockets    |
+   | notification-worker     |---------------->| realtime-gateway |--SSE--------> apps
+   | idempotent SQS consumer |                 | holds streams    |
    +-------------------------+                 +------------------+
 ```
 
@@ -69,8 +69,8 @@ logic, the boundary has leaked. Fix that before adding anything new.
 | trip-service | trips, trip offers, the accept race | HTTP to payment-service; publishes events |
 | payment-service | payments | serves HTTP; consumes its queue; publishes events |
 | matching-service | driver positions, offers it makes, the GEO index | consumes its queue; publishes events |
-| notification-worker | the processed-notification ledger | consumes its queue; publishes to Redis |
-| realtime-gateway | nothing (no database) | subscribes to Redis; holds WebSockets |
+| notification-worker | the processed-notification ledger, the notification inbox | consumes its queue; writes tracking keys to Redis; serves `/api/notifications` |
+| realtime-gateway | nothing (no database) | subscribes to Redis; holds SSE streams |
 
 Rules that hold everywhere (from `AGENTS.md`):
 
@@ -109,8 +109,8 @@ flowchart LR
   EB -->|trip.requested| QM[matching queue + DLQ] --> M
   EB -->|trip.completed, trip.cancelled| QP[payment queue + DLQ] --> P
   EB -->|every ridenow.* event| QN[notifications queue + DLQ] --> N[notification-worker]
-  N -->|Redis Pub/Sub| G[realtime-gateway]
-  G -->|WebSocket| A[apps]
+  N -->|inbox table| I[(notifications)]
+  A[apps] -->|poll /api/notifications| N
 ```
 
 - **One rule per consumer, matched on `detail-type`.** A consumer sees only the events
@@ -179,7 +179,7 @@ AUTHORIZED -> FAILED                    capture failed (compensation path)
 
 **Redis Pub/Sub is not a queue.** It is fire-and-forget: a subscriber that is down
 misses the message forever, and nothing is stored, retried or dead-lettered. That suits
-GPS pings and the last hop to the WebSocket gateway, because the client resyncs over
+GPS pings and the last hop to the SSE gateway, because the client resyncs over
 REST. It never suits payments or anything that must not be lost.
 
 **Redis has four roles,** and caching is the smallest:
@@ -187,7 +187,7 @@ REST. It never suits payments or anything that must not be lost.
 1. **Primary store for live driver state** (availability and position, with a TTL). Kept
    out of Postgres on purpose. Losing it is fine, because the app re-reports.
 2. **GEO index** for nearby-driver search, owned by matching-service.
-3. **Pub/Sub** for driver location and for notifications on their way to the gateway.
+3. **Pub/Sub** for driver location, and for the trip-ended signal to the gateway.
 4. **Cache-aside** on the driver profile only.
 
 **Cache a read only when all three hold:**
@@ -202,35 +202,23 @@ Default: no cache.
 
 ## 5. Real-time delivery
 
-- **realtime-gateway only holds sockets.** It has no database and no business logic.
-  Clients connect to `/ws` (STOMP) and subscribe to `/topic/users/{userId}`.
-- **No sticky sessions needed.** notification-worker publishes each notification on the
-  Redis channel `ridenow.notifications`. Every gateway pod subscribes, and the pod that
-  holds the recipient's socket delivers it.
-- **The socket is an optimization, never the source of truth.** On every connect and
-  reconnect the client first fetches current state over REST. Each message carries
-  `eventId` and `occurredAt`, so clients drop duplicates and stale messages.
-- **Clients only receive.** `SEND` is rejected, and so is a subscription to anything but an
-  exact per-user topic. That blocks wildcards that would leak other users'
-  notifications. Frame size, subscriptions per connection and frames per window are capped.
-- **Rolling deploys.** Shutdown closes sockets with `1001` "reconnect". Clients reconnect
-  with exponential backoff, jitter and a connect timeout. `realtime-gateway/README.md`
-  has the full client contract.
-- **Scope today: notifications only.** Live driver location over the same socket is a
-  later task, and the Redis channel for it already exists.
+Two paths, both read-only for the client. `REALTIME.md` has the diagrams, the Redis keys,
+the SSE client contract and the map guidance.
 
-**Why WebSocket and not UDP, WebRTC or QUIC:**
+- **Notifications** are written to an inbox table in notification-worker, in the same
+  transaction as the processed-event ledger. The frontend polls
+  `GET /api/notifications?since=`. Nothing is pushed.
+- **Live driver location** reaches only the trip's passenger, over SSE from
+  realtime-gateway, while the trip is `DRIVER_ASSIGNED`, `DRIVER_ARRIVED` or `IN_PROGRESS`.
+  The driver keeps posting over HTTP.
+- **The stream is an optimization, never the source of truth.** The client draws the REST
+  snapshot first, then opens the stream.
+- **Why SSE:** the data flows one way, at about one point a second. SSE needs no
+  subscription protocol and reconnects by itself. Why not WebSocket, UDP, WebRTC or
+  QUIC: nothing flows from client to server on this path, riders and drivers never talk
+  directly, and WebTransport support is still immature.
 
-- The traffic is small and low-rate: about one GPS ping a second, and a few events per trip.
-- TCP head-of-line blocking does not matter at that rate.
-- WebRTC is for peer-to-peer media, and riders and drivers never talk directly.
-- WebTransport / QUIC client and server support is still immature.
-- Revisit only if load tests show head-of-line blocking on bad mobile networks. SSE is
-  the simpler one-way fallback.
-
----
-
-## 6. Running it
+---## 6. Running it
 
 | Stage | How |
 |---|---|
@@ -259,7 +247,7 @@ Default: no cache.
 - RDS and Redis sit in private subnets and admit only cluster traffic. Per-service
   security groups narrow that to "own database only".
 - Services are `ClusterIP`. The only internet-facing entry is the ALB: four API paths
-  plus `/ws`, with a 300s idle timeout for sockets.
+  plus `/live`, with a 300s idle timeout for streams.
 
 ---
 
@@ -299,12 +287,11 @@ mechanism swap, not a redesign.
 
 1. **No authentication or authorization.**
    - There is no Spring Security, JWT, or service-to-service auth.
-   - The WebSocket accepts any user id.
+   - The SSE endpoint and the inbox API accept any user id.
    - Credentials are not hashed.
 2. **No edge TLS, WAF, or source restriction.** The ALB is HTTP:80 and open to the internet.
 3. **Sync-call resilience is partial.**
-   - trip -> payment has connect and read timeouts.
-   - driver -> user has none.
+   - trip -> payment and driver -> user have connect and read timeouts (2s / 3s).
    - There is no retry and no circuit breaker anywhere.
 4. **No transactional outbox.**
    - If a process dies between commit and the after-commit publish, the event is lost.
@@ -315,25 +302,20 @@ mechanism swap, not a redesign.
 
 ### 7.3 Lower-severity gaps
 
-- **Redis TLS.**
-  - ElastiCache is provisioned with in-transit TLS.
-  - notification-worker and realtime-gateway set `REDIS_SSL=true`.
-  - driver-service and matching-service cannot connect over TLS yet.
 - **Orphaned holds.** A hold whose compensation is also lost stays forever. The fix is an
   expiry sweep.
-- **No durable inbox.** A user who is offline at the moment of delivery misses the
-  notification. REST still shows the true state.
-- **No push to closed apps.** A WebSocket reaches only foreground apps, and FCM/APNs are
-  out of scope.
+- **No push to closed apps.** The inbox is polled, so only open apps see notifications.
+  FCM/APNs are out of scope.
 - **Probes and HPA.**
   - Most services point both liveness and readiness at `/actuator/health`.
-  - realtime-gateway scales on CPU, not on connection count.
+  - realtime-gateway scales on CPU, not on open-stream count.
+- **No CORS on the services.** A browser reaches them through the Vite dev proxy
+  locally and through the single ALB origin in the cloud.
 - **No east-west restriction between pods.**
   - On Fargate, NetworkPolicy is not enforced.
   - The fix is to extend the per-service security groups to name allowed callers.
 - **Cluster policies.** There is no `PodDisruptionBudget` and no resource quota.
 - **Queue-depth scaling.** notification-worker and the other consumers don't scale on queue depth.
-- **Malformed JSON.** trip-service and matching-service return `500` instead of `400`.
 - **Simulated payment.** Payment uses a simulated gateway.
 
 **Hardening order:** security -> observability -> sync-call resilience -> outbox.
@@ -342,24 +324,34 @@ mechanism swap, not a redesign.
 
 ## 8. How it was verified
 
-The changes were checked against the full local stack (`docker compose up --build`, all
-containers healthy) with real STOMP clients subscribed as the passenger and the driver.
+Checked against the full local stack (`docker compose up --build`, all containers
+healthy) with `curl` as the rider, the driver and a third user, and `curl -N` holding
+the SSE stream. Every row passed.
 
 | Check | Result |
 |---|---|
-| Request a trip | `201`; fare computed; payment `AUTHORIZED`, idempotency key = trip id |
-| Async matching | `trip.requested` -> offer recorded for the nearby driver; `/match` never called |
-| Full lifecycle | the passenger got all six notifications in order, ending with `payment.succeeded` |
-| Async capture | `trip.completed` -> payment `PAID`, with no HTTP call |
-| Cancel | payment `RELEASED`; `match.offered` reached only the driver |
-| Strict authorize | payment-service stopped -> `503`, no trip, no notification |
-| Consumer down | the message waited in its queue and was handled on restart |
-| Duplicate delivery | the paid payment stayed unchanged |
-| DLQ | a malformed message failed 5 times, then sat in the DLQ |
-| Gateway restart | socket closed with `1001`; the client reconnected and kept receiving |
+| Go online with no vehicle | `409` "Driver has no active vehicle" |
+| Go online, then post a position | `vehicleType` = the newest active vehicle; `recordedAt` set |
+| Request a trip with `paymentMethod` | `201`; payment `AUTHORIZED` |
+| Position handoff | matching offered the HTTP-only driver; no `/api/matching/positions` call |
+| Driver inbox | `match.offered` listed in `GET /api/notifications` |
+| Live stream | passenger got `event: location` about once a second, with no `id:`; `text/event-stream`, `X-Accel-Buffering: no` |
+| Stream guard | another user `403`; a bad UUID `400` |
+| Full lifecycle | arrive / start / complete `200`; `event: trip-ended`, then the stream closed |
+| Reconnect after the end | `410` |
+| Rider inbox | `trip.requested, driver.accepted, driver.arrived, trip.started, trip.completed, payment.succeeded`, in order; `?since=` returned only the newer items; mark-read set `readAt` |
+| Async capture | payment `PAID`, with no HTTP call |
+| Malformed JSON | `400` "Malformed request body" from user, driver, trip, payment and matching (notification-worker has no JSON-body endpoint; its handler is unit-tested) |
+| Going offline | the driver left matching's index |
+| user-service stopped | creating a driver returned `503` in 3.2s |
+| Gateway restart mid-trip | the open stream ended; a new stream got positions again; a cancel then sent `trip-ended` |
+| `localstack/smoke-test.sh` | `trip.requested` -> matching + notifications; `trip.completed` -> payment + notifications |
+| Test suites | 228 backend tests run, Testcontainers included; all pass except the 5 context tests that need a Postgres on `localhost` (see `README.md`). Frontend: 127 tests pass and `npm run build` succeeds |
 
 **Not verified:**
-
-- **AWS itself.** The stacks pass `cfn-lint`; nothing was deployed.
-- **Testcontainers suites.** They could not reach Docker Engine 29 on the dev machine.
+- **A real browser.** The two-browser flow (Leaflet map, smooth marker, Geolocation,
+  toasts) was not driven by hand. Its pieces are covered by component and hook tests,
+  and the stream and inbox by the `curl` run above.
+- **OSRM.** Snapping was tested with a mocked `fetch` only; no OSRM server was called.
+- **AWS itself.** Nothing was deployed. `cfn-lint` was not re-run (no stack changed).
 - **Scale.** No load tests and no many-replica runs.
