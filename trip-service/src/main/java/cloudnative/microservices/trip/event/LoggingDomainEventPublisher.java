@@ -6,10 +6,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Default publisher: logs the event payload instead of sending it anywhere. This
  * lets trip-service run with no AWS at all (plain {@code mvn test}, local runs
- * without the "eventbridge" profile). It is a plain class (not a Spring
+ * without the "sns" profile). It is a plain class (not a Spring
  * component); {@link EventPublisherConfig} registers it only when no other
- * {@link DomainEventPublisher} bean exists, so the EventBridge publisher cleanly
- * replaces it under the "eventbridge" profile.
+ * {@link DomainEventPublisher} bean exists, so the SNS publisher cleanly
+ * replaces it under the "sns" profile.
  */
 public class LoggingDomainEventPublisher implements DomainEventPublisher {
 

@@ -20,7 +20,7 @@ started with the simplest local mechanism and is swapped for the managed one by
 | Boundary | Local mechanism | Cloud mechanism | Hidden behind |
 |---|---|---|---|
 | Service-to-service call | HTTP to `localhost` / compose DNS | HTTP to Kubernetes Service DNS | a URL in config + a small client class |
-| Domain events | EventBridge + SQS on LocalStack | Amazon EventBridge + SQS | `DomainEventPublisher` (logging impl or EventBridge impl) |
+| Domain events | SNS + SQS on LocalStack | Amazon SNS + SQS | `DomainEventPublisher` (logging impl or SNS impl) |
 | Durable data | Postgres container per service | RDS PostgreSQL per service | datasource URL |
 | Live driver state, GEO, Pub/Sub, cache | Redis container | ElastiCache | Redis host/port (+ TLS flag) |
 | Nearby-driver search | Postgres scan | Redis GEO | `NearbyDriverFinder` |
@@ -53,7 +53,7 @@ logic, the boundary has leaked. Fix that before adding anything new.
    +-------------------------------+          | release        |
                     | events                  +----------------+
                     v                                ^ trip.completed /
-             EventBridge bus  --> one SQS queue per consumer --+ trip.cancelled
+             SNS topic        --> one SQS queue per consumer --+ trip.cancelled
                     |
                     v
    +-------------------------+  Redis Pub/Sub  +------------------+
@@ -103,20 +103,24 @@ interactions stay synchronous, and async is added per interaction, not project-w
 
 ```mermaid
 flowchart LR
-  T[trip-service] -->|trip.* / driver.*| EB[(EventBridge bus)]
+  T[trip-service] -->|trip.* / driver.*| EB[(SNS topic)]
   P[payment-service] -->|payment.succeeded / failed| EB
   M[matching-service] -->|match.offered| EB
   EB -->|trip.requested| QM[matching queue + DLQ] --> M
   EB -->|trip.completed, trip.cancelled| QP[payment queue + DLQ] --> P
-  EB -->|every ridenow.* event| QN[notifications queue + DLQ] --> N[notification-worker]
+  EB -->|every event, no filter| QN[notifications queue + DLQ] --> N[notification-worker]
   N -->|inbox table| I[(notifications)]
   A[apps] -->|poll /api/notifications| N
 ```
 
-- **One rule per consumer, matched on `detail-type`.** A consumer sees only the events
-  it handles. Adding a consumer means adding a rule and a queue; publishers do not change.
-- **Every queue has a DLQ** with `maxReceiveCount` 5. Each queue's policy admits only its
-  own rule (`aws:SourceArn`).
+- **One filtered subscription per consumer, matched on the event `type`.** A consumer
+  sees only the events it handles (a body-scope filter policy). The notifications
+  subscription has no filter and receives everything. Adding a consumer means adding a
+  subscription and a queue; publishers do not change.
+- **Raw message delivery.** The SQS body is the event JSON itself, so consumers parse it
+  directly, with no SNS envelope.
+- **Every queue has a DLQ** with `maxReceiveCount` 5. Each queue's policy admits only the
+  RideNow topic (`aws:SourceArn`).
 - **Events are published after commit** (`@TransactionalEventListener(AFTER_COMMIT)`),
   so a rolled-back change publishes nothing.
 - **Every consumer is idempotent,** because SQS delivers at least once. A consumer deletes
@@ -174,7 +178,7 @@ AUTHORIZED -> FAILED                    capture failed (compensation path)
 |---|---|---|
 | Answer now | HTTP | a queue |
 | Do one task later, reliably | SQS (+ DLQ) | Redis Pub/Sub |
-| One event, many independent reactors | EventBridge -> one SQS queue per consumer | SNS (an alternative to EventBridge; we picked one) |
+| One event, many independent reactors | SNS -> one SQS queue per consumer | EventBridge (an alternative to SNS; we picked one) |
 | Real-time, lossy, latest-value-wins stream | Redis Pub/Sub | SQS |
 
 **Redis Pub/Sub is not a queue.** It is fire-and-forget: a subscriber that is down
@@ -217,25 +221,35 @@ the SSE client contract and the map guidance.
   subscription protocol and reconnects by itself. Why not WebSocket, UDP, WebRTC or
   QUIC: nothing flows from client to server on this path, riders and drivers never talk
   directly, and WebTransport support is still immature.
+- **Why realtime-gateway stays on EKS (not API Gateway + Lambda):** the gateway holds an
+  SSE connection open for up to 30 minutes per passenger and keeps a Redis Pub/Sub
+  subscription open. Lambda runs per invocation (15 minutes at most) and cannot hold a
+  background subscription, so a serverless version would need a different design: an API
+  Gateway WebSocket API, a connection table, and a fan-out function, billed per message
+  and per connection minute. It would also move the pairing, throttling and 403/410 rules
+  out of the Spring Boot service. The gateway is a small stateless service on Fargate, so
+  it already needs no node management. Revisit if the transport changes to WebSocket.
 
----## 6. Running it
+---
+
+## 6. Running it
 
 | Stage | How |
 |---|---|
 | One service | `./mvnw spring-boot:run` + that service's own `docker-compose.yml` (DB only) |
 | Whole system | root `docker compose up --build`: 6 Postgres, Redis, LocalStack, 7 services |
-| Cloud | EKS on **Fargate** (no node groups), Multi-AZ RDS per service, ElastiCache, SQS, EventBridge |
+| Cloud | EKS on **Fargate** (no node groups), Multi-AZ RDS per service, ElastiCache, SNS, SQS |
 
 **Cloud footprint.** CloudFormation in `iac/stacks/`, deployed in order by
 `iac/scripts/deploy.sh`. The script resolves the cluster's OIDC id between stacks 06 and 07.
 
 | Stack | Provides |
 |---|---|
-| 01 | IAM: cluster and Fargate roles, a shared ECR/Secrets policy, one messaging policy per service scoped to its exact queue/bus |
+| 01 | IAM: cluster and Fargate roles, a shared ECR/Secrets policy, one messaging policy per service scoped to its exact queue/topic |
 | 02 | three-AZ network with a NAT per AZ |
 | 03 | ECR, one repo per service |
 | 04 | RDS per service |
-| 05 | bus, three queues + DLQs, rules, queue policies, Redis |
+| 05 | topic, three queues + DLQs, subscriptions, queue policies, Redis |
 | 06 | EKS cluster + Fargate profiles |
 | 07 | IRSA roles for the add-ons and for trip, payment, matching and notification-worker |
 
@@ -275,8 +289,8 @@ mechanism swap, not a redesign.
   - Repeated payment actions cannot double-charge.
 - **Explicit failure states for payment.** A strict sync authorize, plus compensation
   instead of a distributed transaction.
-- **Least-privilege IAM.** Each service's IRSA role reaches only its own queue and the bus.
-  Each queue accepts only its own rule.
+- **Least-privilege IAM.** Each service's IRSA role reaches only its own queue and the topic.
+  Each queue accepts only the topic.
 - **Credible platform setup.**
   - Fargate, with probes, requests/limits and HPA.
   - Secrets come from Secrets Manager.
@@ -298,7 +312,7 @@ mechanism swap, not a redesign.
    - That matters most for `trip.completed`, which is what triggers the capture.
 5. **Thin observability.**
    - There is a health endpoint only.
-   - There are no metrics, no tracing, and no correlation ids across HTTP -> EventBridge -> SQS.
+   - There are no metrics, no tracing, and no correlation ids across HTTP -> SNS -> SQS.
 
 ### 7.3 Lower-severity gaps
 

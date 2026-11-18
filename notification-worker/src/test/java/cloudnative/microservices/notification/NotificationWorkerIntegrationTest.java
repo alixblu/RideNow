@@ -38,7 +38,7 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 /**
  * The worker boots with its real wiring (context loads, Flyway applies), consumes
- * an EventBridge-shaped message from SQS once, writes one inbox row, ignores a
+ * a raw-delivery event message from SQS once, writes one inbox row, ignores a
  * duplicate delivery (idempotency), and lets a poisoned message reach the
  * dead-letter queue after the redrive maxReceiveCount, leaving no ledger or inbox row.
  *
@@ -117,17 +117,17 @@ class NotificationWorkerIntegrationTest {
     @Autowired
     StringRedisTemplate redis;
 
-    /** Build an EventBridge-shaped message wrapping a DomainEvent under "detail". */
-    private static String eventBridgeMessage(UUID eventId, String type, UUID aggregateId, UUID passengerId) {
-        return eventBridgeMessage(eventId, type, aggregateId, passengerId, null);
+    /** Build a raw-delivery message body: the DomainEvent JSON itself. */
+    private static String eventMessage(UUID eventId, String type, UUID aggregateId, UUID passengerId) {
+        return eventMessage(eventId, type, aggregateId, passengerId, null);
     }
-    private static String eventBridgeMessage(
+    private static String eventMessage(
             UUID eventId, String type, UUID aggregateId, UUID passengerId, UUID driverId) {
-        return "{\"source\":\"ridenow.trip\",\"detail-type\":\"" + type + "\",\"detail\":{"
+        return "{"
                 + "\"eventId\":\"" + eventId + "\",\"type\":\"" + type + "\","
                 + "\"aggregateId\":\"" + aggregateId + "\",\"data\":{\"tripId\":\"" + aggregateId + "\","
                 + "\"passengerId\":\"" + passengerId + "\""
-                + (driverId == null ? "" : ",\"driverId\":\"" + driverId + "\"") + "}}}";
+                + (driverId == null ? "" : ",\"driverId\":\"" + driverId + "\"") + "}}";
     }
 
     private void send(String body) {
@@ -139,7 +139,7 @@ class NotificationWorkerIntegrationTest {
         UUID eventId = UUID.randomUUID();
         UUID tripId = UUID.randomUUID();
         UUID passengerId = UUID.randomUUID();
-        String body = eventBridgeMessage(eventId, "trip.completed", tripId, passengerId);
+        String body = eventMessage(eventId, "trip.completed", tripId, passengerId);
 
         // Deliver the same event twice.
         send(body);
@@ -169,14 +169,14 @@ class NotificationWorkerIntegrationTest {
         String tripKey = "ridenow:tracking:trip:" + tripId;
         String driverKey = "ridenow:tracking:driver:" + driverId;
 
-        send(eventBridgeMessage(UUID.randomUUID(), "driver.accepted", tripId, passengerId, driverId));
+        send(eventMessage(UUID.randomUUID(), "driver.accepted", tripId, passengerId, driverId));
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
             assertThat(redis.opsForValue().get(tripKey)).contains(passengerId.toString(), driverId.toString());
             assertThat(redis.opsForValue().get(driverKey)).contains(tripId.toString());
             assertThat(redis.getExpire(tripKey)).isBetween(1L, 3L * 60 * 60);
         });
 
-        send(eventBridgeMessage(UUID.randomUUID(), "trip.completed", tripId, passengerId, driverId));
+        send(eventMessage(UUID.randomUUID(), "trip.completed", tripId, passengerId, driverId));
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
             assertThat(redis.hasKey(tripKey)).isFalse();
             assertThat(redis.hasKey(driverKey)).isFalse();
@@ -188,7 +188,7 @@ class NotificationWorkerIntegrationTest {
         UUID tripId = UUID.randomUUID();
         UUID passengerId = UUID.randomUUID();
         RECORDER.failFor(tripId);
-        send(eventBridgeMessage(eventId, "trip.completed", tripId, passengerId));
+        send(eventMessage(eventId, "trip.completed", tripId, passengerId));
 
         // After maxReceiveCount (2) failed deliveries the message lands in the DLQ.
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() -> {

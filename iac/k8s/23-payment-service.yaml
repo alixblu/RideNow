@@ -2,7 +2,7 @@
 #
 # Authorizes fares synchronously (POST /api/payments, called by trip-service),
 # captures / releases them asynchronously from the payment SQS queue
-# (trip.completed / trip.cancelled), and publishes payment events to the bus.
+# (trip.completed / trip.cancelled), and publishes payment events to the topic.
 # AWS access via IRSA (no static keys): the role is stack 07's
 # PaymentServiceRoleArn export.
 #
@@ -56,9 +56,9 @@ spec:
                   key: password
             # Publish payment events; consume the payment queue (capture/release).
             - name: SPRING_PROFILES_ACTIVE
-              value: "eventbridge"
-            - name: RIDENOW_EVENTS_BUS_NAME
-              value: "ridenow-<ENV>-events"
+              value: "sns"
+            - name: RIDENOW_EVENTS_TOPIC_ARN
+              value: "arn:aws:sns:<REGION>:<ACCOUNT_ID>:ridenow-<ENV>-events"
             - name: RIDENOW_PAYMENT_QUEUE_URL
               value: "<PAYMENT_QUEUE_URL>"
             - name: AWS_REGION

@@ -10,7 +10,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * matching_driver_positions / later a Redis GEO index). It never reads another
  * service's data store directly - driver positions arrive via an explicit handoff.
  * Matching is triggered asynchronously by trip.requested events (SQS) and announces
- * each offer with a match.offered event (EventBridge).
+ * each offer with a match.offered event (SNS).
  */
 @SpringBootApplication
 @EnableScheduling // drives the SQS poller for trip.requested

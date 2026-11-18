@@ -27,23 +27,23 @@ import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
-import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
+import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueAttributesRequest;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Queue -> consumer -> database, end to end on LocalStack + Postgres. The bus,
- * queue, DLQ and rule are created like {@code localstack/init/01-messaging.sh}
- * (payment rule: {@code trip.completed}, {@code trip.cancelled}), except that the
- * redrive count is 2 and the visibility timeout 1s, to keep the DLQ test fast.
+ * Queue -> consumer -> database, end to end on LocalStack + Postgres. The topic,
+ * queue, DLQ and subscription are created like {@code localstack/init/01-messaging.sh}
+ * (payment subscription: raw delivery, body filter on {@code trip.completed} and
+ * {@code trip.cancelled}), except that the redrive count is 2 and the visibility
+ * timeout 1s, to keep the DLQ test fast.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class PaymentQueueConsumerIntegrationTest {
 
-    static final String BUS = "ridenow-local-events";
+    static final String TOPIC = "ridenow-local-events";
     static final String QUEUE = "ridenow-local-payment";
     static final String DLQ = "ridenow-local-payment-dlq";
 
@@ -55,7 +55,8 @@ class PaymentQueueConsumerIntegrationTest {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3"));
 
     static SqsClient sqs;
-    static EventBridgeClient eventBridge;
+    static SnsClient sns;
+    static String topicArn;
     static String queueUrl;
     static String dlqUrl;
 
@@ -68,10 +69,10 @@ class PaymentQueueConsumerIntegrationTest {
                 AwsBasicCredentials.create(LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey()));
         Region region = Region.of(LOCALSTACK.getRegion());
         sqs = SqsClient.builder().endpointOverride(endpoint).region(region).credentialsProvider(creds).build();
-        eventBridge = EventBridgeClient.builder().endpointOverride(endpoint).region(region)
+        sns = SnsClient.builder().endpointOverride(endpoint).region(region)
                 .credentialsProvider(creds).build();
 
-        eventBridge.createEventBus(b -> b.name(BUS));
+        topicArn = sns.createTopic(b -> b.name(TOPIC)).topicArn();
         dlqUrl = sqs.createQueue(b -> b.queueName(DLQ)).queueUrl();
         String dlqArn = arn(dlqUrl);
         String redrive = "{\"deadLetterTargetArn\":\"" + dlqArn + "\",\"maxReceiveCount\":\"2\"}";
@@ -79,18 +80,15 @@ class PaymentQueueConsumerIntegrationTest {
                 QueueAttributeName.REDRIVE_POLICY, redrive,
                 QueueAttributeName.VISIBILITY_TIMEOUT, "1"))).queueUrl();
         String queueArn = arn(queueUrl);
-        String rule = "ridenow-local-payment-rule";
-        String ruleArn = eventBridge.putRule(b -> b.name(rule).eventBusName(BUS).eventPattern(
-                "{\"source\":[{\"prefix\":\"ridenow.\"}],\"detail-type\":[\"trip.completed\",\"trip.cancelled\"]}"))
-                .ruleArn();
         String policy = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\","
-                + "\"Principal\":{\"Service\":\"events.amazonaws.com\"},\"Action\":\"sqs:SendMessage\","
+                + "\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\","
                 + "\"Resource\":\"" + queueArn + "\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\""
-                + ruleArn + "\"}}}]}";
+                + topicArn + "\"}}}]}";
         sqs.setQueueAttributes(b -> b.queueUrl(queueUrl).attributes(Map.of(QueueAttributeName.POLICY, policy)));
-        eventBridge.putTargets(b -> b.rule(rule).eventBusName(BUS)
-                .targets(t -> t.id("payment-queue").arn(queueArn)));
-
+        sns.subscribe(b -> b.topicArn(topicArn).protocol("sqs").endpoint(queueArn).attributes(Map.of(
+                "RawMessageDelivery", "true",
+                "FilterPolicyScope", "MessageBody",
+                "FilterPolicy", "{\"type\":[\"trip.completed\",\"trip.cancelled\"]}")));
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
@@ -106,7 +104,7 @@ class PaymentQueueConsumerIntegrationTest {
     @AfterAll
     static void close() {
         if (sqs != null) sqs.close();
-        if (eventBridge != null) eventBridge.close();
+        if (sns != null) sns.close();
     }
 
     private static String arn(String url) {
@@ -126,10 +124,8 @@ class PaymentQueueConsumerIntegrationTest {
         return paymentRepository.save(payment);
     }
 
-    private void putOnBus(String type, String detail) {
-        var response = eventBridge.putEvents(b -> b.entries(PutEventsRequestEntry.builder()
-                .eventBusName(BUS).source("ridenow.trip").detailType(type).detail(detail).build()));
-        assertThat(response.failedEntryCount()).isZero();
+    private void publish(String body) {
+        sns.publish(b -> b.topicArn(topicArn).message(body));
     }
 
     private static String tripCompleted(UUID eventId, UUID tripId) {
@@ -146,12 +142,12 @@ class PaymentQueueConsumerIntegrationTest {
     }
 
     @Test
-    void tripCompletedOnTheBusCapturesTheHoldAndADuplicateChangesNothing() {
+    void tripCompletedOnTheTopicCapturesTheHoldAndADuplicateChangesNothing() {
         UUID tripId = UUID.randomUUID();
         seedAuthorized(tripId);
         String event = tripCompleted(UUID.randomUUID(), tripId);
 
-        putOnBus("trip.completed", event);
+        publish(event);
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(paymentRepository.findByTripId(tripId).orElseThrow().getStatus())
                         .isEqualTo(PaymentStatus.PAID));
@@ -159,7 +155,7 @@ class PaymentQueueConsumerIntegrationTest {
         assertThat(paid.getAmount()).isEqualByComparingTo("52000.00");
 
         // The same event again (SQS is at-least-once): nothing changes.
-        putOnBus("trip.completed", event);
+        publish(event);
         await().during(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(8)).untilAsserted(() -> {
             Payment again = paymentRepository.findByTripId(tripId).orElseThrow();
             assertThat(again.getStatus()).isEqualTo(PaymentStatus.PAID);
@@ -172,7 +168,7 @@ class PaymentQueueConsumerIntegrationTest {
     void aPoisonMessageReachesTheDeadLetterQueue() {
         long before = dlqDepth();
         // "data" must be an object: this one cannot be parsed, so every delivery fails.
-        putOnBus("trip.completed", "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"trip.completed\","
+        publish("{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"trip.completed\","
                 + "\"data\":\"not-an-object\"}");
 
         await().atMost(Duration.ofSeconds(40)).untilAsserted(() ->

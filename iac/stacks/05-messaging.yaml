@@ -1,12 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  RideNow messaging layer (05). An EventBridge custom bus that every service
-  publishes domain events to, and one SQS work queue (+ dead-letter queue) per
-  consumer, each fed by an EventBridge rule that matches only the event types
-  that consumer handles (detail-type routing):
+  RideNow messaging layer (05). An SNS topic that every service publishes domain
+  events to, and one SQS work queue (+ dead-letter queue) per consumer, each fed
+  by an SNS subscription with raw message delivery (the SQS body is the event JSON).
+  Subscriptions filter on the event's top-level "type" field (FilterPolicyScope
+  MessageBody), so each consumer receives only the event types it handles:
     matching queue      <- trip.requested                  (matching-service)
     payment queue       <- trip.completed, trip.cancelled  (payment-service)
-    notifications queue <- every ridenow.* event           (notification-worker)
+    notifications queue <- every event, no filter          (notification-worker)
   Plus an ElastiCache Redis replication group (driver GEO / live state, and the
   Pub/Sub channel notification-worker uses to reach realtime-gateway).
   Mirrors localstack/init/01-messaging.sh. Each capability is gated by a
@@ -21,7 +22,7 @@ Parameters:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: Create the EventBridge bus, rules, and SQS queues.
+    Description: Create the SNS topic, subscriptions, and SQS queues.
 
   EnableRedis:
     Type: String
@@ -45,12 +46,19 @@ Conditions:
   RedisOn: !Equals [!Ref EnableRedis, "true"]
 
 Resources:
-  # ---- EventBridge: the one RideNow bus -------------------------------------
-  TripEventBus:
-    Type: AWS::Events::EventBus
+  # ---- SNS: the one RideNow topic -------------------------------------------
+  # No KmsMasterKeyId on purpose: a topic encrypted with the AWS-managed aws/sns
+  # key cannot deliver to SQS subscriptions (that key's policy cannot be edited to
+  # allow the SNS service principal's cross-service use). To encrypt the topic at
+  # rest, use a customer-managed KMS key whose policy allows sns.amazonaws.com.
+  TripEventTopic:
+    Type: AWS::SNS::Topic
     Condition: MessagingOn
     Properties:
-      Name: !Sub "ridenow-${Environment}-events"
+      TopicName: !Sub "ridenow-${Environment}-events"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
   # ---- SQS: notifications queue + DLQ (notification-worker) -----------------
   # Logical ids and names unchanged from the single-queue version, so updating
@@ -132,59 +140,49 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- EventBridge rules: one per consumer, routed by detail-type -----------
-  TripRequestedRule:
-    Type: AWS::Events::Rule
+  # ---- SNS subscriptions: one per consumer, raw delivery, filtered by type ---
+  # RawMessageDelivery: the SQS body is the event JSON itself (no SNS envelope).
+  # FilterPolicyScope MessageBody: the policy matches the JSON body's top-level
+  # "type" field, so publishers set no message attributes. The notifications
+  # subscription has no policy and receives every event.
+  MatchingSubscription:
+    Type: AWS::SNS::Subscription
     Condition: MessagingOn
     Properties:
-      Name: !Sub "ridenow-${Environment}-trip-requested"
-      Description: trip.requested -> matching queue
-      EventBusName: !Ref TripEventBus
-      State: ENABLED
-      EventPattern:
-        source:
-          - prefix: "ridenow."
-        detail-type:
+      TopicArn: !Ref TripEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt MatchingQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        type:
           - trip.requested
-      Targets:
-        - Id: matching-queue
-          Arn: !GetAtt MatchingQueue.Arn
 
-  TripEndedRule:
-    Type: AWS::Events::Rule
+  PaymentSubscription:
+    Type: AWS::SNS::Subscription
     Condition: MessagingOn
     Properties:
-      Name: !Sub "ridenow-${Environment}-trip-ended"
-      Description: trip.completed / trip.cancelled -> payment queue (capture / release)
-      EventBusName: !Ref TripEventBus
-      State: ENABLED
-      EventPattern:
-        source:
-          - prefix: "ridenow."
-        detail-type:
+      TopicArn: !Ref TripEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt PaymentQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        type:
           - trip.completed
           - trip.cancelled
-      Targets:
-        - Id: payment-queue
-          Arn: !GetAtt PaymentQueue.Arn
 
-  AllEventsRule:
-    Type: AWS::Events::Rule
+  NotificationSubscription:
+    Type: AWS::SNS::Subscription
     Condition: MessagingOn
     Properties:
-      Name: !Sub "ridenow-${Environment}-all-events"
-      Description: every RideNow event -> notifications queue
-      EventBusName: !Ref TripEventBus
-      State: ENABLED
-      EventPattern:
-        source:
-          - prefix: "ridenow."
-      Targets:
-        - Id: notifications-queue
-          Arn: !GetAtt NotificationQueue.Arn
+      TopicArn: !Ref TripEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotificationQueue.Arn
+      RawMessageDelivery: true
 
-  # ---- Queue policies: only the matching rule may deliver to each queue -----
-  # Scoped by aws:SourceArn to the specific rule, not to EventBridge at large.
+  # ---- Queue policies: only the RideNow topic may deliver to each queue -----
+  # Scoped by aws:SourceArn to this topic, not to SNS at large.
   MatchingQueuePolicy:
     Type: AWS::SQS::QueuePolicy
     Condition: MessagingOn
@@ -194,15 +192,15 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowTripRequestedRule
+          - Sid: AllowRideNowTopic
             Effect: Allow
             Principal:
-              Service: events.amazonaws.com
+              Service: sns.amazonaws.com
             Action: sqs:SendMessage
             Resource: !GetAtt MatchingQueue.Arn
             Condition:
               ArnEquals:
-                aws:SourceArn: !GetAtt TripRequestedRule.Arn
+                aws:SourceArn: !Ref TripEventTopic
 
   PaymentQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -213,15 +211,15 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowTripEndedRule
+          - Sid: AllowRideNowTopic
             Effect: Allow
             Principal:
-              Service: events.amazonaws.com
+              Service: sns.amazonaws.com
             Action: sqs:SendMessage
             Resource: !GetAtt PaymentQueue.Arn
             Condition:
               ArnEquals:
-                aws:SourceArn: !GetAtt TripEndedRule.Arn
+                aws:SourceArn: !Ref TripEventTopic
 
   NotificationQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -232,15 +230,15 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowAllEventsRule
+          - Sid: AllowRideNowTopic
             Effect: Allow
             Principal:
-              Service: events.amazonaws.com
+              Service: sns.amazonaws.com
             Action: sqs:SendMessage
             Resource: !GetAtt NotificationQueue.Arn
             Condition:
               ArnEquals:
-                aws:SourceArn: !GetAtt AllEventsRule.Arn
+                aws:SourceArn: !Ref TripEventTopic
 
   # ---- ElastiCache Redis (driver GEO / live state, notification Pub/Sub) ----
   RedisSubnetGroup:
@@ -295,17 +293,11 @@ Resources:
           Value: !Ref Environment
 
 Outputs:
-  TripEventBusName:
+  TripEventTopicArn:
     Condition: MessagingOn
-    Value: !Ref TripEventBus
+    Value: !Ref TripEventTopic
     Export:
-      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusName"
-
-  TripEventBusArn:
-    Condition: MessagingOn
-    Value: !GetAtt TripEventBus.Arn
-    Export:
-      Name: !Sub "ridenow-${Environment}-messaging-TripEventBusArn"
+      Name: !Sub "ridenow-${Environment}-messaging-TripEventTopicArn"
 
   NotificationQueueUrl:
     Condition: MessagingOn

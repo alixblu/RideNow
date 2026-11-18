@@ -9,11 +9,11 @@ import java.util.UUID;
  *
  * Small, self-contained contract (no shared cross-service module): the envelope
  * carries identity and timing, and {@code data} carries the event-specific key
- * fields as scalar strings for clean JSON on EventBridge.
+ * fields as scalar strings for clean JSON on SNS.
  *
  * <ul>
  *   <li>{@code eventId}    - unique id; consumers use it for idempotency.</li>
- *   <li>{@code type}       - e.g. {@code match.offered}; the EventBridge DetailType.</li>
+ *   <li>{@code type}       - e.g. {@code match.offered}; subscriptions filter on this field.</li>
  *   <li>{@code version}    - contract version.</li>
  *   <li>{@code occurredAt} - when the change happened.</li>
  *   <li>{@code aggregateId}- the offer id this event is about.</li>
@@ -28,7 +28,7 @@ public record DomainEvent(
         UUID aggregateId,
         Map<String, String> data
 ) {
-    /** The EventBridge Source for every matching-service event. */
+    /** The origin tag (used in logs) for every matching-service event. */
     public static final String SOURCE = "ridenow.matching";
 
     private static final int CURRENT_VERSION = 1;

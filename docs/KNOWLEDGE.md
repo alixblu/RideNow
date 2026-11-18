@@ -47,10 +47,12 @@ See `ARCHITECTURE.md` for how these fit together.
 | Domain events | A service announces "this happened"; others react | BUILT: `trip.*`, `driver.*`, `match.offered`, `payment.*`. Each carries `eventId`, `type`, `version`, `occurredAt` and flat `data` |
 | Publish after commit | Send the event only once the DB transaction committed | BUILT: `@TransactionalEventListener(AFTER_COMMIT)`. A rollback publishes nothing |
 | Outbox pattern | Write the event in the same transaction; a poller publishes it | PLANNED: publish-after-commit is the current stand-in. It loses an event if the process dies right after commit |
-| Fan-out | One event delivered to many independent consumers | BUILT: EventBridge bus with one rule per consumer, matched on `detail-type` |
+| Fan-out | One event delivered to many independent consumers | BUILT: one SNS topic, with one subscription per consumer, each into that consumer's own SQS queue |
+| Filter policy | A subscription only receives the messages that match its policy | BUILT: the matching and payment subscriptions filter on the body's top-level `type` (`FilterPolicyScope=MessageBody`). Notifications has no policy and receives every event |
+| Raw message delivery | SNS passes the message as-is, with no SNS JSON wrapper | BUILT: every SQS subscription. The queue body is the event JSON, and consumers parse it directly |
 | Message queue (SQS) | Durable work queue: retries, visibility timeout, DLQ | BUILT: matching, payment and notifications queues, one per consumer, each with a DLQ |
-| EventBridge vs SNS | Both do fan-out; pick one | DECISION: EventBridge + SQS. SNS is not used |
-| Publisher behind an interface | Hide the transport so it can be swapped | BUILT: `DomainEventPublisher` in trip, payment and matching. Logging by default, EventBridge under the `eventbridge` profile |
+| SNS vs EventBridge | Both do fan-out; pick one | DECISION: SNS + SQS. EventBridge is not used. Routing is by one field (`type`), which SNS filter policies cover. Revisit EventBridge for a schema registry, event replay or scheduled triggers |
+| Publisher behind an interface | Hide the transport so it can be swapped | BUILT: `DomainEventPublisher` in trip, payment and matching. Logging by default, SNS under the `sns` profile |
 | Tolerant reader | Consumers ignore fields they do not know | BUILT: `@JsonIgnoreProperties(ignoreUnknown = true)` on every incoming event record, with no shared contract module |
 
 ## Redis
@@ -58,6 +60,7 @@ See `ARCHITECTURE.md` for how these fit together.
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
 | Redis as primary store | Redis is the only home of some data | BUILT: driver live availability and position (hash with TTL), never in Postgres |
+| Redis sorted set (ZSET) | Members ordered by a numeric score, with range queries and range trims | BUILT: driver-service keeps each driver's last 5 minutes of positions at `ridenow:driver:track:{driverId}`, scored by epoch milliseconds. Each write trims older points, and the key expires after 5 minutes. Nothing reads it yet |
 | Redis GEO | In-memory geospatial radius queries | BUILT: matching-service's GEO index answers "drivers near this pickup" with GEOSEARCH |
 | Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel. BUILT: the `ridenow:tracking:ended` channel to the gateway (replaced `ridenow.notifications`) |
 | Cache-aside | A disposable copy of hot DB data with a TTL | BUILT (scoped): driver profile only; evicted on writes. Never trip status or the accept read |
@@ -78,6 +81,7 @@ See `ARCHITECTURE.md` for how these fit together.
 | Smooth marker | Buffer points, render ~1s behind, interpolate | BUILT (unit-tested; not checked in a browser): Leaflet marker with `requestAnimationFrame`; ordered by `recordedAt`; stale after 10s |
 | Road snapping (OSRM) | Snap GPS to roads (`match`) or route along roads (`route`) | BUILT (tested with a mocked OSRM): display only, behind a `RoadSnapper` interface; `VITE_OSRM_URL` empty = off; demo server is dev-only |
 | Transport choice | SSE vs WebSocket vs UDP / WebRTC / QUIC | DECISION: SSE. Location is one-way, low-rate data; WebSocket and the others are not needed |
+| Hosting a stream tier | Long-lived connections on containers vs API Gateway + Lambda | DECISION: realtime-gateway stays a Spring Boot service on EKS Fargate. Lambda cannot hold a Redis subscription or a 30-minute stream, and a WebSocket API would bill per message and move the pairing rules out of the service. See `ARCHITECTURE.md` section 5 |
 | Mobile push | Reach a closed or backgrounded app via FCM / APNs | PLANNED (out of scope): the inbox is polled, so it reaches only open apps |
 | Malformed JSON -> 400 | Client mistakes never return 500 | BUILT (verified): `HttpMessageNotReadableException` handler in every service |
 | Redis TLS in transit | Encrypt the Redis connection | BUILT: every Redis client reads `REDIS_SSL`; the manifests set it to `true` |
@@ -98,8 +102,8 @@ See `ARCHITECTURE.md` for how these fit together.
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
 | Layered invariant enforcement | Validate at the edge, enforce in the service, constrain in the DB | BUILT: e.g. a service uniqueness check + DB `UNIQUE` + `@Version` for accept |
-| Least privilege (IAM) | Each service gets only the permissions it needs | BUILT: per-service messaging policies scoped to exact queue / bus ARNs; one IRSA role per service |
-| Resource policy scoping | The target also restricts who may write to it | BUILT: each SQS queue accepts messages only from its own EventBridge rule (`aws:SourceArn`) |
+| Least privilege (IAM) | Each service gets only the permissions it needs | BUILT: per-service messaging policies scoped to exact queue / topic ARNs; one IRSA role per service |
+| Resource policy scoping | The target also restricts who may write to it | BUILT: each SQS queue accepts messages only from the RideNow SNS topic (`aws:SourceArn`) |
 | IRSA (IAM Roles for Service Accounts) | Pods get AWS credentials from their service account, not static keys | BUILT: trip, payment, matching, notification-worker; plus the ALB controller and External Secrets |
 | Secrets management | Keep credentials out of source and config | BUILT: Secrets Manager -> External Secrets -> Kubernetes Secret. Local: `.env` |
 | Network isolation | Data tiers private; one public entry point | BUILT: RDS and Redis in private subnets; only the ALB is public; services are `ClusterIP` |
@@ -113,8 +117,8 @@ See `ARCHITECTURE.md` for how these fit together.
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Local-first, swap mechanism | Keep boundaries fixed; swap local stand-ins for managed services | BUILT: Postgres -> RDS, LocalStack -> SQS / EventBridge, Redis container -> ElastiCache, Compose -> EKS. Config only |
-| LocalStack | Local emulator for AWS APIs | BUILT: `localstack/init/01-messaging.sh` creates the same bus, queues and rules as stack 05; `smoke-test.sh` checks routing |
+| Local-first, swap mechanism | Keep boundaries fixed; swap local stand-ins for managed services | BUILT: Postgres -> RDS, LocalStack -> SNS / SQS, Redis container -> ElastiCache, Compose -> EKS. Config only |
+| LocalStack | Local emulator for AWS APIs | BUILT: `localstack/init/01-messaging.sh` creates the same topic, queues and subscriptions as stack 05; `smoke-test.sh` checks routing |
 | Containerization | Package each app as a portable image | BUILT: multi-stage Dockerfile per service; one image runs locally and on EKS |
 | Docker Compose | Run the whole system on one machine | BUILT: 6 Postgres, Redis, LocalStack and 7 services with health checks |
 | Infrastructure as code | Declarative, reviewable infrastructure | BUILT: seven CloudFormation stacks wired by exports and imports; `cfn-lint` clean; dry-run by default |

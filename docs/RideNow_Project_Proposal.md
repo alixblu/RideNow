@@ -100,7 +100,7 @@
 
    Notifications                  Driver accepted/arrived/completed           SQS, workers, retries, DLQ
 
-   Trip events                    Status changes trigger actions              EventBridge, loose coupling, eventual consistency
+   Trip events                    Status changes trigger actions              SNS, loose coupling, eventual consistency
 
    Failure recovery               Safe behavior during outages                Timeouts, retries, circuit breaker, compensation
 
@@ -115,7 +115,7 @@
  services for asynchronous workflows.
               Flutter Mobile → API entry point → Microservices
               User • Driver • Trip • Matching • Payment • Notification Worker
-              PostgreSQL per service • ElastiCache/Redis • SQS • EventBridge • WebSocket layer
+              PostgreSQL per service • ElastiCache/Redis • SQS • SNS • WebSocket layer
               EKS → Deployments/Services/HPA → Observability + CI/CD
 
 ### Target services
@@ -134,7 +134,7 @@
 
    Notification Worker                Process notification jobs                             SQS, retries, DLQ, idempotent consumer
 
-   Analytics Service (optional)       Consume trip events                                   EventBridge, eventual consistency
+   Analytics Service (optional)       Consume trip events                                   SNS, eventual consistency
 
 ## 6. Backend Knowledge Base
 
@@ -161,7 +161,7 @@
 
    Messaging                         SQS producers/consumers, visibility timeout, retries, DLQ, idempotency
 
-   Events                            EventBridge, event contracts, loose coupling, eventual consistency
+   Events                            SNS, event contracts, loose coupling, eventual consistency
 
    Distributed transactions          Saga pattern, compensation, workflow failure
 
@@ -222,7 +222,7 @@
 
    SQS                                        Async jobs, retries, worker decoupling, DLQ
 
-   EventBridge                                Publish business events to independent consumers
+   SNS                                        Publish business events to independent consumers
 
    CloudWatch                                 Logs, metrics, alarms and AWS operational visibility
 
@@ -278,7 +278,7 @@
 
    8           Payment + Saga                                           Distributed transactions, compensation
 
-   9           EventBridge                                              Events, loose coupling, eventual consistency
+   9           SNS                                                      Events, loose coupling, eventual consistency
 
    10          Docker + EKS                                             Pods, Deployments, Services, Ingress
 
@@ -311,7 +311,7 @@
 
    Backend / Domain                         Spring Boot services, API contracts, business rules, database design
 
-   Distributed Systems                      Redis, SQS, EventBridge, idempotency, Saga, concurrency testing
+   Distributed Systems                      Redis, SQS, SNS, idempotency, Saga, concurrency testing
 
    Kubernetes / Platform                    Docker, EKS, Deployments, Services, Ingress, HPA, Secrets
 

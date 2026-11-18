@@ -6,7 +6,7 @@ import java.util.UUID;
 
 /**
  * A trip-service domain event as matching-service reads it, projected from the
- * "detail" object of the EventBridge-to-SQS message. Only the fields needed here
+ * body of the raw-delivery SNS-to-SQS message. Only the fields needed here
  * are mapped; unknown fields are ignored so trip-service's contract can grow
  * without breaking this consumer (and there is no shared cross-service module).
  */

@@ -50,7 +50,7 @@ What this provisions, in order:
 | 02-network | 3-AZ VPC, NAT per AZ, cluster SG, DB SG | — |
 | 03-ecr | One repo per service | **images come in Phase 2** |
 | 04-data | 4 Multi-AZ RDS + Secrets Manager secrets | pods need these to be healthy |
-| 05-messaging | EventBridge bus; matching / payment / notifications queues + DLQs; one `detail-type` rule per queue; ElastiCache Redis | consumed by matching / payment / worker |
+| 05-messaging | SNS topic; matching / payment / notifications queues + DLQs; one filtered subscription per queue (raw delivery, filter on `type`); ElastiCache Redis | consumed by matching / payment / worker |
 | 06-eks-cluster | EKS control plane + 3 Fargate profiles | **no node group** |
 | 07-eks-addons | ALB-controller + External-Secrets IRSA roles, plus trip / payment / matching / notification-worker IRSA roles | OIDC id injected automatically |
 
@@ -184,12 +184,12 @@ aws cloudformation list-exports --region ap-southeast-1 \
 
 ## Phase 7 - Wire the async + Redis features (guides 07, 08)
 
-Stack 05 already created Redis, the SQS queue/DLQ, and the EventBridge bus. These
+Stack 05 already created Redis, the SQS queue/DLQ, and the SNS topic. These
 guides set the per-pod env + IRSA so matching-service and notification-worker use
 them:
 
 - `07-later-elasticache-redis.md` — point driver/matching at the Redis endpoint.
-- `08-later-sqs-eventbridge.md` — bus/queue/rule env + the worker's IRSA role.
+- `08-later-sqs-sns.md` — topic/queue/subscription env + the worker's IRSA role.
 
 ---
 

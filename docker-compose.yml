@@ -120,23 +120,23 @@ services:
       timeout: 3s
       retries: 10
 
-  # ---- Local AWS (LocalStack): SQS + EventBridge -----------------------------
+  # ---- Local AWS (LocalStack): SNS + SQS -------------------------------------
   # The local stand-in for AWS messaging. The init script under
   # localstack/init/ready.d provisions the same resource names the cloud uses
-  # (see iac/stacks/05-messaging.yaml): the ridenow-local-events bus, three
+  # (see iac/stacks/05-messaging.yaml): the ridenow-local-events topic, three
   # consumer queues (matching, payment, notifications) each with a DLQ, and one
-  # rule per queue routing events by detail-type.
+  # raw-delivery subscription per queue filtering on the event's "type".
   localstack:
     image: localstack/localstack:3
     environment:
-      SERVICES: sqs,events
+      SERVICES: sqs,sns
       AWS_DEFAULT_REGION: ${AWS_REGION:-ap-southeast-1}
       DEBUG: "0"
     volumes:
       - ./localstack/init:/etc/localstack/init/ready.d
     healthcheck:
       # The init marker file is written by LocalStack once ready.d scripts ran.
-      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name ridenow-local-notifications >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "test \"$$(awslocal sns list-subscriptions --query 'length(Subscriptions)' --output text 2>/dev/null)\" = 3 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -207,10 +207,10 @@ services:
       SPRING_DATASOURCE_USERNAME: ${TRIP_DB_USERNAME:-trip}
       SPRING_DATASOURCE_PASSWORD: ${TRIP_DB_PASSWORD:-trip_local}
       SERVICES_PAYMENT_SERVICE_BASE_URL: http://payment-service:8083
-      # Async event publishing (EventBridge). The "eventbridge" profile activates
+      # Async event publishing (SNS). The "sns" profile activates
       # the real SDK publisher; without it the logging publisher is used.
-      SPRING_PROFILES_ACTIVE: eventbridge
-      RIDENOW_EVENTS_BUS_NAME: ${EVENTS_BUS_NAME:-ridenow-local-events}
+      SPRING_PROFILES_ACTIVE: sns
+      RIDENOW_EVENTS_TOPIC_ARN: ${EVENTS_TOPIC_ARN:-arn:aws:sns:ap-southeast-1:000000000000:ridenow-local-events}
       AWS_REGION: ${AWS_REGION:-ap-southeast-1}
       AWS_ENDPOINT: http://localstack:4566
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
@@ -236,8 +236,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://payment-db:5432/${PAYMENT_DB_NAME:-payment_service}
       SPRING_DATASOURCE_USERNAME: ${PAYMENT_DB_USERNAME:-payment}
       SPRING_DATASOURCE_PASSWORD: ${PAYMENT_DB_PASSWORD:-payment_local}
-      SPRING_PROFILES_ACTIVE: eventbridge
-      RIDENOW_EVENTS_BUS_NAME: ${EVENTS_BUS_NAME:-ridenow-local-events}
+      SPRING_PROFILES_ACTIVE: sns
+      RIDENOW_EVENTS_TOPIC_ARN: ${EVENTS_TOPIC_ARN:-arn:aws:sns:ap-southeast-1:000000000000:ridenow-local-events}
       # Consumes trip.completed / trip.cancelled to capture / release the hold.
       RIDENOW_PAYMENT_QUEUE_URL: http://localstack:4566/000000000000/ridenow-local-payment
       AWS_REGION: ${AWS_REGION:-ap-southeast-1}
@@ -301,10 +301,10 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://matching-db:5432/${MATCHING_DB_NAME:-matching_service}
       SPRING_DATASOURCE_USERNAME: ${MATCHING_DB_USERNAME:-matching}
       SPRING_DATASOURCE_PASSWORD: ${MATCHING_DB_PASSWORD:-matching_local}
-      # Consumes trip.requested; publishes match.offered (EventBridge profile).
-      SPRING_PROFILES_ACTIVE: eventbridge
+      # Consumes trip.requested; publishes match.offered (sns profile).
+      SPRING_PROFILES_ACTIVE: sns
       RIDENOW_MATCHING_QUEUE_URL: http://localstack:4566/000000000000/ridenow-local-matching
-      RIDENOW_EVENTS_BUS_NAME: ${EVENTS_BUS_NAME:-ridenow-local-events}
+      RIDENOW_EVENTS_TOPIC_ARN: ${EVENTS_TOPIC_ARN:-arn:aws:sns:ap-southeast-1:000000000000:ridenow-local-events}
       AWS_REGION: ${AWS_REGION:-ap-southeast-1}
       AWS_ENDPOINT: http://localstack:4566
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}

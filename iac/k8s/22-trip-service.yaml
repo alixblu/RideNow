@@ -1,6 +1,6 @@
 # trip-service: ServiceAccount + Deployment + Service + HPA.
 #
-# Publishes trip events to the EventBridge bus (eventbridge profile) and calls
+# Publishes trip events to the SNS topic (sns profile) and calls
 # payment-service synchronously to authorize the fare on POST /trips.
 # AWS access via IRSA (no static keys): the role is stack 07's
 # TripServiceRoleArn export.
@@ -56,11 +56,11 @@ spec:
             # Sync authorize call (strict: no hold, no trip). In-cluster DNS.
             - name: SERVICES_PAYMENT_SERVICE_BASE_URL
               value: "http://payment-service:8083"
-            # Async: publish trip events to the bus. IRSA supplies credentials.
+            # Async: publish trip events to the topic. IRSA supplies credentials.
             - name: SPRING_PROFILES_ACTIVE
-              value: "eventbridge"
-            - name: RIDENOW_EVENTS_BUS_NAME
-              value: "ridenow-<ENV>-events"
+              value: "sns"
+            - name: RIDENOW_EVENTS_TOPIC_ARN
+              value: "arn:aws:sns:<REGION>:<ACCOUNT_ID>:ridenow-<ENV>-events"
             - name: AWS_REGION
               value: "<REGION>"
           resources:

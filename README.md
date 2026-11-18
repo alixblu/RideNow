@@ -6,10 +6,10 @@ is intentionally simple; the engineering underneath - concurrency, distributed
 messaging, Redis, and a path to Amazon EKS - is the point.
 
 Stack: **Java 25**, **Spring Boot 4.1.1**, PostgreSQL (one DB per service), Redis,
-AWS SDK v2 (SQS + EventBridge), Docker, Kubernetes/EKS.
+AWS SDK v2 (SNS + SQS), Docker, Kubernetes/EKS.
 
 > Built **local-first**: every boundary runs against a local stand-in first
-> (Postgres containers, a Redis container, LocalStack for SQS/EventBridge), then
+> (Postgres containers, a Redis container, LocalStack for SNS/SQS), then
 > the *same code* points at managed AWS by changing environment variables only.
 
 ---
@@ -49,8 +49,8 @@ events, and store other services' identifiers as plain UUIDs.
             needs a driver          trip/payment events
                    v                      v
             +-------------+        +------------------------+
-            |matching-svc |        | EventBridge bus        |
-            | Redis GEO   |        |  -> rule -> SQS queue  |
+            |matching-svc |        | SNS topic              |
+            | Redis GEO   |        |  -> filter -> SQS queue|
             +------+------+        +-----------+------------+
                    |                           |
               +----+----+                      v
@@ -63,14 +63,15 @@ events, and store other services' identifiers as plain UUIDs.
 The two big distributed-systems boundaries:
 
 - **Sync where the answer is needed now, async everywhere else.** Lifecycle
-  changes publish domain events (after the DB commits) to **EventBridge**. One
-  rule per consumer routes by event type into that consumer's own **SQS** queue
+  changes publish domain events (after the DB commits) to one **SNS** topic. One
+  subscription per consumer, with a filter policy on the event's `type`, delivers
+  the raw event JSON into that consumer's own **SQS** queue
   (with a dead-letter queue): `trip.requested` -> matching,
   `trip.completed`/`trip.cancelled` -> payment, every event -> notifications.
   `notification-worker` writes each notification to its inbox table, which the apps
   poll. The driver's live position reaches the passenger over **SSE** from
   `realtime-gateway` (see `docs/REALTIME.md`). The event transport sits behind a
-  `DomainEventPublisher` interface (logging default, EventBridge impl), so it's a
+  `DomainEventPublisher` interface (logging default, SNS impl), so it's a
   swap, not a rewrite. See `docs/ARCHITECTURE.md` section 3.
 - **Redis**, four roles - primary store for live driver location/availability,
   **GEO** index for nearby-driver matching, **Pub/Sub** for live tracking, and
@@ -82,7 +83,7 @@ The two big distributed-systems boundaries:
 ## Run it locally
 
 Everything runs with one command - all services, their databases, Redis, and
-LocalStack (local SQS + EventBridge):
+LocalStack (local SNS + SQS):
 
 ```bash
 cp .env.example .env         # once
@@ -122,7 +123,7 @@ Two routes, same footprint:
 
 - **Console, click-by-click** (backend -> EKS): start at
   [`guides/aws/README.md`](guides/aws/README.md) - IAM -> VPC -> ECR ->
-  RDS/Secrets -> EKS -> deploy, with ElastiCache and SQS/EventBridge as later ops.
+  RDS/Secrets -> EKS -> deploy, with ElastiCache and SNS/SQS as later ops.
 - **Infrastructure as Code** (CloudFormation + k8s manifests):
   [`iac/README.md`](iac/README.md).
 

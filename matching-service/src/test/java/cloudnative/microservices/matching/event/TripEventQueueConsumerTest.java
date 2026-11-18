@@ -41,17 +41,16 @@ class TripEventQueueConsumerTest {
                         .build());
     }
 
-    private String envelope() {
+    /** The raw-delivery body: the event JSON itself, with no SNS envelope. */
+    private String rawEvent() {
         return """
-                {"version":"0","detail-type":"trip.requested","source":"ridenow.trip",
-                 "detail":{"eventId":"%s","type":"trip.requested","aggregateId":"%s",
-                           "data":{"tripId":"%s","rideType":"CAR","pickupLat":"10.7","pickupLng":"106.6"}}}
+                {"eventId":"%s","type":"trip.requested","aggregateId":"%s",
+                 "data":{"tripId":"%s","rideType":"CAR","pickupLat":"10.7","pickupLng":"106.6"}}
                 """.formatted(UUID.randomUUID(), tripId, tripId);
     }
-
     @Test
-    void successfulMessageIsHandledFromTheEventBridgeEnvelopeAndDeleted() {
-        queueHolds(envelope());
+    void successfulMessageIsHandledFromTheRawBodyAndDeleted() {
+        queueHolds(rawEvent());
 
         consumer.poll();
 
@@ -64,7 +63,7 @@ class TripEventQueueConsumerTest {
 
     @Test
     void failedMessageIsLeftOnTheQueueForRetry() {
-        queueHolds(envelope());
+        queueHolds(rawEvent());
         doThrow(new IllegalStateException("redis down")).when(handler).handle(any());
 
         consumer.poll();

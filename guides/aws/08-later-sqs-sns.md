@@ -1,26 +1,26 @@
-# 08 - SQS + EventBridge (async flows)
+# 08 - SQS + SNS (async flows)
 
-Goal: create in the console the production bus, queues and rules that the code
+Goal: create in the console the production topic, queues and subscriptions that the code
 already publishes to and consumes from locally. Every service publishes domain events to
-one EventBridge bus. One rule per consumer routes only the event types that
+one SNS topic. One subscription per consumer delivers only the event types that
 consumer handles into its own SQS queue, and each queue has a dead-letter queue (DLQ).
 
-| Queue | Rule matches (`detail-type`) | Consumer | Why |
+| Queue | Subscription filter (`type`) | Consumer | Why |
 |-------|------------------------------|----------|-----|
 | `ridenow-prod-matching` | `trip.requested` | matching-service | find drivers without blocking `POST /trips` |
 | `ridenow-prod-payment` | `trip.completed`, `trip.cancelled` | payment-service | capture / release the hold made at request time |
-| `ridenow-prod-notifications` | every `ridenow.*` event | notification-worker | tell the passenger / driver |
+| `ridenow-prod-notifications` | none (every event) | notification-worker | tell the passenger / driver |
 
 Independent of Redis (guide 07), so you can provision either first. The worker writes
 notifications to its inbox table; it also needs Redis (guide 07) for the trip tracking
 pairing that realtime-gateway reads.
 
 > **IaC path:** stack `05-messaging` creates all of the resources below, including the
-> queue policies scoped to each rule. Stack `07-eks-addons` creates the four IRSA
+> queue policies scoped to the topic. Stack `07-eks-addons` creates the four IRSA
 > roles. Use this guide to learn the pieces by hand, or skip it when you
 > deploy the stacks.
 
-Time: ~30 min. Cost: SQS and EventBridge cost little at this volume, because you
+Time: ~30 min. Cost: SNS and SQS cost little at this volume, because you
 pay per request.
 
 ---
@@ -29,14 +29,16 @@ pay per request.
 
 The services use the **AWS SDK v2** directly, selected by config:
 
-- **Publishers** (trip-service, payment-service, matching-service) send to the
-  bus named by `RIDENOW_EVENTS_BUS_NAME` under the `eventbridge` Spring profile.
-  The source is `ridenow.trip`, `ridenow.payment` or `ridenow.matching`, and the
-  `DetailType` is the event type.
+- **Publishers** (trip-service, payment-service, matching-service) publish to the
+  topic whose ARN is in `RIDENOW_EVENTS_TOPIC_ARN` under the `sns` Spring profile. The
+  message body is the event JSON. It carries a top-level `type` field (for example
+  `trip.completed`), and the subscription filters match on it. Publishers set no message
+  attributes.
 - **Consumers** each poll their own queue URL: `RIDENOW_MATCHING_QUEUE_URL`,
-  `RIDENOW_PAYMENT_QUEUE_URL` and `RIDENOW_NOTIFICATIONS_QUEUE_URL`. A consumer
-  deletes a message on success, and the queue's redrive policy dead-letters a
-  message that keeps failing.
+  `RIDENOW_PAYMENT_QUEUE_URL` and `RIDENOW_NOTIFICATIONS_QUEUE_URL`. The subscriptions use
+  raw message delivery, so each queue body is the event JSON itself, with no SNS
+  envelope. A consumer deletes a message on success, and the queue's redrive policy
+  dead-letters a message that keeps failing.
 
 This mirrors `localstack/init/01-messaging.sh` and `../../iac/stacks/05-messaging.yaml`.
 
@@ -60,30 +62,44 @@ For each of `matching`, `payment` and `notifications`:
 3. Visibility timeout: 60s. **Create queue**.
 4. Copy each queue **URL**. You need them for the `RIDENOW_*_QUEUE_URL` values in step 6.
 
-## 3. Create the EventBridge bus
+## 3. Create the SNS topic
 
-1. Console -> **EventBridge** -> **Event buses** -> **Create event bus**.
-2. Name: `ridenow-prod-events`. **Create**. This is `RIDENOW_EVENTS_BUS_NAME`.
+1. Console -> **SNS** -> **Topics** -> **Create topic** -> **Standard**.
+2. Name: `ridenow-prod-events`. Leave **Encryption** off for now (see the note below).
+   **Create topic**.
+3. Copy the topic **ARN**. This is `RIDENOW_EVENTS_TOPIC_ARN`.
 
-## 4. Create one rule per queue
+> **Encryption note:** do not turn on encryption with the AWS-managed `aws/sns` key. SNS
+> cannot deliver to SQS subscriptions from a topic encrypted with that key, because its
+> key policy cannot be edited to allow the SNS service. To encrypt at rest, use a
+> customer-managed KMS key whose policy allows `sns.amazonaws.com`.
 
-EventBridge -> **Rules** -> **Create rule**, on bus `ridenow-prod-events`, rule type
-**Rule with an event pattern** -> **Custom pattern (JSON)**:
+## 4. Create one subscription per queue
 
-| Rule name | Pattern | Target |
-|-----------|---------|--------|
-| `ridenow-prod-trip-requested` | `{"source":[{"prefix":"ridenow."}],"detail-type":["trip.requested"]}` | `ridenow-prod-matching` |
-| `ridenow-prod-trip-ended` | `{"source":[{"prefix":"ridenow."}],"detail-type":["trip.completed","trip.cancelled"]}` | `ridenow-prod-payment` |
-| `ridenow-prod-all-events` | `{"source":[{"prefix":"ridenow."}]}` | `ridenow-prod-notifications` |
+SNS -> **Subscriptions** -> **Create subscription**, topic `ridenow-prod-events`,
+protocol **Amazon SQS**, endpoint = the queue ARN. Then open **Subscription filter policy**
+and **Raw message delivery**:
 
-When you pick an SQS target, EventBridge offers to add the queue policy that lets the rule
-deliver. To do it by hand, allow `events.amazonaws.com` `sqs:SendMessage` on the
-queue ARN, with an `ArnEquals` condition that sets `aws:SourceArn` to the **rule's ARN**.
-Then only that rule can write to the queue, not any rule in the account.
+| Queue | Raw message delivery | Filter policy scope | Filter policy |
+|-------|----------------------|---------------------|---------------|
+| `ridenow-prod-matching` | **Enabled** | **Message body** | `{"type":["trip.requested"]}` |
+| `ridenow-prod-payment` | **Enabled** | **Message body** | `{"type":["trip.completed","trip.cancelled"]}` |
+| `ridenow-prod-notifications` | **Enabled** | - | none (receives every event) |
+
+Choose the **Message body** scope, not the default **Message attributes**: the `type`
+lives in the JSON body, so a filter on attributes would drop every message.
+
+## 5. Let the topic write to each queue
+
+SNS can only deliver if the queue's access policy allows it. For each queue: SQS ->
+the queue -> **Access policy** -> **Edit**, and allow `sns.amazonaws.com`
+`sqs:SendMessage` on the queue ARN, with an `ArnEquals` condition that sets
+`aws:SourceArn` to the **topic ARN**. Then only this topic can write to the queue, not any
+topic in the account.
 
 ---
 
-## 5. Give the pods permission (IRSA)
+## 6. Give the pods permission (IRSA)
 
 Each service gets its own policy, scoped to the exact ARNs it uses, and its own IRSA
 role trusting only its own Kubernetes service account
@@ -91,32 +107,32 @@ role trusting only its own Kubernetes service account
 
 | Service | Permissions |
 |---------|-------------|
-| trip-service | `events:PutEvents` on the bus |
-| payment-service | `events:PutEvents` on the bus; `sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes` on `ridenow-prod-payment` |
-| matching-service | `events:PutEvents` on the bus; the same three SQS actions on `ridenow-prod-matching` |
+| trip-service | `sns:Publish` on the topic |
+| payment-service | `sns:Publish` on the topic; `sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes` on `ridenow-prod-payment` |
+| matching-service | `sns:Publish` on the topic; the same three SQS actions on `ridenow-prod-matching` |
 | notification-worker | the same three SQS actions on `ridenow-prod-notifications` |
 
 Create each role trusting the cluster OIDC provider (guide 05 Part D), then put its ARN
 in the service account annotation in `iac/k8s/22-25`. This is how pods get AWS access without static keys.
 realtime-gateway needs no AWS access.
 
-## 6. Set the env and roll out
+## 7. Set the env and roll out
 
 The manifests in `iac/k8s/` already carry these settings. Fill in the placeholders:
 
 ```
 # trip-service
-SPRING_PROFILES_ACTIVE = eventbridge
-RIDENOW_EVENTS_BUS_NAME = ridenow-prod-events
+SPRING_PROFILES_ACTIVE = sns
+RIDENOW_EVENTS_TOPIC_ARN = arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events
 
 # payment-service
-SPRING_PROFILES_ACTIVE = eventbridge
-RIDENOW_EVENTS_BUS_NAME = ridenow-prod-events
+SPRING_PROFILES_ACTIVE = sns
+RIDENOW_EVENTS_TOPIC_ARN = arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events
 RIDENOW_PAYMENT_QUEUE_URL = https://sqs.ap-southeast-1.amazonaws.com/<ACCOUNT_ID>/ridenow-prod-payment
 
 # matching-service
-SPRING_PROFILES_ACTIVE = eventbridge
-RIDENOW_EVENTS_BUS_NAME = ridenow-prod-events
+SPRING_PROFILES_ACTIVE = sns
+RIDENOW_EVENTS_TOPIC_ARN = arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events
 RIDENOW_MATCHING_QUEUE_URL = https://sqs.ap-southeast-1.amazonaws.com/<ACCOUNT_ID>/ridenow-prod-matching
 
 # notification-worker
@@ -153,9 +169,12 @@ kubectl rollout restart deployment/payment-service deployment/trip-service \
   `GET /api/notifications?userId={passengerId}` lists them in order.
 - Force a failure (for example, a malformed message sent to a queue by hand) and watch it land in
   that queue's `-dlq` after 5 receives.
+- If a queue stays empty while the topic's **Number of messages published** grows, check
+  the subscription: the filter policy scope must be **Message body**, and **Raw message
+  delivery** must be on.
 
 ## Clean up
 
-SQS and EventBridge cost little, but to tidy up, delete the three rules, then the bus,
-then all six queues. Remove the env vars (or the `eventbridge` profile) and the services
+SNS and SQS cost little, but to tidy up, delete the three subscriptions, then the topic,
+then all six queues. Remove the env vars (or the `sns` profile) and the services
 fall back to the logging publisher, while the consumers stay off.

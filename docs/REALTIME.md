@@ -15,8 +15,8 @@ Authentication is out of scope for now. Both paths trust the `userId` the client
 
 ```mermaid
 flowchart LR
-  T[trip / driver / matching / payment] -->|domain events| EB[EventBridge ridenow-local-events]
-  EB -->|every ridenow.* event| NQ[SQS notifications queue + DLQ]
+  T[trip / driver / matching / payment] -->|domain events| EB[SNS topic ridenow-local-events]
+  EB -->|every event, no filter| NQ[SQS notifications queue + DLQ]
   NQ --> NW[notification-worker]
   NW -->|same transaction| DB[(notifications table)]
   FE[frontend] -->|GET /api/notifications?since=| NW
@@ -97,6 +97,7 @@ If the gateway restarts, the client reconnects while the trip is still in a trac
 | Name | Type | Written by | Read by | TTL |
 |---|---|---|---|---|
 | `ridenow:driver:live:{driverId}` | hash | driver-service | driver-service (`GET .../live`) | 5m |
+| `ridenow:driver:track:{driverId}` | sorted set | driver-service | nothing yet | 5m |
 | `ridenow:tracking:trip:{tripId}` | string (JSON) | notification-worker | realtime-gateway | 3h |
 | `ridenow:tracking:driver:{driverId}` | string (JSON) | notification-worker | realtime-gateway | 3h |
 | `ridenow:driver:locations` | pub/sub channel | driver-service | realtime-gateway, matching-service | none |
@@ -110,6 +111,9 @@ Payloads:
 | `ridenow:tracking:driver:{driverId}` | `tripId`, `passengerId` |
 | `ridenow:driver:locations` | `driverId`, `lat`, `lng`, `recordedAt`, `vehicleType` (the vehicle the driver went online with: the one picked with `vehicleId`, else the newest active one), `online` (false on going offline, with no `lat`/`lng`) |
 | `ridenow:tracking:ended` | `tripId` |
+| `ridenow:driver:track:{driverId}` | member `lat,lng,epochMillis`, score `epochMillis`. Read oldest first with `ZRANGE`. The timestamp in the member keeps two updates from the same spot as two points |
+
+The track holds the last 5 minutes of a driver's positions. Every location write adds a point and trims the ones older than 5 minutes, and the key expires 5 minutes after the last write. Going offline deletes it. It is stored only: no endpoint or service reads it yet, so reconnect replay, a trail on the map and refresh-safe road snapping are not built. Memory is about 600 points (roughly 30 KB) per driver at one update a second.
 
 Pub/Sub is lossy. That is acceptable here: the latest position wins, and the next update arrives about a second later. Fields are additive, and readers ignore unknown fields.
 

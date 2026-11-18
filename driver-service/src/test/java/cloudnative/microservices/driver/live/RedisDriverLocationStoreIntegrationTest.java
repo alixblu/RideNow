@@ -73,6 +73,54 @@ class RedisDriverLocationStoreIntegrationTest {
     }
 
     @Test
+    void locationWritesBuildAChronologicalTrack() throws InterruptedException {
+        UUID driverId = UUID.randomUUID();
+        store.goOnline(driverId, cloudnative.microservices.driver.entity.VehicleType.CAR);
+
+        store.updateLocation(driverId, new BigDecimal("10.760000"), new BigDecimal("106.660000"));
+        Thread.sleep(5);
+        store.updateLocation(driverId, new BigDecimal("10.760000"), new BigDecimal("106.660000"));
+        Thread.sleep(5);
+        store.updateLocation(driverId, new BigDecimal("10.770000"), new BigDecimal("106.670000"));
+
+        var track = redis.opsForZSet().rangeWithScores("ridenow:driver:track:" + driverId, 0, -1);
+        // Same spot twice stays two points; the order follows the timestamps.
+        assertThat(track).hasSize(3);
+        assertThat(track).extracting(t -> t.getScore()).isSorted();
+        assertThat(track.iterator().next().getValue()).startsWith("10.760000,106.660000,");
+        assertThat(track.stream().reduce((a, b) -> b).orElseThrow().getValue())
+                .startsWith("10.770000,106.670000,");
+    }
+
+    @Test
+    void trackDropsPointsOlderThanFiveMinutesAndHasATtl() {
+        UUID driverId = UUID.randomUUID();
+        String trackKey = "ridenow:driver:track:" + driverId;
+        long sixMinutesAgo = System.currentTimeMillis() - 6 * 60 * 1000L;
+        redis.opsForZSet().add(trackKey, "10.0,106.0," + sixMinutesAgo, sixMinutesAgo);
+
+        store.updateLocation(driverId, new BigDecimal("10.762622"), new BigDecimal("106.660172"));
+
+        assertThat(redis.opsForZSet().range(trackKey, 0, -1))
+                .hasSize(1)
+                .noneMatch(m -> m.startsWith("10.0,106.0,"));
+        Long ttl = redis.getExpire(trackKey, TimeUnit.SECONDS);
+        assertThat(ttl).isNotNull().isGreaterThan(0L).isLessThanOrEqualTo(300L);
+    }
+
+    @Test
+    void goingOfflineClearsTheTrack() {
+        UUID driverId = UUID.randomUUID();
+        store.goOnline(driverId, cloudnative.microservices.driver.entity.VehicleType.CAR);
+        store.updateLocation(driverId, new BigDecimal("10.762622"), new BigDecimal("106.660172"));
+        assertThat(redis.hasKey("ridenow:driver:track:" + driverId)).isTrue();
+
+        store.goOffline(driverId);
+
+        assertThat(redis.hasKey("ridenow:driver:track:" + driverId)).isFalse();
+    }
+
+    @Test
     void liveRecordHasATtl() {
         UUID driverId = UUID.randomUUID();
         store.goOnline(driverId, cloudnative.microservices.driver.entity.VehicleType.CAR);

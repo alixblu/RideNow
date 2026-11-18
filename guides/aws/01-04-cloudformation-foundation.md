@@ -16,8 +16,8 @@ The lab is designed to prove **three interaction patterns** end-to-end on EKS:
 | Pattern | Services involved | DBs needed |
 |---------|-------------------|------------|
 | 1 - Service-to-service HTTP | driver calls user-service to verify a user exists before creating a driver | **user-db**, **driver-db** |
-| 2 - Service → EventBridge → SQS → worker | trip/payment emit events after commit; notification-worker consumes them once, with retry and DLQ | **trip-db**, **payment-db**, **notification-db** |
-| 3 - EventBridge fan-out | `trip.completed` + `payment.succeeded` land on the same SQS queue; the worker processes both — one bus, multiple event types, one consumer | same trip-db + payment-db |
+| 2 - Service → SNS → SQS → worker | trip/payment emit events after commit; notification-worker consumes them once, with retry and DLQ | **trip-db**, **payment-db**, **notification-db** |
+| 3 - SNS fan-out | `trip.completed` + `payment.succeeded` land on the same SQS queue; the worker processes both — one topic, multiple event types, one consumer | same trip-db + payment-db |
 
 **matching-service is intentionally out.** Its Redis GEO index doesn't need a
 separate DB to prove any of the three patterns. Create it manually later (see the

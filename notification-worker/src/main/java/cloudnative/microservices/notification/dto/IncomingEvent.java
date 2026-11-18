@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * The domain event as this worker reads it, projected from the "detail" object
- * of the EventBridge-to-SQS message. Only the fields the worker needs are mapped;
+ * The domain event as this worker reads it, projected from the body
+ * of the raw-delivery SNS-to-SQS message. Only the fields the worker needs are mapped;
  * unknown fields are ignored so the producer's contract can grow without breaking
  * the consumer.
  */

@@ -11,12 +11,11 @@ import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
+import software.amazon.awssdk.services.sns.SnsClient;
 
 /**
- * Wires the AWS SDK v2 {@link EventBridgeClient}, active only under the
- * "eventbridge" profile so plain unit tests and no-AWS local runs keep using the
- * logging publisher.
+ * Wires the AWS SDK v2 {@link SnsClient}, active only under the "sns" profile so
+ * plain unit tests and no-AWS local runs keep using the logging publisher.
  *
  * Config-driven, so the same code targets LocalStack or real AWS by env only:
  *   - AWS_REGION               : the region (also used by LocalStack).
@@ -27,17 +26,17 @@ import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
  *                                otherwise the default provider chain (IAM role).
  */
 @Configuration
-@Profile("eventbridge")
-public class AwsEventBridgeConfig {
+@Profile("sns")
+public class AwsSnsConfig {
 
     @Bean
-    EventBridgeClient eventBridgeClient(
+    SnsClient snsClient(
             @Value("${AWS_REGION:ap-southeast-1}") String region,
             @Value("${AWS_ENDPOINT:}") String endpoint,
             @Value("${AWS_ACCESS_KEY_ID:}") String accessKey,
             @Value("${AWS_SECRET_ACCESS_KEY:}") String secretKey
     ) {
-        var builder = EventBridgeClient.builder()
+        var builder = SnsClient.builder()
                 .region(Region.of(region))
                 .credentialsProvider(credentials(accessKey, secretKey));
         if (StringUtils.hasText(endpoint)) {

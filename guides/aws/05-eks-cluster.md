@@ -181,7 +181,7 @@ Once this completes, CoreDNS runs on Fargate and in-cluster DNS works.
 ## Part D - Enable the OIDC provider (needed by guide 06 and the later ops)
 
 Pods that need AWS permissions (the ALB controller in guide 06; External Secrets
-and the SQS/EventBridge access in the later ops) use **IRSA**, which requires an
+and the SNS/SQS access in the later ops) use **IRSA**, which requires an
 OIDC identity provider associated with the cluster.
 
 1. EKS -> `ridenow` cluster -> **Overview** -> copy the **OpenID Connect provider

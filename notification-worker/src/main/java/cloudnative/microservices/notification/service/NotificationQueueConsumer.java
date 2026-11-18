@@ -11,7 +11,6 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -19,7 +18,7 @@ import tools.jackson.databind.ObjectMapper;
  *
  * Flow per message:
  *   1. receive (long poll)
- *   2. extract the "detail" object (the DomainEvent) from the EventBridge envelope
+ *   2. parse the body, which is the DomainEvent JSON (SNS raw message delivery)
  *   3. hand it to NotificationService (idempotent send + ledger)
  *   4. delete on success
  *
@@ -84,14 +83,10 @@ public class NotificationQueueConsumer {
     }
 
     /**
-     * Reads the DomainEvent from an EventBridge-to-SQS message. EventBridge wraps
-     * the event under a top-level "detail" field; if "detail" is absent (e.g. a
-     * message sent straight to the queue) we treat the whole body as the event.
+     * Reads the DomainEvent from the queue message. The SNS subscription uses raw
+     * message delivery, so the body is the event JSON itself (no SNS envelope).
      */
     private IncomingEvent parse(String body) {
-        JsonNode root = objectMapper.readTree(body);
-        JsonNode detail = root.get("detail");
-        JsonNode eventNode = (detail != null && !detail.isNull()) ? detail : root;
-        return objectMapper.treeToValue(eventNode, IncomingEvent.class);
+        return objectMapper.readValue(body, IncomingEvent.class);
     }
 }

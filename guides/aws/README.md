@@ -9,7 +9,7 @@ the codified templates in `../../iac/`.
 > Scope: **backend only**. The goal is to get the four HTTP services + the
 > notification worker + matching running on **Amazon EKS with AWS Fargate** —
 > serverless pods, no EC2 node group to size, patch, or autoscale. The stateful
-> managed services the code uses (ElastiCache / SQS / EventBridge) are provisioned
+> managed services the code uses (ElastiCache / SNS / SQS) are provisioned
 > as part of the production footprint and wired via environment variables — no
 > code changes.
 
@@ -30,12 +30,12 @@ the codified templates in `../../iac/`.
 
    matching-svc (internal)        notification-worker (no HTTP, consumes SQS)
         |                                |
-   ElastiCache Redis (GEO/live)     SQS queue + DLQ  <--  EventBridge bus
+   ElastiCache Redis (GEO/live)     SQS queue + DLQ  <--  SNS topic
 ```
 
 Every pod runs on **Fargate**: EKS schedules it onto a right-sized micro-VM based
 on the pod's CPU/memory requests — there are no nodes in the cluster. The
-application code is written against the **real AWS SDK v2** (SQS, EventBridge) and
+application code is written against the **real AWS SDK v2** (SNS, SQS) and
 **Spring Data Redis**, so moving to AWS means provisioning the managed resource in
 the console and pointing the same container image at it via environment variables.
 No rebuild.
@@ -63,7 +63,7 @@ parallel once the network exists.
 | 05 | `05-eks-cluster.md` | The EKS cluster + Fargate profiles; connect `kubectl` | **the main event** |
 | 06 | `06-eks-deploy.md` | Namespace, Secrets, Deployments/Services, the ALB Ingress; verify traffic | yes (this is "done") |
 | 07 | `07-later-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub) | matching-service |
-| 08 | `08-later-sqs-eventbridge.md` | SQS queue + DLQ, EventBridge bus + rule; wire the worker | notification-worker |
+| 08 | `08-later-sqs-sns.md` | SQS queue + DLQ, SNS topic + subscription; wire the worker | notification-worker |
 
 Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the
 Redis and async messaging the matching-service and notification-worker depend on.
@@ -79,8 +79,8 @@ built code (`application.yaml` per service) and the k8s manifests in `../../iac/
 |---------|------|----------|--------|-------|
 | user-service | 8081 | `ridenow/user-service` | `/actuator/health` | its RDS |
 | driver-service | 8080 | `ridenow/driver-service` | `/actuator/health` | its RDS, user-service, Redis* |
-| trip-service | 8082 | `ridenow/trip-service` | `/actuator/health` | its RDS, EventBridge* |
-| payment-service | 8083 | `ridenow/payment-service` | `/actuator/health` | its RDS, EventBridge* |
+| trip-service | 8082 | `ridenow/trip-service` | `/actuator/health` | its RDS, SNS* |
+| payment-service | 8083 | `ridenow/payment-service` | `/actuator/health` | its RDS, SNS* |
 | matching-service | 8085 | `ridenow/matching-service` | `/actuator/health` | its RDS, Redis* |
 | notification-worker | 8084 (health only) | `ridenow/notification-worker` | `/actuator/health` | its RDS, SQS* |
 

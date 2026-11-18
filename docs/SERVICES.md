@@ -15,10 +15,10 @@ Base package for all Java services: `cloudnative.microservices.<name>`
 |---------|------|----------|-------|---------------|----------------|
 | `user-service` | 8081 | `user-db` (Postgres) | - | - | yes `/api/users` |
 | `driver-service` | 8080 | `driver-db` (Postgres) | live state, GEO publish, Pub/Sub, profile cache | - | yes `/api/drivers` |
-| `trip-service` | 8082 | `trip-db` (Postgres) | - | publishes to EventBridge | yes `/api/trips` |
-| `payment-service` | 8083 | `payment-db` (Postgres) | - | publishes to EventBridge, consumes SQS payment queue | yes `/api/payments` |
+| `trip-service` | 8082 | `trip-db` (Postgres) | - | publishes to SNS | yes `/api/trips` |
+| `payment-service` | 8083 | `payment-db` (Postgres) | - | publishes to SNS, consumes SQS payment queue | yes `/api/payments` |
 | `notification-worker` | 8084 | `notification-db` (Postgres) | tracking pairing keys, publishes trip-ended | consumes SQS notifications queue | yes `/api/notifications` |
-| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index, subscribes to driver locations | consumes SQS matching queue, publishes to EventBridge | no |
+| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index, subscribes to driver locations | consumes SQS matching queue, publishes to SNS | no |
 | `realtime-gateway` | 8086 | none | subscribes to driver locations and trip-ended, reads pairing keys | - | SSE `/live` |
 | `frontend` | - | - | - | - | static SPA (React + Vite) |
 
@@ -74,7 +74,7 @@ Driver-to-trip matching decisions and offers.
 
 ### notification-worker
 SQS consumer plus the inbox API.
-- Consumes every `ridenow.*` event and deduplicates through the `ProcessedNotification`
+- Consumes every event (its subscription has no filter) and deduplicates through the `ProcessedNotification`
   idempotency ledger. `RecipientResolver` picks who to tell from the ids in the event
   (the passenger for most events, the driver for `match.offered`, both for a cancellation
   with an assigned driver). `InboxNotificationSender` writes one `notifications` row per
@@ -138,19 +138,22 @@ driver-service  --->  user-service      validate user on driver creation
 trip-service    --->  payment-service   authorize fare on trip request
 ```
 
-### Asynchronous events (EventBridge bus -> SQS queue -> consumer)
+### Asynchronous events (SNS topic -> SQS queue -> consumer)
 
-Bus: `ridenow-local-events`. Each queue has a DLQ (`maxReceiveCount` 5).
+Topic: `ridenow-local-events`. Each queue has a DLQ (`maxReceiveCount` 5). Each queue
+is fed by one subscription with raw message delivery, so the SQS body is the event
+JSON itself (no SNS envelope). Subscriptions filter on the body's top-level `type`
+(`FilterPolicyScope=MessageBody`), so publishers set no message attributes.
 
-| Queue | Rule matches | Consumer |
-|-------|--------------|----------|
+| Queue | Subscription filter (`type`) | Consumer |
+|-------|------------------------------|----------|
 | `ridenow-local-matching` | `trip.requested` | matching-service |
 | `ridenow-local-payment` | `trip.completed`, `trip.cancelled` | payment-service |
-| `ridenow-local-notifications` | every `ridenow.*` event | notification-worker |
+| `ridenow-local-notifications` | none (every event) | notification-worker |
 
 ```text
-trip-service --trip.requested--> [matching queue] --> matching-service --match.offered--> bus
-trip-service --trip.completed/cancelled--> [payment queue] --> payment-service --payment.*--> bus
+trip-service --trip.requested--> [matching queue] --> matching-service --match.offered--> topic
+trip-service --trip.completed/cancelled--> [payment queue] --> payment-service --payment.*--> topic
 all events --> [notifications queue] --> notification-worker --> inbox table <-- apps poll
                                               |  pairing keys, trip-ended (Redis)
                                               v
@@ -190,8 +193,8 @@ Ratings ownership is intentionally undecided; no ratings service or tables exist
 ```text
 ridenow/
   docker-compose.yml        # whole local system: 6 Postgres, Redis, LocalStack, 7 services
-  .env.example              # compose defaults (DB creds, AWS region, bus name)
-  localstack/               # init/01-messaging.sh (bus, queues, DLQs, rules), smoke-test.sh
+  .env.example              # compose defaults (DB creds, AWS region, topic ARN)
+  localstack/               # init/01-messaging.sh (topic, queues, DLQs, subscriptions), smoke-test.sh
   iac/
     stacks/                 # CloudFormation 01 iam, 02 network, 03 ecr, 04 data,
                             #   05 messaging, 06 eks-cluster, 07 eks-addons
@@ -215,7 +218,7 @@ notification-worker and realtime-gateway (`iac/k8s/20-26`). The ingress routes
 |-------|-----------|
 | Single service | `mvnw spring-boot:run` + the service's own `docker-compose.yml` (DB only) |
 | Whole system | root `docker compose up --build` with LocalStack and Redis |
-| Cloud | EKS Fargate, RDS (Multi-AZ, per service), ElastiCache, SQS, EventBridge |
+| Cloud | EKS Fargate, RDS (Multi-AZ, per service), ElastiCache, SNS, SQS |
 
 Local to cloud is a config swap (endpoints, credentials via env or Secrets Manager); the
 service boundaries do not change.

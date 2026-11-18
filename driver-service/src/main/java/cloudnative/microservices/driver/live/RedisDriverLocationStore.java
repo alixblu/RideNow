@@ -16,6 +16,10 @@ import org.springframework.stereotype.Component;
  * with a TTL so a driver whose app stops reporting is treated as gone. Redis is
  * the PRIMARY store for this (the DBML keeps it out of Postgres); the data is
  * ephemeral and re-reported by the driver app, so a Redis loss is acceptable.
+ *
+ * Alongside the hash, each location write is appended to a per-driver sorted set at
+ * {@code ridenow:driver:track:{driverId}} that keeps the last five minutes of
+ * positions in chronological order.
  */
 @Component
 public class RedisDriverLocationStore implements DriverLocationStore {
@@ -26,6 +30,12 @@ public class RedisDriverLocationStore implements DriverLocationStore {
     private static final String FIELD_LNG = "lng";
     private static final String FIELD_UPDATED_AT = "updatedAt";
     private static final String FIELD_VEHICLE_TYPE = "vehicleType";
+
+    /** Sorted set of the driver's last few minutes of positions, scored by epoch millis. */
+    private static final String TRACK_KEY_PREFIX = "ridenow:driver:track:";
+
+    /** How much position history is kept per driver. */
+    private static final Duration TRACK_WINDOW = Duration.ofMinutes(5);
 
     /** How long a live record survives without an update (driver app heartbeat). */
     private static final Duration TTL = Duration.ofMinutes(5);
@@ -38,6 +48,10 @@ public class RedisDriverLocationStore implements DriverLocationStore {
 
     private static String key(UUID driverId) {
         return KEY_PREFIX + driverId;
+    }
+
+    private static String trackKey(UUID driverId) {
+        return TRACK_KEY_PREFIX + driverId;
     }
 
     @Override
@@ -61,18 +75,36 @@ public class RedisDriverLocationStore implements DriverLocationStore {
         // Clearing the key is the simplest representation of OFFLINE: no live
         // record means not available. (The durable account row stays in Postgres.)
         redis.delete(key(driverId));
+        redis.delete(trackKey(driverId));
     }
 
     @Override
     public void updateLocation(UUID driverId, BigDecimal lat, BigDecimal lng) {
         String key = key(driverId);
+        Instant now = Instant.now();
         Map<String, String> fields = Map.of(
                 FIELD_AVAILABILITY, Availability.ONLINE.name(),
                 FIELD_LAT, lat.toPlainString(),
                 FIELD_LNG, lng.toPlainString(),
-                FIELD_UPDATED_AT, Instant.now().toString());
+                FIELD_UPDATED_AT, now.toString());
         redis.opsForHash().putAll(key, fields);
         redis.expire(key, TTL);
+        recordTrackPoint(driverId, lat, lng, now);
+    }
+
+    /**
+     * Appends the position to the driver's recent track: a sorted set scored by the
+     * epoch-millisecond timestamp (so it reads back in chronological order), holding
+     * only the last {@link #TRACK_WINDOW}. Older points are trimmed on every write and
+     * the whole key expires once the driver stops reporting.
+     */
+    private void recordTrackPoint(UUID driverId, BigDecimal lat, BigDecimal lng, Instant at) {
+        String trackKey = trackKey(driverId);
+        long millis = at.toEpochMilli();
+        // The timestamp is part of the member so two updates at the same spot stay distinct.
+        redis.opsForZSet().add(trackKey, lat.toPlainString() + "," + lng.toPlainString() + "," + millis, millis);
+        redis.opsForZSet().removeRangeByScore(trackKey, 0, at.minus(TRACK_WINDOW).toEpochMilli());
+        redis.expire(trackKey, TRACK_WINDOW);
     }
 
     @Override

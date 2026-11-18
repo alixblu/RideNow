@@ -6,7 +6,7 @@ Production-grade, **layered** CloudFormation for the RideNow backend. This is th
 reproduces the same footprint as reviewable, repeatable templates.
 
 > These templates provision a **production** footprint: a multi-AZ VPC, per-service
-> Multi-AZ RDS, SQS/EventBridge/Redis, and an EKS cluster whose pods run on **AWS
+> Multi-AZ RDS, SNS/SQS/Redis, and an EKS cluster whose pods run on **AWS
 > Fargate** (serverless — no EC2 node groups to size, patch, or autoscale). Pods
 > are scheduled by namespace-matched Fargate profiles and billed per vCPU/memory
 > second while they run.
@@ -17,11 +17,11 @@ reproduces the same footprint as reviewable, repeatable templates.
 
 | Layer | Template | Creates | Hardening |
 |-------|----------|---------|-----------|
-| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / bus ARN its service uses |
+| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / topic ARN its service uses |
 | 2 | `stacks/02-network.yaml` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
 | 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment,matching}-service`, `ridenow/notification-worker`, `ridenow/realtime-gateway` | Scan-on-push, KMS encryption, lifecycle expiry |
 | 4 | `stacks/04-data.yaml` | One RDS PostgreSQL **per service** (database-per-service rule) | Multi-AZ, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
-| 5 | `stacks/05-messaging.yaml` | EventBridge bus; matching / payment / notifications SQS queues, each with a DLQ; one rule per queue routed by `detail-type`; ElastiCache Redis | Encrypted; each queue policy admits only its own rule (`aws:SourceArn`); Redis private with in-transit TLS |
+| 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache Redis | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Redis private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
 | 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
 
@@ -92,7 +92,7 @@ VPC CIDR differ so multiple environments can coexist in one account/region.
 | RDS deletion protection | false (snapshot on delete) |
 | RDS backup retention (days) | 30 |
 | EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) |
-| Messaging (SQS/EventBridge) | on |
+| Messaging (SNS/SQS) | on |
 | Redis (ElastiCache) | on |
 
 This matches the recorded RideNow config decision: **one image promoted unchanged
@@ -107,7 +107,7 @@ service image.
 - AWS CLI v2 configured (`aws sts get-caller-identity` succeeds) as a non-root user
   (LEARNING_PATH Stage 7).
 - Permission to create IAM roles, VPCs, RDS, EKS (incl. Fargate profiles), ECR,
-  SQS/EventBridge, and ElastiCache.
+  SNS/SQS, and ElastiCache.
 - For template authoring/validation only: `cfn-lint` (`pip install cfn-lint`).
 - For the Kubernetes layer: `kubectl` and (when a cluster exists) `aws eks
   update-kubeconfig`.
@@ -171,21 +171,23 @@ free tier — tear down environments you are no longer using.
   you pass `--apply`, mirroring the safety pattern in `../scripts/push-to-ecr.sh`.
 - Secrets Manager **generates** every database master password. No plaintext
   password ever appears in a template, a parameter file, or git history.
-- SQS / EventBridge / Redis are **on**. Event routing (mirrors
-  `../localstack/init/01-messaging.sh`):
+- SNS / SQS / Redis are **on**. Event routing (mirrors
+  `../localstack/init/01-messaging.sh`). Publishers send to the `ridenow-<env>-events`
+  topic. Each queue has one raw-delivery subscription, so the SQS body is the event JSON
+  itself, and the filter policy matches the body's top-level `type`:
 
-  | Queue | Rule matches | Consumer |
-  |-------|--------------|----------|
+  | Queue | Subscription filter (`type`) | Consumer |
+  |-------|--------------------------------|----------|
   | `ridenow-<env>-matching` | `trip.requested` | matching-service |
   | `ridenow-<env>-payment` | `trip.completed`, `trip.cancelled` | payment-service |
-  | `ridenow-<env>-notifications` | every `ridenow.*` event | notification-worker |
+  | `ridenow-<env>-notifications` | none (every event) | notification-worker |
 
   Each has a `-dlq` (maxReceiveCount 5). Redis serves driver live state, the GEO
   index, the driver location Pub/Sub channel, and the trip tracking pairing keys
   that notification-worker writes and realtime-gateway (the SSE service at `/live`
   on the ALB) reads.
 - **Upgrading an existing stack 01:** the shared `ridenow-<env>-app-access`
-  policy no longer grants SQS / EventBridge. Anything that relied on it for
+  policy no longer grants SQS / SNS. Anything that relied on it for
   messaging (for example a hand-made notification-worker role from guide 08)
   must move to the per-service role from stack 07 *before* stack 01 is updated,
   or it loses queue access.
@@ -205,7 +207,7 @@ iac/
     02-network.yaml        # 3-AZ VPC, NAT per AZ, cluster SG, DB SG
     03-ecr.yaml
     04-data.yaml
-    05-messaging.yaml      # SQS/EventBridge/Redis
+    05-messaging.yaml      # SNS/SQS/Redis
     06-eks-cluster.yaml    # control plane + Fargate profiles (no node group)
     07-eks-addons.yaml     # gated: ALB controller / external-secrets IRSA
   params/

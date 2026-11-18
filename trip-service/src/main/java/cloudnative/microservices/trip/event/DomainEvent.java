@@ -10,11 +10,11 @@ import java.util.UUID;
  * This is a small, self-contained contract (no shared cross-service module, per
  * the service-boundary rules): the envelope carries identity and timing, and
  * {@code data} carries the event-specific key fields as scalar strings so the
- * payload serializes cleanly to JSON for EventBridge and stays loosely coupled.
+ * payload serializes cleanly to JSON for SNS and stays loosely coupled.
  *
  * <ul>
  *   <li>{@code eventId}    - unique id; consumers use it for idempotency.</li>
- *   <li>{@code type}       - e.g. {@code trip.completed}; the EventBridge DetailType.</li>
+ *   <li>{@code type}       - e.g. {@code trip.completed}; subscriptions filter on this field.</li>
  *   <li>{@code version}    - contract version, so the shape can evolve safely.</li>
  *   <li>{@code occurredAt} - when the change happened.</li>
  *   <li>{@code aggregateId}- the trip id this event is about.</li>
@@ -29,7 +29,7 @@ public record DomainEvent(
         UUID aggregateId,
         Map<String, String> data
 ) {
-    /** The EventBridge Source for every trip-service event. */
+    /** The origin tag for every trip-service event (used in logs). */
     public static final String SOURCE = "ridenow.trip";
 
     private static final int CURRENT_VERSION = 1;

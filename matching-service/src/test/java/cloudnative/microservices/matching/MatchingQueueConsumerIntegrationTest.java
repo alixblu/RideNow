@@ -27,23 +27,22 @@ import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
-import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
+import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueAttributesRequest;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Queue -> consumer -> database, end to end on LocalStack + Postgres. The bus,
- * queue, DLQ and rule are created like {@code localstack/init/01-messaging.sh}
- * (matching rule: {@code trip.requested}). Uses the Postgres finder; Redis is only
+ * Queue -> consumer -> database, end to end on LocalStack + Postgres. The topic,
+ * queue, DLQ and subscription are created like {@code localstack/init/01-messaging.sh}
+ * (matching subscription: raw delivery, body filter on {@code trip.requested}). Uses the Postgres finder; Redis is only
  * there because position ingest also keeps the GEO index in sync.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class MatchingQueueConsumerIntegrationTest {
 
-    static final String BUS = "ridenow-local-events";
+    static final String TOPIC = "ridenow-local-events";
     static final String QUEUE = "ridenow-local-matching";
     static final String DLQ = "ridenow-local-matching-dlq";
 
@@ -58,7 +57,8 @@ class MatchingQueueConsumerIntegrationTest {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3"));
 
     static SqsClient sqs;
-    static EventBridgeClient eventBridge;
+    static SnsClient sns;
+    static String topicArn;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -70,26 +70,24 @@ class MatchingQueueConsumerIntegrationTest {
                 AwsBasicCredentials.create(LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey()));
         Region region = Region.of(LOCALSTACK.getRegion());
         sqs = SqsClient.builder().endpointOverride(endpoint).region(region).credentialsProvider(creds).build();
-        eventBridge = EventBridgeClient.builder().endpointOverride(endpoint).region(region)
+        sns = SnsClient.builder().endpointOverride(endpoint).region(region)
                 .credentialsProvider(creds).build();
 
-        eventBridge.createEventBus(b -> b.name(BUS));
+        topicArn = sns.createTopic(b -> b.name(TOPIC)).topicArn();
         String dlqUrl = sqs.createQueue(b -> b.queueName(DLQ)).queueUrl();
         String redrive = "{\"deadLetterTargetArn\":\"" + arn(dlqUrl) + "\",\"maxReceiveCount\":\"5\"}";
         String queueUrl = sqs.createQueue(b -> b.queueName(QUEUE).attributes(Map.of(
                 QueueAttributeName.REDRIVE_POLICY, redrive))).queueUrl();
         String queueArn = arn(queueUrl);
-        String rule = "ridenow-local-matching-rule";
-        String ruleArn = eventBridge.putRule(b -> b.name(rule).eventBusName(BUS).eventPattern(
-                "{\"source\":[{\"prefix\":\"ridenow.\"}],\"detail-type\":[\"trip.requested\"]}")).ruleArn();
         String policy = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\","
-                + "\"Principal\":{\"Service\":\"events.amazonaws.com\"},\"Action\":\"sqs:SendMessage\","
+                + "\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\","
                 + "\"Resource\":\"" + queueArn + "\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\""
-                + ruleArn + "\"}}}]}";
+                + topicArn + "\"}}}]}";
         sqs.setQueueAttributes(b -> b.queueUrl(queueUrl).attributes(Map.of(QueueAttributeName.POLICY, policy)));
-        eventBridge.putTargets(b -> b.rule(rule).eventBusName(BUS)
-                .targets(t -> t.id("matching-queue").arn(queueArn)));
-
+        sns.subscribe(b -> b.topicArn(topicArn).protocol("sqs").endpoint(queueArn).attributes(Map.of(
+                "RawMessageDelivery", "true",
+                "FilterPolicyScope", "MessageBody",
+                "FilterPolicy", "{\"type\":[\"trip.requested\"]}")));
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
@@ -108,7 +106,7 @@ class MatchingQueueConsumerIntegrationTest {
     @AfterAll
     static void close() {
         if (sqs != null) sqs.close();
-        if (eventBridge != null) eventBridge.close();
+        if (sns != null) sns.close();
     }
 
     private static String arn(String url) {
@@ -120,14 +118,12 @@ class MatchingQueueConsumerIntegrationTest {
     @Autowired DriverPositionService positionService;
     @Autowired TripOfferRepository offerRepository;
 
-    private void putTripRequested(String detail) {
-        var response = eventBridge.putEvents(b -> b.entries(PutEventsRequestEntry.builder()
-                .eventBusName(BUS).source("ridenow.trip").detailType("trip.requested").detail(detail).build()));
-        assertThat(response.failedEntryCount()).isZero();
+    private void publish(String body) {
+        sns.publish(b -> b.topicArn(topicArn).message(body));
     }
 
     @Test
-    void tripRequestedOnTheBusOffersTheNearbyDriverAndADuplicateAddsNoSecondSet() {
+    void tripRequestedOnTheTopicOffersTheNearbyDriverAndADuplicateAddsNoSecondSet() {
         UUID near = UUID.randomUUID();
         UUID far = UUID.randomUUID();
         positionService.reportPosition(near, VehicleType.CAR, new BigDecimal("10.500000"), new BigDecimal("106.500000"));
@@ -140,13 +136,13 @@ class MatchingQueueConsumerIntegrationTest {
                 + "\"pickupLat\":\"10.500000\",\"pickupLng\":\"106.500000\","
                 + "\"destinationLat\":\"10.600000\",\"destinationLng\":\"106.600000\"}}";
 
-        putTripRequested(event);
+        publish(event);
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(offerRepository.findByTripIdOrderByOfferedAtAsc(tripId))
                         .extracting(TripOffer::getDriverId).containsExactly(near));
 
         // The same event again (SQS is at-least-once): no second set of offers.
-        putTripRequested(event);
+        publish(event);
         await().during(Duration.ofSeconds(3)).atMost(Duration.ofSeconds(8)).untilAsserted(() ->
                 assertThat(offerRepository.findByTripIdOrderByOfferedAtAsc(tripId)).hasSize(1));
     }

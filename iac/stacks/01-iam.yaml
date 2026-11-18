@@ -92,23 +92,23 @@ Resources:
             Resource: !Sub "arn:aws:secretsmanager:*:${AWS::AccountId}:secret:ridenow-${Environment}-*"
 
   # ---- Per-service messaging policies (attached by the IRSA roles in 07) ----
-  # ARNs are built from the fixed names stack 05 creates (ridenow-<env>-events,
+  # ARNs are built from the fixed names stack 05 creates (the ridenow-<env>-events topic,
   # ridenow-<env>-<queue>), because 01 deploys before 05 and cannot import them.
   # Consumers get only receive/delete/attributes on THEIR queue; publishers get
-  # only PutEvents on the one bus. Nobody can send to a queue directly - only the
-  # EventBridge rules can (see the queue policies in 05).
+  # only sns:Publish on the one topic. Nobody can send to a queue directly - only
+  # the SNS topic can (see the queue policies in 05).
   TripServiceMessagingPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub "ridenow-${Environment}-trip-service-messaging"
-      Description: trip-service publishes trip events to the RideNow bus.
+      Description: trip-service publishes trip events to the RideNow topic.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: PublishToRideNowBus
+          - Sid: PublishToRideNowTopic
             Effect: Allow
-            Action: events:PutEvents
-            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+            Action: sns:Publish
+            Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-events"
 
   PaymentServiceMessagingPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -118,10 +118,10 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: PublishToRideNowBus
+          - Sid: PublishToRideNowTopic
             Effect: Allow
-            Action: events:PutEvents
-            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+            Action: sns:Publish
+            Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-events"
           - Sid: ConsumePaymentQueue
             Effect: Allow
             Action:
@@ -138,10 +138,10 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: PublishToRideNowBus
+          - Sid: PublishToRideNowTopic
             Effect: Allow
-            Action: events:PutEvents
-            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/ridenow-${Environment}-events"
+            Action: sns:Publish
+            Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-events"
           - Sid: ConsumeMatchingQueue
             Effect: Allow
             Action:

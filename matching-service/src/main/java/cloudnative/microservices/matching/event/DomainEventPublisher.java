@@ -3,7 +3,7 @@ package cloudnative.microservices.matching.event;
 /**
  * Transport-agnostic seam for publishing domain events. The service layer raises
  * events through this interface and never knows the transport, so the local
- * logging stand-in and the AWS EventBridge implementation are interchangeable -
+ * logging stand-in and the AWS SNS implementation are interchangeable -
  * the same business code points at either by configuration only.
  */
 public interface DomainEventPublisher {

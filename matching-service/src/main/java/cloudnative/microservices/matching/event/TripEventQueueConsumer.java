@@ -10,11 +10,10 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Polls the matching SQS queue (fed by the EventBridge rule for trip.requested)
+ * Polls the matching SQS queue (fed by an SNS subscription for trip.requested)
  * and hands each event to {@link TripRequestedHandler}.
  *
  * A message is deleted only after the handler returns. If it throws, the message
@@ -76,13 +75,10 @@ public class TripEventQueueConsumer {
     }
 
     /**
-     * Reads the event from an EventBridge-to-SQS message, which wraps it under a
-     * top-level "detail" field; without "detail" the whole body is the event.
+     * Reads the event from the queue message. The SNS subscription uses raw message
+     * delivery, so the body is the event JSON itself (no SNS envelope).
      */
     IncomingEvent parse(String body) {
-        JsonNode root = objectMapper.readTree(body);
-        JsonNode detail = root.get("detail");
-        JsonNode eventNode = (detail != null && !detail.isNull()) ? detail : root;
-        return objectMapper.treeToValue(eventNode, IncomingEvent.class);
+        return objectMapper.readValue(body, IncomingEvent.class);
     }
 }

@@ -649,4 +649,4 @@ ALB, and locking image tags to digests — the rest can follow incrementally.
 - Then tear down the cluster + Fargate profiles (guide 05) and RDS (guide 04).
 
 Next (features provisioned in): `07-later-elasticache-redis.md`,
-`08-later-sqs-eventbridge.md`.
+`08-later-sqs-sns.md`.

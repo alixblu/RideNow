@@ -6,8 +6,8 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Registers the default {@link LoggingDomainEventPublisher} ONLY when no other
- * {@link DomainEventPublisher} bean is present. Under the "eventbridge" profile
- * the {@link EventBridgeDomainEventPublisher} is present, so this fallback is
+ * {@link DomainEventPublisher} bean is present. Under the "sns" profile
+ * the {@link SnsDomainEventPublisher} is present, so this fallback is
  * skipped - exactly one publisher bean exists in either mode.
  */
 @Configuration

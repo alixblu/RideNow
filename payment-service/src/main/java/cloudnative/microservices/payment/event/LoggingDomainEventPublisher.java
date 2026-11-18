@@ -6,8 +6,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Default publisher: logs the event instead of sending it, so payment-service
  * runs with no AWS. A plain class; {@link EventPublisherConfig} registers it only
- * when no other {@link DomainEventPublisher} bean exists, so the EventBridge
- * publisher cleanly replaces it under the "eventbridge" profile.
+ * when no other {@link DomainEventPublisher} bean exists, so the SNS
+ * publisher cleanly replaces it under the "sns" profile.
  */
 public class LoggingDomainEventPublisher implements DomainEventPublisher {
 
