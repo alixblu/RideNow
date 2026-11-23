@@ -1013,4 +1013,4 @@ Delete the Grafana deployment if you no longer need it:
 kubectl delete namespace grafana
 ```
 
-Next: `07-later-elasticache-redis.md`.
+Next: `07-elasticache-redis.md`.

@@ -86,6 +86,14 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1Gi"
+          # Holds off the liveness probe until the app has started (JVM start on a
+          # 0.25 vCPU Fargate pod takes 70-110 s). Allows up to 5 minutes.
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8085
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /actuator/health

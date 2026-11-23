@@ -137,3 +137,10 @@ Outputs:
     Value: !GetAtt Cluster.OpenIdConnectIssuerUrl
     Export:
       Name: !Sub "ridenow-${Environment}-eks-OidcIssuerUrl"
+  # The security group EKS creates for the cluster. Fargate pods attach to THIS group
+  # (not to the extra SecurityGroupIds above, which only reach the control-plane ENIs),
+  # so the database and Redis groups must admit it. Stack 07 adds those rules.
+  ClusterSecurityGroupId:
+    Value: !GetAtt Cluster.ClusterSecurityGroupId
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-ClusterSecurityGroupId"

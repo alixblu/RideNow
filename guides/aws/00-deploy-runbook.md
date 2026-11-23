@@ -35,12 +35,36 @@ consistently). Run `iac/` commands from the repo root.
 infra half is one command.
 
 ```bash
+# 0. Static checks (no AWS calls): stacks, manifests, params and guides agree.
+./iac/scripts/check-consistency.sh
 # 1. Dry run (SAFE): emits a change set per stack, creates nothing.
 ./iac/scripts/deploy.sh prod
 
-# 2. Apply for real (creates billable resources):
-./iac/scripts/deploy.sh prod --apply
+# 2. Apply independent stacks at the same time (about 30 min faster):
+./iac/scripts/deploy.sh prod --apply --parallel
 ```
+
+**This step is slow, and the script is built for that.**
+
+| Slow resource | Typical wait |
+|---|---|
+| 02 network (3 NAT gateways) | 3-5 min |
+| 04 data (6 RDS instances) | 10-20 min |
+| 05 messaging (Redis replication group) | 10-15 min |
+| 06 EKS cluster + Fargate profiles | 10-15 min |
+
+- `--parallel` runs three phases: (01, 02, 03), then (04, 05, 06), then 07. Stacks
+  in a phase do not depend on each other. Each stack's output is printed in order
+  once the phase finishes, and the run stops if any stack failed.
+- **Safe to re-run.** A stack with no changes is skipped, so an interrupted run
+  resumes at the first unfinished stack.
+- **A failed first create** leaves the stack in `ROLLBACK_COMPLETE`, which cannot
+  be updated. The script prints the failed events (which resource, and why) and
+  stops. After you read them, run `RIDENOW_DELETE_ROLLBACK=1 ./iac/scripts/deploy.sh
+  prod --apply [--parallel]` to delete that stack and retry.
+- The CLI waits up to 60 minutes per stack. If your terminal or CI job has a
+  shorter limit, start the script in the background (or in `tmux`) and check the
+  CloudFormation console or `aws cloudformation describe-stacks` for progress.
 
 What this provisions, in order:
 
@@ -49,7 +73,7 @@ What this provisions, in order:
 | 01-iam | Cluster role + Fargate pod execution role + app-access policy + one messaging policy per service | messaging policies attach to 07's roles |
 | 02-network | 3-AZ VPC, NAT per AZ, cluster SG, DB SG | — |
 | 03-ecr | One repo per service | **images come in Phase 2** |
-| 04-data | 4 Multi-AZ RDS + Secrets Manager secrets | pods need these to be healthy |
+| 04-data | 6 RDS instances (user, driver, trip, payment, matching, notification) + Secrets Manager secrets | pods need these to be healthy; realtime-gateway has no database |
 | 05-messaging | SNS topic; matching / payment / notifications queues + DLQs; one filtered subscription per queue (raw delivery, filter on `type`); ElastiCache Redis | consumed by matching / payment / worker |
 | 06-eks-cluster | EKS control plane + 3 Fargate profiles | **no node group** |
 | 07-eks-addons | ALB-controller + External-Secrets IRSA roles, plus trip / payment / matching / notification-worker IRSA roles | OIDC id injected automatically |
@@ -141,7 +165,7 @@ aws cloudformation list-exports --region ap-southeast-1 \
    Part 1.2. Apply before service pods so their logs ship to CloudWatch.
 4. **ExternalSecret manifests:** substitute the RDS secret ARNs and region into
    `iac/k8s/10-external-secrets.yaml` and apply — guide 06 step 2 B3. Confirm all
-   four reach `SecretSynced` (step B4).
+   six reach `SecretSynced` (step B4).
 
 ---
 
@@ -188,8 +212,8 @@ Stack 05 already created Redis, the SQS queue/DLQ, and the SNS topic. These
 guides set the per-pod env + IRSA so matching-service and notification-worker use
 them:
 
-- `07-later-elasticache-redis.md` — point driver/matching at the Redis endpoint.
-- `08-later-sqs-sns.md` — topic/queue/subscription env + the worker's IRSA role.
+- `07-elasticache-redis.md` — point driver/matching at the Redis endpoint.
+- `08-sqs-sns.md` — topic/queue/subscription env + the worker's IRSA role.
 
 ---
 
@@ -204,7 +228,7 @@ dashboards, alert rules, and failure simulations are in `06a-observability.md`.
 ## Quick order summary
 
 ```
-deploy.sh prod --apply        # stacks 01->07 (OIDC auto-resolved for 07)
+deploy.sh prod --apply        # stacks 01->07 (OIDC auto-resolved for 07; add --parallel to go faster)
   └─ (03 done) push images     # Phase 2
 update-kubeconfig
 patch CoreDNS                  # Phase 3

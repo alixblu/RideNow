@@ -340,3 +340,10 @@ Outputs:
     Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
     Export:
       Name: !Sub "ridenow-${Environment}-messaging-RedisPrimaryEndpoint"
+
+  # Stack 07 opens this group to the Fargate pods (the cluster security group).
+  RedisSecurityGroupId:
+    Condition: RedisOn
+    Value: !Ref RedisSecurityGroup
+    Export:
+      Name: !Sub "ridenow-${Environment}-messaging-RedisSecurityGroupId"

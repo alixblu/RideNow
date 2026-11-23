@@ -13,10 +13,10 @@
   },
   "04-data": {
     "Environment": "dev",
-    "DbInstanceClass": "db.r6g.large",
-    "DbAllocatedStorage": "100",
-    "MultiAz": "true",
-    "BackupRetentionDays": "30",
+    "DbInstanceClass": "db.t4g.micro",
+    "DbAllocatedStorage": "20",
+    "MultiAz": "false",
+    "BackupRetentionDays": "1",
     "DeletionProtection": "false",
     "EngineVersion": "17"
   },
@@ -24,7 +24,7 @@
     "Environment": "dev",
     "EnableMessaging": "true",
     "EnableRedis": "true",
-    "RedisNodeType": "cache.r6g.large"
+    "RedisNodeType": "cache.t4g.micro"
   },
   "06-eks-cluster": {
     "Environment": "dev",

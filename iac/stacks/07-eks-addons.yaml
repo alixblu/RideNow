@@ -34,13 +34,53 @@ Parameters:
     Type: String
     Default: "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
     Description: Root CA thumbprint for the EKS OIDC endpoint.
+  EnableRedisAccess:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Let the Fargate pods reach Redis. Set false only when stack 05 was
+      deployed with EnableRedis=false (there is no Redis security group to import).
 
 Conditions:
   AddonsOn: !And
     - !Equals [!Ref EnableAddons, "true"]
     - !Not [!Equals [!Ref OidcProviderId, ""]]
+  RedisAccessOn: !And
+    - !Condition AddonsOn
+    - !Equals [!Ref EnableRedisAccess, "true"]
 
 Resources:
+  # ---- Network access for the pods -------------------------------------------
+  # Fargate pods run in the security group EKS creates for the cluster (stack 06
+  # exports it). The database and Redis groups were created earlier (stacks 02, 05)
+  # before that group existed, so they cannot name it; these rules close the gap.
+  # Without them every pod times out connecting to RDS / Redis and crash-loops.
+  DbIngressFromFargatePods:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AddonsOn
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-eks-ClusterSecurityGroupId"
+      Description: PostgreSQL 5432 from the EKS cluster security group (Fargate pods).
+
+  RedisIngressFromFargatePods:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: RedisAccessOn
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-messaging-RedisSecurityGroupId"
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !ImportValue
+        Fn::Sub: "ridenow-${Environment}-eks-ClusterSecurityGroupId"
+      Description: Redis 6379 from the EKS cluster security group (Fargate pods).
+
   OidcProvider:
     Type: AWS::IAM::OIDCProvider
     Condition: AddonsOn

@@ -73,6 +73,14 @@ spec:
           # Readiness includes Redis: without it this pod cannot deliver, so the
           # ALB stops sending it new streams. Liveness does not: restarting would
           # not fix a Redis outage, it would only drop every open stream.
+          # Holds off the liveness probe until the app has started (JVM start on a
+          # 0.25 vCPU Fargate pod takes 70-110 s). Allows up to 5 minutes.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8086
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness

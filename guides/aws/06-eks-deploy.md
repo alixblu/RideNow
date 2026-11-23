@@ -42,7 +42,12 @@ the Ingress annotations and provisions a real ALB.
 1. Download the controller's IAM policy JSON and create the policy:
 
    ```bash
-   curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
+   # The policy MUST match the controller version Helm installs (step 1b). An older
+   # policy works for the first deploy but later fails with AccessDenied on
+   # SetRulePriorities when an Ingress path is added. Look the version up first:
+   helm repo add eks https://aws.github.io/eks-charts && helm repo update
+   ALB_VERSION=$(helm search repo eks/aws-load-balancer-controller -o json | jq -r '.[0].app_version')
+   curl -o iam_policy.json "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${ALB_VERSION}/docs/install/iam_policy.json"
 
    aws iam create-policy \
      --policy-name AWSLoadBalancerControllerIAMPolicy \
@@ -245,6 +250,8 @@ above and the ESO install in step 2.
    # | ridenow-prod-data-DriverDbSecretArn | arn:aws:secretsmanager:...:secret:ridenow-prod-driver-db-Xx|
    # | ridenow-prod-data-TripDbSecretArn   | arn:aws:secretsmanager:...:secret:ridenow-prod-trip-db-Xx  |
    # | ridenow-prod-data-PaymentDbSecretArn| arn:aws:secretsmanager:...:secret:ridenow-prod-payment-db-Xx|
+   # | ridenow-prod-data-MatchingDbSecretArn     | arn:aws:secretsmanager:...:secret:ridenow-prod-matching-db-Xx    |
+   # | ridenow-prod-data-NotificationDbSecretArn | arn:aws:secretsmanager:...:secret:ridenow-prod-notification-db-Xx|
    ```
 
    Then substitute all placeholders and apply:
@@ -262,12 +269,20 @@ above and the ESO install in step 2.
    PAYMENT_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
      --query "Exports[?Name=='ridenow-prod-data-PaymentDbSecretArn'].Value" \
      --output text --no-cli-pager)
+   MATCHING_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
+     --query "Exports[?Name=='ridenow-prod-data-MatchingDbSecretArn'].Value" \
+     --output text --no-cli-pager)
+   NOTIFICATION_ARN=$(aws cloudformation list-exports --region ap-southeast-1 \
+     --query "Exports[?Name=='ridenow-prod-data-NotificationDbSecretArn'].Value" \
+     --output text --no-cli-pager)
 
    sed -e "s|<REGION>|ap-southeast-1|g" \
        -e "s|<USER_SECRET_ARN>|${USER_ARN}|g" \
        -e "s|<DRIVER_SECRET_ARN>|${DRIVER_ARN}|g" \
        -e "s|<TRIP_SECRET_ARN>|${TRIP_ARN}|g" \
        -e "s|<PAYMENT_SECRET_ARN>|${PAYMENT_ARN}|g" \
+       -e "s|<MATCHING_SECRET_ARN>|${MATCHING_ARN}|g" \
+       -e "s|<NOTIFICATION_SECRET_ARN>|${NOTIFICATION_ARN}|g" \
        iac/k8s/10-external-secrets.yaml | kubectl apply -f -
    ```
 
@@ -279,7 +294,7 @@ above and the ESO install in step 2.
    # NAME                       STORE             REFRESH INTERVAL   STATUS   READY
    # driver-db-credentials      ridenow-secrets   1h                 SecretSynced   True
    # user-db-credentials        ridenow-secrets   1h                 SecretSynced   True
-   # ...
+   # ...  (six in total: user, driver, trip, payment, matching, notification)
 
    # Confirm the k8s Secrets exist
    kubectl get secret -n ridenow
@@ -328,6 +343,7 @@ above and the ESO install in step 2.
      ```bash
      kubectl annotate externalsecret user-db-credentials driver-db-credentials \
        trip-db-credentials payment-db-credentials \
+       matching-db-credentials notification-db-credentials \
        -n ridenow \
        force-sync=$(date +%s) --overwrite
      ```
@@ -356,7 +372,7 @@ VPC CNI DaemonSet, which doesn't exist on Fargate.
 By default Fargate pods attach to the **cluster security group**, which the DB SG
 already trusts (guide 02 wires `DbIngressFromCluster`). The per-pod SGs below
 tighten that from "any pod can reach any DB" to "each service reaches only its
-own DB".
+own DB". realtime-gateway has no database, so it needs no policy.
 
 **1. Create one SG per service and wire it to that service's DB only:**
 
@@ -372,7 +388,7 @@ DB_SG=$(aws cloudformation list-exports \
   --output text --no-cli-pager)
 echo "DB SG: $DB_SG"
 
-for SVC in user driver trip payment; do
+for SVC in user driver trip payment matching notification; do
   SG_ID=$(aws ec2 create-security-group \
     --group-name ridenow-prod-${SVC}-service-sg \
     --description "${SVC}-service pods" \
@@ -392,7 +408,7 @@ for SVC in user driver trip payment; do
 done
 ```
 
-Record the four SG IDs printed above — you need them in the next step.
+Record the six SG IDs printed above — you need them in the next step.
 
 **2. Create `iac/k8s/40-security-group-policies.yaml`** replacing each
 `sg-XXXXXXXX` with the SG ID for that service:
@@ -449,6 +465,32 @@ spec:
   securityGroups:
     securityGroupIds:
       - sg-WWWWWWWW   # payment-service SG
+---
+apiVersion: vpcresources.k8s.aws/v1beta1
+kind: SecurityGroupPolicy
+metadata:
+  name: matching-service-sgp
+  namespace: ridenow
+spec:
+  podSelector:
+    matchLabels:
+      app: matching-service
+  securityGroups:
+    securityGroupIds:
+      - sg-MMMMMMMM   # matching-service SG
+---
+apiVersion: vpcresources.k8s.aws/v1beta1
+kind: SecurityGroupPolicy
+metadata:
+  name: notification-worker-sgp
+  namespace: ridenow
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-worker
+  securityGroups:
+    securityGroupIds:
+      - sg-NNNNNNNN   # notification-worker SG
 ```
 
 **3. Apply the policy before deploying the services:**
@@ -581,9 +623,23 @@ kubectl apply -f iac/k8s/25-notification-worker.yaml   # after substitution
 Notes baked into those manifests:
 - **matching-service** is an internal ClusterIP Service (no Ingress entry); it
   carries `REDIS_HOST/PORT` and `MATCHING_FINDER=redis`.
-- **notification-worker** has **no Service/Ingress** (only a health probe) and
-  ships a **ServiceAccount** annotated for IRSA so it can read SQS without static
-  keys - you fill in `<NOTIFICATION_WORKER_ROLE_ARN>` in guide 08.
+- **notification-worker** has a ClusterIP Service on port 8084 that the Ingress
+  routes `/api/notifications` to (the inbox the frontend polls). It ships a
+  **ServiceAccount** annotated for IRSA so it can read SQS without static keys -
+  you fill in `<NOTIFICATION_WORKER_ROLE_ARN>` from stack 07 (guide 08 explains it).
+
+### 3b. Deploy realtime-gateway
+
+`iac/k8s/26-realtime-gateway.yaml` runs the SSE service (port 8086) that streams a
+driver's live location to the trip's passenger. It has **no database and no IRSA
+role**: it only needs Redis. Substitute `<ACCOUNT_ID>`, `<REGION>`,
+`<IMAGE_TAG>`, `<REDIS_ENDPOINT>` and `<APP_ORIGIN>` (the browser origin; never `*`) and apply:
+
+```bash
+kubectl apply -f iac/k8s/26-realtime-gateway.yaml   # after substitution
+```n
+Its readiness probe includes Redis, so a pod stuck at `0/1` usually means the
+Redis endpoint or the security group is wrong.
 
 ---
 
@@ -601,9 +657,11 @@ in the Ingress **ADDRESS** (an `*.elb.amazonaws.com` hostname). It routes:
 - `/api/drivers`  -> driver-service:8080
 - `/api/trips`    -> trip-service:8082
 - `/api/payments` -> payment-service:8083
+- `/api/notifications` -> notification-worker:8084 (the inbox, polled by the frontend)
+- `/live` -> realtime-gateway:8086 (SSE; the ALB idle timeout is 300s for streams)
 
-(matching-service is internal - reached in-cluster by other services; the worker
-has no HTTP route. Add `/api/matching` to the Ingress only if you want it public.)
+(matching-service is internal - reached in-cluster by other services. Add
+`/api/matching` to the Ingress only if you want it public.)
 
 ---
 
@@ -613,6 +671,7 @@ has no HTTP route. Add `/api/matching` to the Ingress only if you want it public
 ADDR=$(kubectl get ingress ridenow -n ridenow -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 curl -s "http://$ADDR/api/drivers"      # a JSON page of drivers (from RDS)
 curl -s "http://$ADDR/api/trips"        # a JSON page of trips
+curl -s "http://$ADDR/api/notifications?userId=<a-user-uuid>"   # that user's inbox (may be empty)
 ```
 
 A JSON response through the ALB means: image pulled from ECR, pod healthy on
@@ -648,5 +707,5 @@ ALB, and locking image tags to digests — the rest can follow incrementally.
   bills hourly), then the service manifests and namespace.
 - Then tear down the cluster + Fargate profiles (guide 05) and RDS (guide 04).
 
-Next (features provisioned in): `07-later-elasticache-redis.md`,
-`08-later-sqs-sns.md`.
+Next (features provisioned in): `07-elasticache-redis.md`,
+`08-sqs-sns.md`.

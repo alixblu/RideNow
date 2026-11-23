@@ -1,10 +1,10 @@
 # 01-04 - Foundation via CloudFormation (IAM, VPC, ECR, RDS)
 
-Goal: bring up the network, roles, image registries, and the **five databases
-needed to demonstrate the core interaction patterns** — using CloudFormation. No
-clicking for this part. Then create the two extras by hand.
+Goal: bring up the network, roles, image registries, and the **six databases
+(one per service)** — using CloudFormation. No clicking for this part, and
+nothing to create by hand afterwards.
 
-Time: ~25 min (RDS creation is the slow part). Cost: NAT gateway + five
+Time: ~25 min (RDS creation is the slow part). Cost: NAT gateways + six
 `db.t4g.micro` instances bill hourly; see Clean up.
 
 ---
@@ -19,18 +19,18 @@ The lab is designed to prove **three interaction patterns** end-to-end on EKS:
 | 2 - Service → SNS → SQS → worker | trip/payment emit events after commit; notification-worker consumes them once, with retry and DLQ | **trip-db**, **payment-db**, **notification-db** |
 | 3 - SNS fan-out | `trip.completed` + `payment.succeeded` land on the same SQS queue; the worker processes both — one topic, multiple event types, one consumer | same trip-db + payment-db |
 
-**matching-service is intentionally out.** Its Redis GEO index doesn't need a
-separate DB to prove any of the three patterns. Create it manually later (see the
-"not included" note at the bottom) when you want to demo the GEO matching flow.
+**matching-service has its own database too** (`matching_service`). Its Redis GEO
+index answers "nearby drivers"; the database stores the offers it makes.
+realtime-gateway is the only service with no database.
 
-### Stacks 01-04 in this hybrid route
+### Stacks 01-04
 
 | Stack | Template | Creates |
 |-------|----------|---------|
-| 01-iam | `iac/stacks/01-iam.yaml` | EKS cluster + node roles, scoped policies |
-| 02-network | `iac/stacks/02-network.yaml` | VPC, subnets (2 AZ), IGW, NAT, SGs |
-| 03-ecr | `iac/stacks/03-ecr.yaml` | ECR repos for user/driver/trip/payment/matching/notification |
-| **04-data** | **`iac/stacks/04-data.yaml`** | Five Multi-AZ RDS instances (user/driver/trip/payment/notification) with Secrets Manager credentials |
+| 01-iam | `iac/stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped policies |
+| 02-network | `iac/stacks/02-network.yaml` | VPC, subnets (3 AZ), IGW, one NAT per AZ, SGs |
+| 03-ecr | `iac/stacks/03-ecr.yaml` | ECR repos for user/driver/trip/payment/matching/notification/realtime-gateway |
+| **04-data** | **`iac/stacks/04-data.yaml`** | Six RDS instances (user/driver/trip/payment/matching/notification) with Secrets Manager credentials. Multi-AZ follows `MultiAz` in the params file |
 
 All four stacks use the standard `iac/stacks/` templates. Stack 04 parameters
 are controlled by `iac/params/dev.json` — the defaults there use `MultiAz: false`
@@ -198,7 +198,7 @@ aws cloudformation wait stack-create-complete \
 echo "ridenow-dev-04-data: CREATE_COMPLETE"
 ```
 
-Five RDS instances take a few minutes each. If it fails with
+Six RDS instances create in parallel and take 10-20 minutes in total. If it fails with
 `Cannot find version ...`, confirm `EngineVersion=17` was passed — never pin a
 specific minor like `17.4` (AWS retires old minors and the stack will fail).
 
@@ -218,7 +218,7 @@ Key exports the later steps use:
 | Export | Used in |
 |--------|---------|
 | `ridenow-dev-network-VpcId` | EKS cluster (06), ALB controller (07) |
-| `ridenow-dev-network-PrivateSubnetIds` | EKS node group, RDS subnet group |
+| `ridenow-dev-network-PrivateSubnetIds` | Fargate profiles, RDS subnet group |
 | `ridenow-dev-network-PublicSubnetIds` | ALB |
 | `ridenow-dev-network-NodeSecurityGroupId` | tighten Redis SG (08) |
 | `ridenow-dev-iam-*RoleArn` | EKS cluster + node role (06) |
@@ -239,17 +239,11 @@ aws cloudformation list-exports \
 
 ## 5. What the templates DON'T create — do these by hand
 
-### ECR repos for the two newer services
+### Nothing is created by hand
 
-All six repos are now in `iac/stacks/03-ecr.yaml` — nothing to create by hand.
-
-### matching-service DB (optional — only if you want the GEO matching demo)
-
-`iac/stacks/04-data.yaml` only creates the four core databases (user, driver,
-trip, payment, notification). If you want to demo nearby-driver matching later,
-create one RDS instance manually in the console (same settings as the others:
-private, same DB SG, `matching_service` DB name, `matching` master user, Secrets
-Manager creds). It is not required for patterns 1, 2, or 3.
+All seven ECR repos are in `iac/stacks/03-ecr.yaml`, and all six databases are in
+`iac/stacks/04-data.yaml`. The messaging layer (SNS, SQS, Redis) comes from stack
+05, which is covered by `../../iac/README.md` and `00-deploy-runbook.md`.
 
 ---
 
@@ -258,21 +252,20 @@ Manager creds). It is not required for patterns 1, 2, or 3.
 - CloudFormation console: `ridenow-dev-01-iam`, `02-network`, `03-ecr`,
   `04-data` all `CREATE_COMPLETE`.
 - `aws cloudformation list-exports` shows the `ridenow-dev-*` exports above.
-- ECR: six repos (all from `03-ecr`: user/driver/trip/payment/matching/notification).
-- RDS: five instances **Available**, all private, each with a Secrets Manager
-  secret (user / driver / trip / payment / notification).
+- ECR: seven repos (all from `03-ecr`: user/driver/trip/payment/matching/notification/realtime-gateway).
+- RDS: six instances **Available**, all private, each with a Secrets Manager
+  secret (user / driver / trip / payment / matching / notification).
 
 ---
 
 ## Clean up
 
-Delete the ALB + EKS workloads and node group first (they hold the VPC open),
-then the two manually-created ECR repos, then:
+Delete the ALB + EKS workloads first (they hold the VPC open), then:
 
 ```bash
-# Delete stacks 04 -> 01 in reverse (teardown.sh handles all four):
+# Delete the stacks in reverse order (teardown.sh walks 07 -> 01):
 cd iac
 ./scripts/teardown.sh dev --apply
 ```
 
-Next: `05-push-images.md`.
+Next: `03-ecr.md` (build and push the images), then `05-eks-cluster.md`.

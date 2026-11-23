@@ -6,8 +6,9 @@ except where the console genuinely can't do the thing (building/pushing a Docker
 image, and `kubectl` once the cluster exists). This is the console counterpart to
 the codified templates in `../../iac/`.
 
-> Scope: **backend only**. The goal is to get the four HTTP services + the
-> notification worker + matching running on **Amazon EKS with AWS Fargate** —
+> Scope: **backend only**. The goal is to get all seven services (user, driver,
+> trip, payment, matching, notification-worker, realtime-gateway) running on
+> **Amazon EKS with AWS Fargate** —
 > serverless pods, no EC2 node group to size, patch, or autoscale. The stateful
 > managed services the code uses (ElastiCache / SNS / SQS) are provisioned
 > as part of the production footprint and wired via environment variables — no
@@ -22,16 +23,25 @@ the codified templates in `../../iac/`.
                     |
             ALB (Ingress)           <- one load balancer, routes by path
                     |                   (targets pod IPs: target-type: ip)
-   /api/users  /api/drivers  /api/trips  /api/payments
-        |            |            |            |
-   user-svc     driver-svc    trip-svc    payment-svc      (Fargate pods on EKS)
-        |            |            |            |
-     RDS user    RDS driver   RDS trip    RDS payment       (one Multi-AZ DB per service)
-
-   matching-svc (internal)        notification-worker (no HTTP, consumes SQS)
-        |                                |
-   ElastiCache Redis (GEO/live)     SQS queue + DLQ  <--  SNS topic
+   /api/users  /api/drivers  /api/trips  /api/payments  /api/notifications  /live
+        |            |            |            |               |                |
+   user-svc     driver-svc    trip-svc    payment-svc   notification-worker  realtime-gateway
+        |            |            |            |               |                |
+     RDS user    RDS driver   RDS trip    RDS payment    RDS notification    (no database)
+                                                                |                |
+   matching-svc (internal)  --- RDS matching                    |                |
+        |            \                                          |                |
+        |             \-- consumes trip.requested               |                |
+        |                                                       |                |
+   SNS topic ridenow-<env>-events --> 3 SQS queues + DLQs ------+                |
+        |                                                                        |
+   ElastiCache Redis: driver live state, GEO index, location Pub/Sub,            |
+                      tracking pairing keys  --------------------(Pub/Sub)-------+
 ```
+
+All services run in the `ridenow` namespace. Only user, driver, trip, payment,
+matching and notification-worker have a database (six RDS instances).
+realtime-gateway holds the SSE streams and reads Redis.
 
 Every pod runs on **Fargate**: EKS schedules it onto a right-sized micro-VM based
 on the pod's CPU/memory requests — there are no nodes in the cluster. The
@@ -62,11 +72,12 @@ parallel once the network exists.
 | 04 | `04-rds-secrets.md` | One Multi-AZ RDS PostgreSQL per service; credentials in Secrets Manager | yes (pods need a DB) |
 | 05 | `05-eks-cluster.md` | The EKS cluster + Fargate profiles; connect `kubectl` | **the main event** |
 | 06 | `06-eks-deploy.md` | Namespace, Secrets, Deployments/Services, the ALB Ingress; verify traffic | yes (this is "done") |
-| 07 | `07-later-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub) | matching-service |
-| 08 | `08-later-sqs-sns.md` | SQS queue + DLQ, SNS topic + subscription; wire the worker | notification-worker |
+| 07 | `07-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub, tracking keys) | matching-service, notification-worker, realtime-gateway |
+| 08 | `08-sqs-sns.md` | SNS topic, three filtered SQS queues + DLQs; wire the consumers | matching-service, payment-service, notification-worker |
 
 Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the
-Redis and async messaging the matching-service and notification-worker depend on.
+Redis and async messaging that matching-service, payment-service,
+notification-worker and realtime-gateway depend on.
 
 ---
 
@@ -82,13 +93,14 @@ built code (`application.yaml` per service) and the k8s manifests in `../../iac/
 | trip-service | 8082 | `ridenow/trip-service` | `/actuator/health` | its RDS, SNS* |
 | payment-service | 8083 | `ridenow/payment-service` | `/actuator/health` | its RDS, SNS* |
 | matching-service | 8085 | `ridenow/matching-service` | `/actuator/health` | its RDS, Redis* |
-| notification-worker | 8084 (health only) | `ridenow/notification-worker` | `/actuator/health` | its RDS, SQS* |
+| notification-worker | 8084 | `ridenow/notification-worker` | `/actuator/health` | its RDS, SQS*, Redis* |
+| realtime-gateway | 8086 | `ridenow/realtime-gateway` | `/actuator/health/readiness` | Redis* (no database) |
 
 `*` = provisioned in guides 07-08. driver/trip/payment/user run on their RDS;
-matching needs Redis to answer GEO queries; the worker consumes the SQS queue.
+matching needs Redis to answer GEO queries; the worker consumes the SQS queue and
+writes the tracking keys the gateway reads; the gateway streams location over SSE.
 
-> The k8s manifests in `../../iac/k8s/` cover user/driver/trip/payment plus
-> matching-service and notification-worker. All are selected by the `ridenow`
+> The k8s manifests in `../../iac/k8s/` cover all seven services. All are selected by the `ridenow`
 > Fargate profile (namespace match), so they schedule onto Fargate with no node
 > group present.
 

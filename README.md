@@ -95,7 +95,9 @@ docker compose down -v       # stop and wipe data
 Ports are mapped to `localhost:<port>` per the table above (e.g.
 `curl localhost:8082/api/trips`). Notifications are at
 `localhost:8084/api/notifications?userId=...`, and the live driver position at
-`curl -N "localhost:8086/live/trips/{tripId}/location?userId={passengerId}"`. See
+`curl -N "localhost:8086/live/trips/{tripId}/location?userId={passengerId}"`.
+To check the whole running stack end to end, run `./scripts/api-test.ps1` (PowerShell,
+about 2 minutes, exits non-zero on any failure). See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) sections 3 and 8 for the end-to-end
 async flow and the checks it was verified with, [`docs/REALTIME.md`](docs/REALTIME.md) for the
 real-time design, and [`realtime-gateway/README.md`](realtime-gateway/README.md) for

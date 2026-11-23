@@ -1,7 +1,6 @@
 # RideNow Real-time Design
 
-Status: built and verified on the local stack (see `ARCHITECTURE.md` section 8). The plan
-was `docs/plans/realtime-inbox-hardening.md`.
+Status: built and verified on the local stack (see `ARCHITECTURE.md` section 8).
 
 Two separate paths carry live data to the apps:
 

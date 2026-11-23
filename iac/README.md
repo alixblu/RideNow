@@ -1,12 +1,13 @@
 # RideNow - Infrastructure as Code (CloudFormation + EKS)
 
 Production-grade, **layered** CloudFormation for the RideNow backend. This is the
-"codify it" counterpart to the console-first AWS guides in `../docs/guides/`
-(Stages 7-13). The console guides teach each AWS resource by hand; this folder
-reproduces the same footprint as reviewable, repeatable templates.
+"codify it" counterpart to the console-first AWS guides in `../guides/aws/`.
+The console guides teach each AWS resource by hand; this folder reproduces the
+same footprint as reviewable, repeatable templates.
 
-> These templates provision a **production** footprint: a multi-AZ VPC, per-service
-> Multi-AZ RDS, SNS/SQS/Redis, and an EKS cluster whose pods run on **AWS
+> These templates provision the full architecture in `../docs/ARCHITECTURE.md`: a
+> 3-AZ VPC, one RDS instance per data-owning service (six), SNS/SQS/Redis, and an
+> EKS cluster whose seven services run on **AWS
 > Fargate** (serverless — no EC2 node groups to size, patch, or autoscale). Pods
 > are scheduled by namespace-matched Fargate profiles and billed per vCPU/memory
 > second while they run.
@@ -20,12 +21,30 @@ reproduces the same footprint as reviewable, repeatable templates.
 | 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / topic ARN its service uses |
 | 2 | `stacks/02-network.yaml` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
 | 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment,matching}-service`, `ridenow/notification-worker`, `ridenow/realtime-gateway` | Scan-on-push, KMS encryption, lifecycle expiry |
-| 4 | `stacks/04-data.yaml` | One RDS PostgreSQL **per service** (database-per-service rule) | Multi-AZ, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
+| 4 | `stacks/04-data.yaml` | Six RDS PostgreSQL instances, **one per service that owns data**: user, driver, trip, payment, matching, notification (realtime-gateway has none) | Multi-AZ per params, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
 | 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache Redis | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Redis private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
 | 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
 
 Kubernetes workload manifests (Deployment / Service / Ingress / HPA) live in `k8s/`.
+
+### What each Kubernetes manifest needs
+
+Each manifest has `<PLACEHOLDER>`s filled from stack exports (see
+`../guides/aws/06-eks-deploy.md`). `scripts/check-consistency.sh` checks that every
+one has a source.
+
+| Manifest | Service | Database | Export-fed placeholders |
+|----------|---------|----------|-------------------------|
+| `10-external-secrets.yaml` | six `ExternalSecret`s | all six | `<*_SECRET_ARN>` from `04-data` |
+| `20-user-service.yaml` | user-service :8081 | user | `<USER_DB_ENDPOINT>` |
+| `21-driver-service.yaml` | driver-service :8080 | driver | `<DRIVER_DB_ENDPOINT>`, `<REDIS_ENDPOINT>` |
+| `22-trip-service.yaml` | trip-service :8082 | trip | `<TRIP_DB_ENDPOINT>`, `<TRIP_SERVICE_ROLE_ARN>` |
+| `23-payment-service.yaml` | payment-service :8083 | payment | `<PAYMENT_DB_ENDPOINT>`, `<PAYMENT_QUEUE_URL>`, `<PAYMENT_SERVICE_ROLE_ARN>` |
+| `24-matching-service.yaml` | matching-service :8085 (internal) | matching | `<MATCHING_DB_ENDPOINT>`, `<REDIS_ENDPOINT>`, `<MATCHING_QUEUE_URL>`, `<MATCHING_SERVICE_ROLE_ARN>` |
+| `25-notification-worker.yaml` | notification-worker :8084 | notification | `<NOTIFICATION_DB_ENDPOINT>`, `<REDIS_ENDPOINT>`, `<NOTIFICATIONS_QUEUE_URL>`, `<NOTIFICATION_WORKER_ROLE_ARN>` |
+| `26-realtime-gateway.yaml` | realtime-gateway :8086 | none | `<REDIS_ENDPOINT>` |
+| `30-ingress.yaml` | ALB: `/api/users`, `/api/drivers`, `/api/trips`, `/api/payments`, `/api/notifications`, `/live` | - | - |
 
 ---
 
@@ -80,20 +99,22 @@ parameter, so three environments coexist in one account/region without clashing.
 ## Environments
 
 Per-environment values live in `params/<env>.json` (CloudFormation parameter
-files). The **same templates** deploy every environment and every environment is
-provisioned to the **same production shape**; only the `Environment` name and the
-VPC CIDR differ so multiple environments can coexist in one account/region.
+files). The **same templates** deploy every environment. Each environment has the
+same architecture (same stacks, same services); `dev` is sized down to cost less.
+The `Environment` name and the VPC CIDR also differ so multiple environments can
+coexist in one account/region.
 
-| Knob | value (all environments) |
-|------|--------------------------|
-| AZ count / NAT gateways | 3 AZ, one NAT per AZ |
-| RDS Multi-AZ | true |
-| RDS instance class | `db.r6g.large` |
-| RDS deletion protection | false (snapshot on delete) |
-| RDS backup retention (days) | 30 |
-| EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) |
-| Messaging (SNS/SQS) | on |
-| Redis (ElastiCache) | on |
+| Knob | `dev` | `staging` / `prod` |
+|------|-------|--------------------|
+| AZ count / NAT gateways | 3 AZ, one NAT per AZ | same |
+| RDS instances | 6 (one per data-owning service) | same |
+| RDS instance class / storage | `db.t4g.micro`, 20 GiB | same |
+| RDS Multi-AZ | false | true |
+| RDS backup retention (days) | 1 | 30 |
+| RDS deletion protection | false (snapshot on delete) | false (snapshot on delete) |
+| Redis node type | `cache.t4g.micro` | `cache.r6g.large` |
+| EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) | same |
+| Messaging (SNS/SQS) | on | on |
 
 This matches the recorded RideNow config decision: **one image promoted unchanged
 across environments; the environment supplies the differences** (laptop defaults ->
@@ -113,6 +134,11 @@ service image.
   update-kubeconfig`.
 
 ## Deploy
+Run the static checks first. They call no AWS API and take a few seconds:
+```bash
+./scripts/check-consistency.sh
+```
+Then the deploy:
 
 ```bash
 # Dry run (default, SAFE): emits a change set per layer, applies NOTHING.
@@ -120,11 +146,19 @@ service image.
 
 # Apply for real (creates billable resources):
 ./scripts/deploy.sh prod --apply
+# Apply, running independent stacks at the same time (about 30 min faster):
+./scripts/deploy.sh prod --apply --parallel
 ```
 
 `deploy.sh` walks stacks 01 -> 07 in order, feeding `params/<env>.json`, and waits
 for each to reach a stable state before starting the next (because later layers
-import earlier exports). Stack **07-eks-addons** needs the cluster's OIDC provider
+import earlier exports). With `--parallel` it runs three phases instead:
+(01, 02, 03), then (04, 05, 06), then 07. Stacks inside a phase do not import from
+each other. Re-running is safe: a stack with no changes is skipped, so an
+interrupted run resumes where it stopped. If a first create fails, the stack is
+left in `ROLLBACK_COMPLETE`; the script prints the failed events and stops, and
+`RIDENOW_DELETE_ROLLBACK=1 ./scripts/deploy.sh <env> --apply` deletes that stack
+and retries. Stack **07-eks-addons** needs the cluster's OIDC provider
 id, which only exists after stack 06 — the script **resolves it automatically**
 (`aws eks describe-cluster`) and injects it, so the whole infra half is one
 command. (During a dry run before 06 exists the id can't be resolved; the script
@@ -215,7 +249,8 @@ iac/
   k8s/
     <per-service Deployment/Service/Ingress/HPA manifests>
   scripts/
-    deploy.sh              # 01 -> 07, dry-run by default (auto-resolves OIDC for 07)
+    check-consistency.sh   # static checks: stacks, manifests, params and guides agree (no AWS calls)
+    deploy.sh              # 01 -> 07, dry-run by default; --parallel runs independent stacks together (auto-resolves OIDC for 07)
     cleanup-cluster.sh     # in-cluster + hand-created resources; run before teardown
     teardown.sh            # 07 -> 01, dry-run by default
   README.md

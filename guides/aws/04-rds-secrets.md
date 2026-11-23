@@ -33,8 +33,8 @@ above because Flyway/JPA validate against it.
 > database-per-service ownership boundary hard (no shared instance to couple
 > teams or failure domains) and gives each service independent failover,
 > scaling, and backup windows. This matches `../../iac/stacks/04-data.yaml`
-> (which provisions user/driver/trip/payment; matching and notification are
-> added alongside the messaging layer).
+> (which provisions all six: user, driver, trip, payment, matching and
+> notification). realtime-gateway has no database.
 
 ---
 

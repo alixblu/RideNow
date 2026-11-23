@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -37,6 +38,15 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .map(e -> e.getField() + ": " + e.getDefaultMessage())
                 .orElse("Validation failed");
+        return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    // A path or query value of the wrong type (e.g. GET /api/users/not-a-uuid) is a client
+    // mistake: answer 400 instead of letting it fall through to the 500 catch-all.
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleTypeMismatch(
+            MethodArgumentTypeMismatchException exception, HttpServletRequest request) {
+        String message = "Invalid value for parameter '" + exception.getName() + "'";
         return build(HttpStatus.BAD_REQUEST, message, request);
     }
 

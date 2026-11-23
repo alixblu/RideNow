@@ -13,8 +13,8 @@
   },
   "04-data": {
     "Environment": "staging",
-    "DbInstanceClass": "db.r6g.large",
-    "DbAllocatedStorage": "100",
+    "DbInstanceClass": "db.t4g.micro",
+    "DbAllocatedStorage": "20",
     "MultiAz": "true",
     "BackupRetentionDays": "30",
     "DeletionProtection": "false",

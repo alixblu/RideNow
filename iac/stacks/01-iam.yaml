@@ -66,9 +66,13 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub "ridenow-${Environment}-app-access"
+      # Do not reword Description: it is immutable on a managed policy, so any change forces
+      # a replacement, which CloudFormation refuses for a custom-named resource (the update
+      # of an existing stack fails). The policy no longer grants queue / event-bus access;
+      # that is per service now (see the *MessagingPolicy resources below).
       Description: >-
-        Scoped runtime access for RideNow pods via IRSA: pull images and read DB
-        secrets. Messaging access is per service (see *-messaging policies).
+        Scoped runtime access for RideNow pods via IRSA: pull images, read DB
+        secrets, and (where present) use the environment's queues and event bus.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

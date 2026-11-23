@@ -42,7 +42,7 @@ logic, the boundary has leaked. Fix that before adding anything new.
                     v                                    v
    +--------------+      +--------------+      +----------------+
    | user-service |<-----| driver-svc   |----->| matching-svc   |
-   | accounts     | HTTP | drivers,     |handoff| offers,        |
+   | accounts     | HTTP | drivers,     | Redis | offers,        |
    +--------------+      | live state   |      | Redis GEO      |
                          +--------------+      +----------------+
                     REST                            ^ trip.requested
@@ -65,14 +65,14 @@ logic, the boundary has leaked. Fix that before adding anything new.
 | Service | Owns | Talks to others by |
 |---|---|---|
 | user-service | users | serves HTTP |
-| driver-service | drivers, vehicles; live state in Redis | HTTP to user-service; position handoff to matching-service |
+| driver-service | drivers, vehicles; live state in Redis | HTTP to user-service; publishes positions on a Redis channel that matching-service subscribes to |
 | trip-service | trips, trip offers, the accept race | HTTP to payment-service; publishes events |
 | payment-service | payments | serves HTTP; consumes its queue; publishes events |
 | matching-service | driver positions, offers it makes, the GEO index | consumes its queue; publishes events |
 | notification-worker | the processed-notification ledger, the notification inbox | consumes its queue; writes tracking keys to Redis; serves `/api/notifications` |
 | realtime-gateway | nothing (no database) | subscribes to Redis; holds SSE streams |
 
-Rules that hold everywhere (from `AGENTS.md`):
+Rules that hold everywhere:
 
 - **Database per service.** No shared tables, no cross-service joins.
 - **Access goes through an API or an event,** never through another service's database.
@@ -238,17 +238,17 @@ the SSE client contract and the map guidance.
 |---|---|
 | One service | `./mvnw spring-boot:run` + that service's own `docker-compose.yml` (DB only) |
 | Whole system | root `docker compose up --build`: 6 Postgres, Redis, LocalStack, 7 services |
-| Cloud | EKS on **Fargate** (no node groups), Multi-AZ RDS per service, ElastiCache, SNS, SQS |
+| Cloud | EKS on **Fargate** (no node groups), one RDS instance per service that owns data (six), ElastiCache, SNS, SQS |
 
 **Cloud footprint.** CloudFormation in `iac/stacks/`, deployed in order by
-`iac/scripts/deploy.sh`. The script resolves the cluster's OIDC id between stacks 06 and 07.
+`iac/scripts/deploy.sh` (`--parallel` runs independent stacks together). The script resolves the cluster's OIDC id between stacks 06 and 07.
 
 | Stack | Provides |
 |---|---|
 | 01 | IAM: cluster and Fargate roles, a shared ECR/Secrets policy, one messaging policy per service scoped to its exact queue/topic |
 | 02 | three-AZ network with a NAT per AZ |
 | 03 | ECR, one repo per service |
-| 04 | RDS per service |
+| 04 | six RDS instances: user, driver, trip, payment, matching, notification (realtime-gateway has none) |
 | 05 | topic, three queues + DLQs, subscriptions, queue policies, Redis |
 | 06 | EKS cluster + Fargate profiles |
 | 07 | IRSA roles for the add-ons and for trip, payment, matching and notification-worker |
@@ -260,7 +260,7 @@ the SSE client contract and the map guidance.
 
 - RDS and Redis sit in private subnets and admit only cluster traffic. Per-service
   security groups narrow that to "own database only".
-- Services are `ClusterIP`. The only internet-facing entry is the ALB: four API paths
+- Services are `ClusterIP`. The only internet-facing entry is the ALB: five API paths (users, drivers, trips, payments, notifications)
   plus `/live`, with a 300s idle timeout for streams.
 
 ---

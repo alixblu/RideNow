@@ -54,7 +54,9 @@ Mirrors the `../../iac/stacks/05-messaging.yaml` Redis section.
 ## 4. Point the services at it
 
 Set these env vars on the pods that use Redis - **driver-service** (live state,
-Pub/Sub, cache-aside) and **matching-service** (GEO), then restart them:
+5-minute position track, Pub/Sub, cache-aside), **matching-service** (GEO),
+**notification-worker** (trip tracking pairing keys) and **realtime-gateway** (reads
+the pairing keys, subscribes to Pub/Sub), then restart them:
 
 ```
 REDIS_HOST = ridenow-redis.xxxx.ng.0001.apse1.cache.amazonaws.com
@@ -68,8 +70,23 @@ default is `false` (the local Redis container has no TLS); with TLS on and
 Edit their Deployment env (or re-apply the manifests with these values) and:
 
 ```bash
-kubectl rollout restart deployment/driver-service deployment/matching-service -n ridenow
+kubectl rollout restart deployment/driver-service deployment/matching-service \
+  deployment/notification-worker deployment/realtime-gateway -n ridenow
 ```
+
+The keys the services create (all ephemeral, so a Redis loss is acceptable):
+
+| Key | Type | Owner | TTL |
+|-----|------|-------|-----|
+| `ridenow:driver:live:{driverId}` | hash | driver-service | 5 min |
+| `ridenow:driver:track:{driverId}` | sorted set, last 5 min of positions | driver-service | 5 min |
+| `ridenow:matching:geo:{TYPE}` | GEO index (a sorted set) | matching-service | none |
+| `ridenow:tracking:trip:{tripId}`, `ridenow:tracking:driver:{driverId}` | string | notification-worker | 3 h |
+| `ridenow:driver:profile:{driverId}` | cache-aside (JSON string) | driver-service | 10 min |
+
+Memory: the position track is about 30 KB per online driver (roughly 600 points at one
+update a second), so 10,000 online drivers is about 300 MB. `cache.r6g.large` has
+about 13 GB, so it fits easily. Watch `DatabaseMemoryUsagePercentage` if you size down.
 
 matching-service should run with `MATCHING_FINDER=redis` (it already defaults to
 that in the compose/manifest) so it answers GEO queries from this cluster.
@@ -80,7 +97,9 @@ that in the compose/manifest) so it answers GEO queries from this cluster.
 
 - A driver goes online + reports a location (`POST /api/drivers/{id}/online`,
   `POST /api/drivers/{id}/location`), and `GET /api/drivers/{id}/live` returns the
-  position - served from ElastiCache, not Postgres.
+  position - served from ElastiCache, not Postgres. Each location write also adds a
+  point to `ridenow:driver:track:{driverId}` (`ZRANGE ... 0 -1` lists them oldest
+  first).
 - After feeding matching-service positions (its ingest endpoint), a match returns
   nearby drivers from Redis GEO.
 

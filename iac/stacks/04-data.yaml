@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RideNow data layer (04). One encrypted PostgreSQL RDS instance PER SERVICE
-  (database-per-service rule: four isolated databases, no shared instance, no
-  cross-service access). Master credentials are generated and stored by RDS in
+  (database-per-service rule: six isolated databases - user, driver, trip,
+  payment, matching, notification - no shared instance, no cross-service
+  access). realtime-gateway has no database. Master credentials are generated and stored by RDS in
   Secrets Manager - no plaintext password ever appears here. Instances live in
   the private subnets and are reachable only from the EKS node SG (both imported
   from the network stack, 02).
@@ -60,7 +61,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ---- KMS key for encryption at rest (shared across the four instances) ---
+  # ---- KMS key for encryption at rest (shared across the six instances) ----
   DbKmsKey:
     Type: AWS::KMS::Key
     Properties:
@@ -215,6 +216,72 @@ Resources:
         - Key: Service
           Value: payment-service
 
+  # ---- matching-service database ------------------------------------------
+  MatchingDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-matching-db"
+      DBName: matching_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: matching
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-matching-db"
+        - Key: Service
+          Value: matching-service
+
+  # ---- notification-worker database ---------------------------------------
+  NotificationDb:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "ridenow-${Environment}-notification-db"
+      DBName: notification_service
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      KmsKeyId: !Ref DbKmsKey
+      MultiAZ: !Ref MultiAz
+      MasterUsername: notification
+      ManageMasterUserPassword: true
+      MasterUserSecret:
+        KmsKeyId: !Ref DbKmsKey
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-network-DbSecurityGroupId"
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: !Ref DeletionProtection
+      Tags:
+        - Key: Name
+          Value: !Sub "ridenow-${Environment}-notification-db"
+        - Key: Service
+          Value: notification-worker
+
 Outputs:
   UserDbEndpoint:
     Value: !GetAtt UserDb.Endpoint.Address
@@ -251,3 +318,21 @@ Outputs:
     Value: !GetAtt PaymentDb.MasterUserSecret.SecretArn
     Export:
       Name: !Sub "ridenow-${Environment}-data-PaymentDbSecretArn"
+
+  MatchingDbEndpoint:
+    Value: !GetAtt MatchingDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-MatchingDbEndpoint"
+  MatchingDbSecretArn:
+    Value: !GetAtt MatchingDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-MatchingDbSecretArn"
+
+  NotificationDbEndpoint:
+    Value: !GetAtt NotificationDb.Endpoint.Address
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-NotificationDbEndpoint"
+  NotificationDbSecretArn:
+    Value: !GetAtt NotificationDb.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "ridenow-${Environment}-data-NotificationDbSecretArn"
