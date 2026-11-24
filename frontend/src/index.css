@@ -1,5 +1,4 @@
-/* Self-hosted variable fonts (no external request; works offline and in tests). */
-@import "@fontsource-variable/fraunces";
+/* Self-hosted variable font (no external request; works offline and in tests). */
 @import "@fontsource-variable/inter";
 
 @tailwind base;
@@ -7,65 +6,64 @@
 @tailwind utilities;
 
 /**
- * RideNow design tokens — warm editorial, dark-first.
+ * RideNow design tokens: modern ride-hailing look (bold sans, strong brand green,
+ * neutral palette, large radii). Tokens are RGB channel triples so Tailwind's
+ * `rgb(var(--token) / <alpha>)` colors can apply opacity. Light is the base
+ * (`:root`); the dark variant applies under <html data-theme="dark">.
  *
- * Deliberately NOT the cold slate-blue-on-black default: the dark theme is a warm
- * charcoal/brown ink with warm off-white "paper" text and a single muted emerald
- * accent (a restrained nod to Grab's green, not a neon). The light theme is warm
- * paper with near-black ink. Tokens are RGB channel triples so Tailwind's
- * `rgb(var(--token) / <alpha>)` colors can apply opacity. Dark is the default
- * (`:root`); the light variant applies under <html data-theme="light">.
+ * Contrast: every text token meets 4.5:1 against the bg and surface tokens of its
+ * theme, and accent-fg meets 4.5:1 against accent.
  */
 
 :root,
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --rn-bg: 20 18 16; /* warm near-black (brown-charcoal) */
-  --rn-surface: 28 25 22; /* panels */
-  --rn-surface-raised: 36 32 28; /* inputs / raised */
-  --rn-border: 58 52 46; /* warm hairline */
-
-  --rn-content: 240 234 224; /* warm paper text */
-  --rn-content-muted: 173 164 150;
-  --rn-content-subtle: 124 116 104;
-  --rn-content-inverse: 20 18 16; /* text on accent */
-
-  --rn-accent: 42 157 108; /* muted emerald */
-  --rn-accent-hover: 54 176 123;
-  --rn-accent-fg: 247 244 238; /* warm paper on accent */
-
-  --rn-sand: 206 170 120; /* warm secondary highlight */
-
-  --rn-success: 61 166 110;
-  --rn-warning: 211 161 74;
-  --rn-danger: 206 94 79;
-  --rn-info: 122 150 142;
-}
-
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --rn-bg: 245 241 232; /* warm paper */
-  --rn-surface: 252 249 243;
-  --rn-surface-raised: 255 253 249;
-  --rn-border: 223 214 198;
+  --rn-bg: 249 250 251; /* neutral-50 */
+  --rn-surface: 255 255 255;
+  --rn-surface-raised: 243 244 246;
+  --rn-border: 229 231 235;
 
-  --rn-content: 28 24 20; /* ink */
-  --rn-content-muted: 92 84 73;
-  --rn-content-subtle: 140 130 116;
-  --rn-content-inverse: 250 247 241;
+  --rn-content: 17 24 39; /* near-black ink */
+  --rn-content-muted: 75 85 99;
+  --rn-content-subtle: 100 108 120;
+  --rn-content-inverse: 255 255 255;
 
-  --rn-accent: 24 122 83; /* deeper emerald for contrast on paper */
-  --rn-accent-hover: 18 104 70;
-  --rn-accent-fg: 250 247 241;
+  --rn-accent: 0 122 77; /* brand green */
+  --rn-accent-hover: 0 98 62;
+  --rn-accent-fg: 255 255 255;
 
-  --rn-sand: 160 120 68;
+  --rn-sand: 133 100 40; /* legacy secondary highlight */
 
-  --rn-success: 24 122 83;
-  --rn-warning: 169 122 38;
-  --rn-danger: 183 66 52;
-  --rn-info: 90 110 102;
+  --rn-success: 0 122 77;
+  --rn-warning: 161 98 7;
+  --rn-danger: 200 40 40;
+  --rn-info: 29 78 216;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --rn-bg: 10 10 10;
+  --rn-surface: 23 23 23;
+  --rn-surface-raised: 38 38 38;
+  --rn-border: 64 64 64;
+
+  --rn-content: 245 245 245;
+  --rn-content-muted: 163 163 163;
+  --rn-content-subtle: 140 140 140;
+  --rn-content-inverse: 10 10 10;
+
+  --rn-accent: 46 204 143;
+  --rn-accent-hover: 72 220 163;
+  --rn-accent-fg: 6 30 20;
+
+  --rn-sand: 206 170 120;
+
+  --rn-success: 52 211 153;
+  --rn-warning: 245 180 60;
+  --rn-danger: 248 113 113;
+  --rn-info: 125 170 255;
 }
 
 @layer base {
@@ -83,28 +81,16 @@
     @apply bg-bg text-content font-sans antialiased;
   }
 
-  /* Editorial headings default to the serif display face. */
+  /* Bold sans headings. */
   h1,
   h2,
   h3 {
-    @apply font-serif;
+    @apply font-bold tracking-tight;
   }
 
-  /* A quiet, warm focus ring. */
+  /* Visible keyboard focus indicator on every interactive control. */
   :focus-visible {
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
   }
 }
 
-@layer components {
-  /* A faint map-style grid backdrop behind the rider location panel. The rider trip
-     screen is input-driven (live-location is deferred), so this is a static
-     decorative placeholder, not a real map. */
-  .rn-map-grid {
-    background-color: rgb(var(--rn-surface));
-    background-image:
-      linear-gradient(rgb(var(--rn-border) / 0.5) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(var(--rn-border) / 0.5) 1px, transparent 1px);
-    background-size: 32px 32px;
-  }
-}

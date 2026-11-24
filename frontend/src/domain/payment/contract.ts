@@ -36,6 +36,15 @@ export interface CreatePaymentRequest {
   method: PaymentMethod;
   /** De-duplicates a retried charge so a trip is never charged twice. */
   idempotencyKey: string;
+  /** Buyer-approved PayPal order id; required when method is PAYPAL. */
+  providerOrderId?: string;
+}
+
+/** Public values for loading the PayPal JS SDK (`GET /api/payments/paypal/config`). */
+export interface PayPalConfig {
+  clientId: string;
+  /** Currency the PayPal order is charged in (PayPal has no VND). */
+  currency: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,4 +94,8 @@ export interface PaymentServiceClient {
   getPaymentForTrip(tripId: string): Promise<PaymentResponse>;
   /** Create (charge) a payment for a trip → the created `PaymentResponse`. */
   createPayment(req: CreatePaymentRequest): Promise<PaymentResponse>;
+  /** Read the PayPal SDK settings (fails if PayPal is not configured on the server). */
+  getPaypalConfig(): Promise<PayPalConfig>;
+  /** Create a PayPal order for a fare (amount in `currency`, e.g. VND) → its order id. */
+  createPaypalOrder(amount: number, currency: string): Promise<{ orderId: string }>;
 }

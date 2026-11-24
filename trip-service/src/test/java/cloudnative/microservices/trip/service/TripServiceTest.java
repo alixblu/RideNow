@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -65,7 +66,7 @@ class TripServiceTest {
                 UUID.randomUUID(), RideType.CAR,
                 new BigDecimal("10.000000"), new BigDecimal("106.000000"),
                 new BigDecimal("10.100000"), new BigDecimal("106.100000"),
-                cloudnative.microservices.trip.dto.request.PaymentMethod.SIMULATED_CARD);
+                cloudnative.microservices.trip.dto.request.PaymentMethod.SIMULATED_CARD, null);
     }
 
     @Test
@@ -81,7 +82,7 @@ class TripServiceTest {
         // The trip id is the idempotency key, so authorize and the saved trip share it.
         verify(paymentServiceClient).authorize(
                 eq(response.id()), eq(request.passengerId()), eq(new BigDecimal("45000.00")),
-                eq("VND"), eq(request.paymentMethod()));
+                eq("VND"), eq(request.paymentMethod()), isNull());
         verify(eventPublisher, never()).publish(any());
     }
 
@@ -89,7 +90,7 @@ class TripServiceTest {
     void createTripWhenDeclinedSavesNothingAndNeedsNoRelease() {
         when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
         org.mockito.Mockito.doThrow(new cloudnative.microservices.trip.exception.PaymentDeclinedException("no funds"))
-                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any());
+                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any(), any());
 
         assertThatThrownBy(() -> tripService.createTrip(createRequest()))
                 .isInstanceOf(cloudnative.microservices.trip.exception.PaymentDeclinedException.class);
@@ -102,7 +103,7 @@ class TripServiceTest {
     void createTripWhenPaymentUnavailableSavesNothingAndReleasesDefensively() {
         when(fareEstimator.estimate(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("45000.00"));
         org.mockito.Mockito.doThrow(new PaymentUnavailableException("down"))
-                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any());
+                .when(paymentServiceClient).authorize(any(), any(), any(), any(), any(), any());
 
         assertThatThrownBy(() -> tripService.createTrip(createRequest()))
                 .isInstanceOf(PaymentUnavailableException.class);

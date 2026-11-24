@@ -40,3 +40,5 @@ build/
 
 localstack
 .kiro/
+### Scratch ops scripts and logs ###
+.scratch/

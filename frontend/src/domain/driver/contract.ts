@@ -104,3 +104,20 @@ export interface DriverServiceClient {
   /** `GET /api/drivers/{id}/live` (404 when offline). */
   getLiveState(driverId: string): Promise<DriverLiveStateResponse>;
 }
+
+// ---------------------------------------------------------------------------
+// Extension for the production-grade frontend (mock-backed; no backend endpoint yet).
+// ---------------------------------------------------------------------------
+
+/** A driver's rating summary. */
+export interface DriverRating {
+  /** 1.0 to 5.0. */
+  average: number;
+  /** Non-negative integer count of rated trips. */
+  ratedTrips: number;
+}
+
+export interface DriverServiceClientExt extends DriverServiceClient {
+  /** Rating summary for a driver (seeded drivers resolve by user id or driver id). */
+  getDriverRating(driverId: string): Promise<DriverRating>;
+}

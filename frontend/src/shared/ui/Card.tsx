@@ -1,8 +1,8 @@
 /**
- * Card — a rounded, elevated surface used to group content across the app.
+ * Card — a rounded (16 px minimum), softly elevated surface that groups content.
  *
- * `CardHeader`/`CardTitle` are light helpers for a consistent header. Everything is
- * presentational; pass arbitrary children.
+ * No hairline border: separation comes from the surface color and `shadow-card`.
+ * `CardHeader`/`CardTitle`/`CardBody` are light helpers for consistent spacing.
  */
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "./cn";
@@ -13,10 +13,7 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
 
 export function Card({ className, children, ...rest }: CardProps) {
   return (
-    <div
-      className={cn("rounded-2xl border border-border bg-surface", className)}
-      {...rest}
-    >
+    <div className={cn("rounded-2xl bg-surface shadow-card", className)} {...rest}>
       {children}
     </div>
   );
@@ -44,7 +41,7 @@ interface CardTitleProps extends HTMLAttributes<HTMLHeadingElement> {
 
 export function CardTitle({ className, children, ...rest }: CardTitleProps) {
   return (
-    <h3 className={cn("font-serif text-lg font-medium text-content", className)} {...rest}>
+    <h3 className={cn("text-lg font-bold text-content", className)} {...rest}>
       {children}
     </h3>
   );

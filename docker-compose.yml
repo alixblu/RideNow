@@ -246,6 +246,10 @@ services:
       RIDENOW_EVENTS_TOPIC_ARN: ${EVENTS_TOPIC_ARN:-arn:aws:sns:ap-southeast-1:000000000000:ridenow-local-events}
       # Consumes trip.completed / trip.cancelled to capture / release the hold.
       RIDENOW_PAYMENT_QUEUE_URL: http://localstack:4566/000000000000/ridenow-local-payment
+      # PayPal REST app credentials (sandbox first). Blank = PayPal not configured.
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
       AWS_REGION: ${AWS_REGION:-ap-southeast-1}
       AWS_ENDPOINT: http://localstack:4566
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}

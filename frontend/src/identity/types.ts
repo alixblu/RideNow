@@ -1,13 +1,12 @@
 /**
  * Identity module types — the replaceable boundary for the Current_Identity.
  *
- * Authentication is out of scope for this feature (Req 2.6): there are no tokens,
- * credentials, sessions, or login/signup flows anywhere in this module. An
- * `Identity` is nothing more than a role plus an opaque identifier string chosen
- * through the dev-only Identity_Switcher.
+ * There are no tokens or credentials in this module. An `Identity` is a role plus
+ * an opaque identifier string chosen through the mock sign-in flow and persisted
+ * as the Session.
  *
  * `IdentityApi` is the stable contract (design: "Identity module boundary"). Today
- * `DevIdentityProvider` implements it with in-memory React state; later a real auth
+ * `SessionIdentityProvider` implements it over localStorage; later a real auth
  * provider (e.g. Cognito) can implement the same `IdentityApi` and be mounted in its
  * place without any calling screen changing (Req 2.5). Screens never touch this type
  * directly — they consume it through `useCurrentIdentity()`.
@@ -31,8 +30,12 @@ export interface Identity {
  * provider later.
  */
 export interface IdentityApi {
-  /** The Current_Identity for a role, or null when none has been set (Req 2.4). */
+  /** The active Session identity, or null when signed out. */
+  readonly identity: Identity | null;
+  /** Establish the Session identity. */
+  signIn(identity: Identity): void;
+  /** End the Session. The caller navigates to the sign-in route. */
+  signOut(): void;
+  /** Back-compat accessor: the identity when its role matches, else null. */
   current(role: Role): Identity | null;
-  /** Establish the Current_Identity for a role (dev switcher only). */
-  set(identity: Identity): void;
 }

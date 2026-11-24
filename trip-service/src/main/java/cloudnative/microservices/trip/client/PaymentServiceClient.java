@@ -62,9 +62,9 @@ public class PaymentServiceClient {
      * @throws PaymentUnavailableException payment-service timed out, was unreachable, or errored
      */
     public void authorize(UUID tripId, UUID passengerId, BigDecimal amount, String currency,
-                          PaymentMethod method) {
+                          PaymentMethod method, String providerOrderId) {
         AuthorizeRequest body = new AuthorizeRequest(
-                tripId, amount, currency, method, tripId.toString(), passengerId);
+                tripId, amount, currency, method, tripId.toString(), passengerId, providerOrderId);
         AuthorizeResponse response = null;
         for (int attempt = 1; attempt <= maxAttempts && response == null; attempt++) {
             if (attempt > 1) {
@@ -139,7 +139,8 @@ public class PaymentServiceClient {
 
     /** JSON body for payment-service's {@code POST /api/payments}. */
     record AuthorizeRequest(UUID tripId, BigDecimal amount, String currency, PaymentMethod method,
-                            String idempotencyKey, UUID passengerId) {
+                            String idempotencyKey, UUID passengerId,
+                            String providerOrderId) {
     }
 
     /** The only fields of payment-service's response that trip-service needs. */

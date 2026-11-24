@@ -1,112 +1,31 @@
 /**
- * DriverApp — the Driver_App area (Req 1.1) hosting the driver and vehicle flows.
+ * DriverApp — the Driver_App route table (Req 5.1). Mounted at `/driver/*`.
  *
- * Driver actions are guarded behind a driver Current_Identity via the identity-prompt
- * guard (Req 2.4). Inside the guard an in-area nav switches between two sections:
- *   - Roster (PRIMARY): browse the live driver list, open one by selection to see its
- *     profile, vehicles, and status toggle, and accept SEARCHING trips through the real
- *     accept endpoint.
- *   - Register driver (SECONDARY): the create-driver form for onboarding a new driver.
- *
- * All screens share one `DriverServiceClient` resolved once from `appConfig`, so swapping
- * live/mock is a config change with no screen edits (Req 4.2, 4.3); the driver client
- * also serves the vehicle add/list/get operations driver-service owns. The trip client,
- * resolved the same way, backs the "Available rides" accept flow.
- *
- * This area owns a QueryClient scoped to itself so its TanStack Query hooks work whether
- * or not an outer provider is present (nearest provider wins).
+ * `DriverLayout` supplies the phone column and bottom nav; the routed screens are
+ * Drive (index), Earnings, and Account. The area owns a QueryClient scoped to itself so
+ * its TanStack Query hooks work whether or not an outer provider is present.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { IdentityPrompt, cn } from "../../shared/ui";
-import { appConfig } from "../../config/appConfig";
-import { resolveDriverClient } from "../../domain/driver";
-import { resolveTripClient } from "../../domain/trip";
-import { DriverRoster } from "./DriverRoster";
-import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
-import { NotificationBell } from "../../notifications/NotificationBell";
-import { CreateDriverScreen } from "./CreateDriverScreen";
-import { TripDesk } from "./TripDesk";
-
-type Section = "roster" | "desk" | "register";
-
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "roster", label: "Roster" },
-  { id: "desk", label: "Trip desk" },
-  { id: "register", label: "Register driver" },
-];
+import { Navigate, Route, Routes } from "react-router-dom";
+import { AccountScreen } from "./AccountScreen";
+import { DriveScreen } from "./DriveScreen";
+import { DriverLayout } from "./DriverLayout";
+import { EarningsScreen } from "./EarningsScreen";
 
 export function DriverApp() {
   const queryClient = useMemo(() => new QueryClient(), []);
-  const client = useMemo(() => resolveDriverClient(appConfig), []);
-  const tripClient = useMemo(() => resolveTripClient(appConfig), []);
 
   return (
     <QueryClientProvider client={queryClient}>
-      <DriverAppContent client={client} tripClient={tripClient} />
+      <Routes>
+        <Route element={<DriverLayout />}>
+          <Route index element={<DriveScreen />} />
+          <Route path="earnings" element={<EarningsScreen />} />
+          <Route path="account" element={<AccountScreen />} />
+          <Route path="*" element={<Navigate to="/driver" replace />} />
+        </Route>
+      </Routes>
     </QueryClientProvider>
-  );
-}
-
-function DriverAppContent({
-  client,
-  tripClient,
-}: {
-  client: ReturnType<typeof resolveDriverClient>;
-  tripClient: ReturnType<typeof resolveTripClient>;
-}) {
-  const [section, setSection] = useState<Section>("roster");
-  const driverId = useCurrentIdentity().current("driver")?.id ?? "";
-
-  return (
-    <section aria-label="Driver area" className="flex flex-col gap-5">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="font-serif text-3xl font-semibold tracking-tight">Driver desk</h2>
-        <p className="mt-1 text-sm text-content-muted">
-          Browse your drivers, keep their vehicles current, and pick up the rides that
-          are waiting.
-        </p>
-        </div>
-        {driverId && <NotificationBell userId={driverId} intervalMs={2000} />}
-      </header>
-
-      <IdentityPrompt role="driver">
-        <nav
-          aria-label="Driver sections"
-          className="flex gap-6 overflow-x-auto border-b border-border"
-        >
-          {SECTIONS.map(({ id, label }) => {
-            const active = section === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-current={active ? "page" : undefined}
-                onClick={() => setSection(id)}
-                className={cn(
-                  "-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm transition-colors",
-                  active
-                    ? "border-accent font-medium text-content"
-                    : "border-transparent text-content-subtle hover:text-content",
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="mt-6">
-          {section === "roster" && (
-            <DriverRoster client={client} tripClient={tripClient} />
-          )}
-          {section === "desk" && driverId && (
-            <TripDesk driverId={driverId} client={client} tripClient={tripClient} />
-          )}
-          {section === "register" && <CreateDriverScreen client={client} />}
-        </div>
-      </IdentityPrompt>
-    </section>
   );
 }

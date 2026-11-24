@@ -24,7 +24,7 @@ function env(overrides: Record<string, string> = {}): ImportMetaEnv {
 }
 
 const LIVE_DOMAINS: DomainKey[] = ["driver", "vehicle", "user", "trip", "payment", "notification"];
-const STUBBED_DOMAINS: DomainKey[] = ["matching"];
+const STUBBED_DOMAINS: DomainKey[] = ["matching", "admin"];
 const ALL_DOMAINS: DomainKey[] = [...LIVE_DOMAINS, ...STUBBED_DOMAINS];
 
 describe("buildConfig — API base URL parsing (Req 3.1)", () => {

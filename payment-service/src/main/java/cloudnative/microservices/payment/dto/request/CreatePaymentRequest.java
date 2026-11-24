@@ -42,6 +42,12 @@ public record CreatePaymentRequest(
          * passenger data); it is only copied onto payment events so notifications
          * know who to tell.
          */
-        UUID passengerId
+        UUID passengerId,
+
+        /**
+         * Optional: the buyer-approved provider order. Required for PAYPAL (the PayPal
+         * order id from the approval step); ignored for other methods.
+         */
+        String providerOrderId
 ) {
 }

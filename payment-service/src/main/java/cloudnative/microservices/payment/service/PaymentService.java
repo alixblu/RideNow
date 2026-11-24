@@ -79,9 +79,12 @@ public class PaymentService {
         // PENDING -> PROCESSING: hand the hold to the gateway.
         payment.markProcessing(now);
         PaymentGateway.ChargeResult result =
-                paymentGateway.authorize(request.method(), request.amount(), request.currency());
+                paymentGateway.authorize(
+                        request.method(), request.amount(), request.currency(), request.providerOrderId());
 
+        payment.setProviderOrderId(request.providerOrderId());
         if (result.approved()) {
+            payment.setProviderReference(result.providerReference());
             payment.markAuthorized(Instant.now());
         } else {
             payment.markFailed(result.failureReason(), Instant.now());
@@ -118,7 +121,8 @@ public class PaymentService {
 
         BigDecimal amount = finalAmount != null ? finalAmount : payment.getAmount();
         PaymentGateway.ChargeResult result =
-                paymentGateway.capture(payment.getMethod(), amount, payment.getCurrency());
+                paymentGateway.capture(
+                        payment.getMethod(), amount, payment.getCurrency(), payment.getProviderReference());
 
         if (result.approved()) {
             payment.markCaptured(amount, Instant.now());
@@ -146,7 +150,8 @@ public class PaymentService {
             return toResponse(payment);
         }
 
-        paymentGateway.release(payment.getMethod(), payment.getAmount(), payment.getCurrency());
+        paymentGateway.release(
+                payment.getMethod(), payment.getAmount(), payment.getCurrency(), payment.getProviderReference());
         payment.markReleased(Instant.now());
         return toResponse(paymentRepository.save(payment));
     }

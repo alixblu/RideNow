@@ -10,7 +10,7 @@
  */
 import type { AppConfig } from "../../config/appConfig";
 import { resolveClient } from "../clientFactory";
-import type { TripServiceClient } from "./contract";
+import type { TripServiceClientExt } from "./contract";
 import { createTripLiveClient } from "./liveClient";
 import { createTripMockClient } from "./mockClient";
 
@@ -26,9 +26,9 @@ export type {
  * Resolve the trip `Service_Client` for the given config.
  *
  * @param config the resolved app configuration
- * @returns a `TripServiceClient` — live or mock per `config.clients.trip.mode`
+ * @returns a `TripServiceClientExt` — live or mock per `config.clients.trip.mode`
  */
-export function resolveTripClient(config: AppConfig): TripServiceClient {
+export function resolveTripClient(config: AppConfig): TripServiceClientExt {
   return resolveClient(
     config.clients.trip.mode,
     createTripLiveClient,

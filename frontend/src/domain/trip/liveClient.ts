@@ -16,8 +16,9 @@ import type {
   CreateTripRequest,
   ListTripsParams,
   TripResponse,
-  TripServiceClient,
+  TripServiceClientExt,
 } from "./contract";
+import { createTripMockClient } from "./mockClient";
 
 const TRIPS_PATH = "/api/trips";
 
@@ -47,8 +48,14 @@ function buildTripsQuery(params: ListTripsParams): string {
  * generic `resolveClient` only invokes this thunk when the trip domain is configured
  * `live`.
  */
-export function createTripLiveClient(): TripServiceClient {
+export function createTripLiveClient(): TripServiceClientExt {
+  // No backend endpoint for estimates, history, ratings or earnings: delegate to the mock.
+  const mock = createTripMockClient();
   return {
+    estimateFares: (req) => mock.estimateFares(req),
+    listTripHistory: (params) => mock.listTripHistory(params),
+    rateTrip: (tripId, stars) => mock.rateTrip(tripId, stars),
+    getEarnings: (driverId) => mock.getEarnings(driverId),
     requestTrip(req: CreateTripRequest): Promise<TripResponse> {
       return httpRequest<TripResponse>(TRIPS_PATH, { method: "POST", body: req });
     },

@@ -4,7 +4,7 @@
  * Supplies the one provider that is environment-specific — the router. In production
  * that is a `BrowserRouter`; in tests the suite wraps `<App/>` in a `MemoryRouter`
  * instead. Everything else that every screen depends on (the TanStack Query
- * `QueryClientProvider` and the `DevIdentityProvider`) lives INSIDE `App.tsx` so any
+ * `QueryClientProvider` and the `SessionIdentityProvider`) lives INSIDE `App.tsx` so any
  * render of `<App/>`, including test renders under a bare `MemoryRouter`, has a
  * QueryClient and an identity context.
  *

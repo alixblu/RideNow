@@ -22,6 +22,7 @@ const CLIENTS: Record<DomainKey, DomainClientMode> = {
   matching: { mode: "mock" },
   payment: { mode: "mock" },
   notification: { mode: "mock" },
+  admin: { mode: "mock" },
 };
 
 function configWith(apiBaseUrl: string | null): AppConfig {

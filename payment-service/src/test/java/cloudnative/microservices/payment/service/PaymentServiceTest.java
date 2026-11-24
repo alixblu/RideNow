@@ -41,7 +41,7 @@ class PaymentServiceTest {
     @InjectMocks private PaymentService paymentService;
 
     private CreatePaymentRequest request(UUID tripId, String key) {
-        return new CreatePaymentRequest(tripId, new BigDecimal("45000.00"), "VND", PaymentMethod.CASH, key, null);
+        return new CreatePaymentRequest(tripId, new BigDecimal("45000.00"), "VND", PaymentMethod.CASH, key, null, null);
     }
 
     private Payment authorizedPayment(UUID tripId) {
@@ -58,7 +58,7 @@ class PaymentServiceTest {
         CreatePaymentRequest req = request(tripId, "idem-1");
         when(paymentRepository.findByIdempotencyKey("idem-1")).thenReturn(Optional.empty());
         when(paymentRepository.existsByTripId(tripId)).thenReturn(false);
-        when(paymentGateway.authorize(any(), any(), anyString())).thenReturn(PaymentGateway.ChargeResult.approve());
+        when(paymentGateway.authorize(any(), any(), anyString(), any())).thenReturn(PaymentGateway.ChargeResult.approve());
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
         PaymentResponse result = paymentService.createPayment(req);
@@ -82,7 +82,7 @@ class PaymentServiceTest {
         assertThat(result.id()).isEqualTo(original.getId());
         assertThat(result.status()).isEqualTo(PaymentStatus.AUTHORIZED);
         // No second hold, no second save, and no event on an idempotent replay.
-        verify(paymentGateway, never()).authorize(any(), any(), anyString());
+        verify(paymentGateway, never()).authorize(any(), any(), anyString(), any());
         verify(paymentRepository, never()).save(any(Payment.class));
         verify(events, never()).publishEvent(any());
     }
@@ -92,7 +92,7 @@ class PaymentServiceTest {
         UUID tripId = UUID.randomUUID();
         when(paymentRepository.findByIdempotencyKey("idem-2")).thenReturn(Optional.empty());
         when(paymentRepository.existsByTripId(tripId)).thenReturn(false);
-        when(paymentGateway.authorize(any(), any(), anyString()))
+        when(paymentGateway.authorize(any(), any(), anyString(), any()))
                 .thenReturn(PaymentGateway.ChargeResult.decline("Insufficient funds"));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -127,7 +127,7 @@ class PaymentServiceTest {
         UUID passengerId = UUID.randomUUID();
         Payment payment = authorizedPayment(tripId);
         when(paymentRepository.findByTripId(tripId)).thenReturn(Optional.of(payment));
-        when(paymentGateway.capture(any(), any(), anyString())).thenReturn(PaymentGateway.ChargeResult.approve());
+        when(paymentGateway.capture(any(), any(), anyString(), any())).thenReturn(PaymentGateway.ChargeResult.approve());
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
         PaymentResponse result = paymentService.capture(tripId, new BigDecimal("52000.00"), passengerId);
@@ -155,7 +155,7 @@ class PaymentServiceTest {
 
         assertThat(result.status()).isEqualTo(PaymentStatus.PAID);
         // A duplicate delivery must not charge again, save, or re-announce.
-        verify(paymentGateway, never()).capture(any(), any(), anyString());
+        verify(paymentGateway, never()).capture(any(), any(), anyString(), any());
         verify(paymentRepository, never()).save(any(Payment.class));
         verify(events, never()).publishEvent(any());
     }
@@ -165,7 +165,7 @@ class PaymentServiceTest {
         UUID tripId = UUID.randomUUID();
         Payment payment = authorizedPayment(tripId);
         when(paymentRepository.findByTripId(tripId)).thenReturn(Optional.of(payment));
-        when(paymentGateway.capture(any(), any(), anyString()))
+        when(paymentGateway.capture(any(), any(), anyString(), any()))
                 .thenReturn(PaymentGateway.ChargeResult.decline("Card expired"));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -200,7 +200,7 @@ class PaymentServiceTest {
         PaymentResponse result = paymentService.release(tripId);
 
         assertThat(result.status()).isEqualTo(PaymentStatus.RELEASED);
-        verify(paymentGateway).release(any(), any(), anyString());
+        verify(paymentGateway).release(any(), any(), anyString(), any());
     }
 
     @Test
@@ -213,7 +213,7 @@ class PaymentServiceTest {
         PaymentResponse result = paymentService.release(tripId);
 
         assertThat(result.status()).isEqualTo(PaymentStatus.RELEASED);
-        verify(paymentGateway, never()).release(any(), any(), anyString());
+        verify(paymentGateway, never()).release(any(), any(), anyString(), any());
         verify(paymentRepository, never()).save(any(Payment.class));
     }
 

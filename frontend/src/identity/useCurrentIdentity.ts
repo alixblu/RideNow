@@ -18,7 +18,7 @@ export function useCurrentIdentity(): IdentityApi {
   if (api === null) {
     throw new Error(
       "useCurrentIdentity must be used within an identity provider " +
-        "(e.g. DevIdentityProvider) mounted above the router.",
+        "(e.g. SessionIdentityProvider) mounted above the router.",
     );
   }
   return api;

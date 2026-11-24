@@ -1,15 +1,12 @@
 /**
- * Button — the primary interactive control, Uber-style.
+ * Button — the primary interactive control.
  *
- * Variants:
- *   - primary: bold accent fill (default call-to-action)
- *   - secondary: surface fill with border
- *   - ghost: transparent, for low-emphasis actions
- *   - danger: destructive actions
- * Sizes: sm | md | lg, plus an optional `block` for full-width.
+ * Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg, plus `block`
+ * for full-width. Touch targets: every button is at least 44x44 CSS px when it sits
+ * inside an ancestor marked `data-touch` (the Rider and Driver layouts) or when
+ * `touch` is set explicitly (Req 3.4). `lg` is always 44 px or taller.
  *
- * It is a thin wrapper over a native <button>, so every native prop (type, disabled,
- * onClick, aria-*) passes through and tests keep querying by role/name as before.
+ * It is a thin wrapper over a native <button>, so every native prop passes through.
  */
 import { forwardRef } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
@@ -26,24 +23,28 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   leftIcon?: ReactNode;
   /** When true, shows an inline spinner and disables the button. */
   loading?: boolean;
+  /** Forces the 44 px minimum touch target regardless of ancestor context. */
+  touch?: boolean;
 }
 
 const VARIANTS: Record<Variant, string> = {
   primary:
     "bg-accent text-accent-fg hover:bg-accent-hover disabled:bg-accent/50 disabled:text-accent-fg/70",
   secondary:
-    "bg-transparent text-content border border-border hover:bg-surface-raised disabled:opacity-50",
+    "bg-surface-raised text-content hover:bg-border disabled:opacity-50",
   ghost:
     "bg-transparent text-content-muted hover:text-content hover:bg-surface-raised disabled:opacity-40",
-  danger:
-    "bg-transparent text-danger border border-danger/40 hover:bg-danger/10 disabled:opacity-50",
+  danger: "bg-danger/10 text-danger hover:bg-danger/20 disabled:opacity-50",
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "h-9 px-3.5 text-sm rounded-lg",
-  md: "h-10 px-4 text-sm rounded-lg",
-  lg: "h-11 px-5 text-[0.95rem] rounded-lg",
+  sm: "h-9 px-3.5 text-sm rounded-xl",
+  md: "h-11 px-4 text-sm rounded-xl",
+  lg: "h-12 px-5 text-base rounded-xl",
 };
+
+const TOUCH_CONTEXT = "[[data-touch]_&]:min-h-11 [[data-touch]_&]:min-w-11";
+const TOUCH_FORCED = "min-h-11 min-w-11";
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -52,6 +53,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     block = false,
     leftIcon,
     loading = false,
+    touch = false,
     className,
     children,
     type,
@@ -67,10 +69,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-medium transition-colors",
+        "inline-flex items-center justify-center gap-2 font-semibold transition-colors",
         "disabled:cursor-not-allowed select-none",
         VARIANTS[variant],
         SIZES[size],
+        touch ? TOUCH_FORCED : TOUCH_CONTEXT,
         block && "w-full",
         className,
       )}

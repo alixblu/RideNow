@@ -1,17 +1,17 @@
 /**
- * Input and Select — themed form controls.
+ * Input and Select — themed 48 px form controls.
  *
- * Both are thin wrappers over their native elements so every native prop (id, value,
- * onChange, aria-*, disabled) passes through unchanged and existing tests that query
- * by label/role keep working. An `invalid` flag applies the danger border.
+ * Thin wrappers over native elements so every native prop passes through unchanged.
+ * An `invalid` flag applies the danger ring. Pair with `Field` for label and error
+ * text. Controls use a filled surface instead of a hairline border.
  */
 import { forwardRef } from "react";
 import type { InputHTMLAttributes, SelectHTMLAttributes } from "react";
 import { cn } from "./cn";
 
 const FIELD_BASE =
-  "w-full h-10 px-3 rounded-lg bg-surface-raised text-content placeholder:text-content-subtle " +
-  "border border-border transition-colors focus:border-accent disabled:opacity-50";
+  "w-full h-12 px-4 rounded-xl bg-surface-raised text-content placeholder:text-content-subtle " +
+  "border-2 border-transparent transition-colors focus:border-accent disabled:opacity-50";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   invalid?: boolean;

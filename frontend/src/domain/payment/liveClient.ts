@@ -12,6 +12,7 @@
 import { httpRequest } from "../../http/httpClient";
 import type {
   CreatePaymentRequest,
+  PayPalConfig,
   PaymentResponse,
   PaymentServiceClient,
 } from "./contract";
@@ -41,6 +42,15 @@ export function createPaymentLiveClient(): PaymentServiceClient {
       return httpRequest<PaymentResponse>(PAYMENTS_PATH, {
         method: "POST",
         body: req,
+      });
+    },
+    getPaypalConfig(): Promise<PayPalConfig> {
+      return httpRequest<PayPalConfig>(`${PAYMENTS_PATH}/paypal/config`);
+    },
+    createPaypalOrder(amount: number, currency: string): Promise<{ orderId: string }> {
+      return httpRequest<{ orderId: string }>(`${PAYMENTS_PATH}/paypal/orders`, {
+        method: "POST",
+        body: { amount, currency },
       });
     },
   };

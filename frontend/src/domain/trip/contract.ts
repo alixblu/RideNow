@@ -15,7 +15,7 @@
  * SEARCHING (the trip-service immediately begins matching), not REQUESTED.
  */
 import type { Page } from "../../shared/page";
-import type { PaymentMethod, TripStatus, VehicleType } from "../../shared/enums";
+import type { PaymentMethod, PaymentStatus, TripStatus, VehicleType } from "../../shared/enums";
 
 export type { Page } from "../../shared/page";
 
@@ -121,4 +121,55 @@ export interface TripServiceClient {
   completeTrip(id: string): Promise<TripResponse>;
   /** List trips, filtered/paginated, as a `Page<TripResponse>`. */
   listTrips(params: ListTripsParams): Promise<Page<TripResponse>>;
+}
+
+// ---------------------------------------------------------------------------
+// Fare estimation (additive; no backend endpoint, see production-grade-frontend design)
+// ---------------------------------------------------------------------------
+export interface FareEstimate {
+  vehicleType: VehicleType;
+  /** VND, integer. */
+  amount: number;
+  currency: "VND";
+  /** One decimal. */
+  distanceKm: number;
+  /** Integer minutes. */
+  durationMin: number;
+}
+
+export interface EstimateFareRequest {
+  pickupLat: number;
+  pickupLng: number;
+  destinationLat: number;
+  destinationLng: number;
+}
+
+// ---------------------------------------------------------------------------
+// History, rating and earnings (additive; mock-backed, see production-grade-frontend design)
+// ---------------------------------------------------------------------------
+
+/** One row of a rider's or driver's trip history. */
+export interface HistoryEntry {
+  trip: TripResponse;
+  counterpartName: string;
+  counterpartRating: number | null;
+  /** e.g. "Honda Vision, 59X1-123.45". */
+  vehicleLabel: string | null;
+  paymentStatus: PaymentStatus;
+  /** The rider's 1 to 5 star rating of this trip. */
+  rating: number | null;
+}
+
+export interface EarningsSummary {
+  todayTotal: number;
+  weekTotal: number;
+  trips: { tripId: string; completedAt: string; fare: number; route: string }[];
+}
+
+export interface TripServiceClientExt extends TripServiceClient {
+  /** One estimate per VehicleType. */
+  estimateFares(req: EstimateFareRequest): Promise<FareEstimate[]>;
+  listTripHistory(params: { role: "rider" | "driver"; userId: string }): Promise<HistoryEntry[]>;
+  rateTrip(tripId: string, stars: 1 | 2 | 3 | 4 | 5): Promise<void>;
+  getEarnings(driverId: string): Promise<EarningsSummary>;
 }

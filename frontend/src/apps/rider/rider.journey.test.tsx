@@ -1,313 +1,261 @@
 /**
- * Unit tests for the rider RIDE JOURNEY.
+ * Component tests for Rider_App: HomeScreen booking flow, ActivityScreen and bottom nav.
+ * Requirements: 4.2, 4.4, 4.6, 4.7, 4.8.
  *
- * Tag: Feature: ridenow-frontend, rider ride journey
- *
- * The rider area is a single stateful journey wired to the real trip + payment
- * Service_Clients. These tests drive that journey against stubbed clients (via vi.mock)
- * with a rider identity set through the DevIdentityProvider, mirroring the rider test
- * harness pattern. They cover:
- *   - requesting a ride shows the SEARCHING status;
- *   - a polled status change to DRIVER_ASSIGNED appears;
- *   - cancelling a ride reflects CANCELLED;
- *   - the fare panel renders amount/currency/method/status and a FAILED reason;
- *   - getPaymentForTrip NOT_FOUND shows the quiet "No fare yet" state (no error banner);
- *   - "Your rides" lists trips and opening a row shows that trip's journey.
+ * The trip and driver Service_Clients are stubbed; the map is replaced by a stub because
+ * Leaflet needs a real layout engine.
  */
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, it, expect, vi } from "vitest";
 import { useEffect } from "react";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router-dom";
-import type { TripResponse, Page } from "../../domain/trip";
-import type { PaymentResponse } from "../../domain/payment";
-import { ApiError } from "../../http/ApiError";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FareEstimate, HistoryEntry } from "../../domain/trip/contract";
+import type { TripResponse } from "../../domain/trip";
+import type { TripStatus } from "../../shared/enums";
 
-// Declared via vi.hoisted so they are initialized before the hoisted vi.mock factories
-// run (a plain top-level const would not yet exist when the factory executes).
-const {
-  requestTrip,
-  getTrip,
-  cancelTrip,
-  listTrips,
-  getPaymentForTrip,
-} = vi.hoisted(() => ({
-  requestTrip: vi.fn<(req: unknown) => Promise<TripResponse>>(),
-  getTrip: vi.fn<(id: string) => Promise<TripResponse>>(),
-  cancelTrip: vi.fn<(id: string) => Promise<TripResponse>>(),
-  listTrips: vi.fn<(params: unknown) => Promise<Page<TripResponse>>>(),
-  getPaymentForTrip: vi.fn<(tripId: string) => Promise<PaymentResponse>>(),
-}));
+const { estimateFares, requestTrip, getTrip, cancelTrip, rateTrip, listTripHistory, getDriverRating } =
+  vi.hoisted(() => ({
+    estimateFares: vi.fn(),
+    requestTrip: vi.fn(),
+    getTrip: vi.fn(),
+    cancelTrip: vi.fn(),
+    rateTrip: vi.fn(),
+    listTripHistory: vi.fn(),
+    getDriverRating: vi.fn(),
+  }));
 
 vi.mock("../../domain/trip", () => ({
-  resolveTripClient: () => ({ requestTrip, getTrip, cancelTrip, listTrips }),
+  resolveTripClient: () => ({ estimateFares, requestTrip, getTrip, cancelTrip, rateTrip, listTripHistory }),
 }));
-vi.mock("../../domain/payment", () => ({
-  resolvePaymentClient: () => ({ getPaymentForTrip }),
+vi.mock("../../domain/driver", () => ({
+  resolveDriverClient: () => ({ getDriverRating }),
+}));
+vi.mock("../../map/MapCanvas", () => ({
+  MapCanvas: () => <div data-testid="map-stub" />,
 }));
 
 import { RiderApp } from "./RiderApp";
-import { DevIdentityProvider } from "../../identity/DevIdentityProvider";
+import { PRESET_LOCATIONS } from "../../domain/seed/places";
+import { SessionIdentityProvider } from "../../identity/SessionIdentityProvider";
+import { mockProfiles } from "../../identity/mockProfiles";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 
-const RIDER_ID = "rider-1";
+const RIDER = mockProfiles.rider[0]!;
+const DRIVER = mockProfiles.driver[0]!;
+const PICKUP = PRESET_LOCATIONS[0]!;
+const DEST = PRESET_LOCATIONS[1]!;
 
-/** A full TripResponse with sensible defaults, overridable per test. */
+const ESTIMATES: FareEstimate[] = [
+  { vehicleType: "MOTORBIKE", amount: 25000, currency: "VND", distanceKm: 3.2, durationMin: 9 },
+  { vehicleType: "CAR", amount: 60000, currency: "VND", distanceKm: 3.2, durationMin: 9 },
+];
+
 function makeTrip(overrides: Partial<TripResponse> = {}): TripResponse {
   return {
     id: "trip-1",
-    passengerId: RIDER_ID,
+    passengerId: RIDER.userId,
     driverId: null,
     vehicleId: null,
-    rideType: "CAR",
-    pickupLat: 10.7725,
-    pickupLng: 106.698,
-    pickupAddress: "Ben Thanh Market",
-    destinationLat: 10.7797,
-    destinationLng: 106.699,
-    destinationAddress: "Notre-Dame Cathedral",
+    rideType: "MOTORBIKE",
+    pickupLat: PICKUP.lat,
+    pickupLng: PICKUP.lng,
+    pickupAddress: PICKUP.label,
+    destinationLat: DEST.lat,
+    destinationLng: DEST.lng,
+    destinationAddress: DEST.label,
     status: "SEARCHING",
-    estimatedFare: null,
+    estimatedFare: 25000,
     finalFare: null,
     cancellationReason: null,
     version: 0,
-    requestedAt: "2024-01-01T00:00:00.000Z",
+    requestedAt: "2025-01-01T00:00:00.000Z",
     acceptedAt: null,
     arrivedAt: null,
     startedAt: null,
     completedAt: null,
     cancelledAt: null,
-    createdAt: "2024-01-01T00:00:00.000Z",
-    updatedAt: "2024-01-01T00:00:00.000Z",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
 
-function page(items: TripResponse[]): Page<TripResponse> {
-  return { items, total: items.length, limit: 50, offset: 0 };
+function makeEntry(id: string, requestedAt: string, counterpartName: string): HistoryEntry {
+  return {
+    trip: makeTrip({ id, requestedAt, status: "COMPLETED", finalFare: 30000 }),
+    counterpartName,
+    counterpartRating: 4.8,
+    vehicleLabel: null,
+    paymentStatus: "PAID",
+    rating: null,
+  };
 }
 
-/** Sets a rider identity, then renders children once it exists. */
-function RiderHarness({ children }: { children: ReactElement }) {
+function SignedInRider({ children }: { children: ReactElement }) {
   const identity = useCurrentIdentity();
-  const hasIdentity = identity.current("rider") !== null;
+  const ready = identity.current("rider") !== null;
   useEffect(() => {
-    if (!hasIdentity) {
-      identity.set({ role: "rider", id: RIDER_ID });
-    }
-  }, [hasIdentity, identity]);
-  return hasIdentity ? children : null;
+    if (!ready) identity.signIn({ role: "rider", id: RIDER.userId });
+  }, [ready, identity]);
+  return ready ? children : null;
 }
 
-function renderRider() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+function renderRider(path = "/rider") {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <QueryClientProvider client={queryClient}>
-        <DevIdentityProvider>
-          <RiderHarness>
-            <RiderApp />
-          </RiderHarness>
-        </DevIdentityProvider>
+        <SessionIdentityProvider>
+          <SignedInRider>
+            <Routes>
+              <Route path="/rider/*" element={<RiderApp />} />
+            </Routes>
+          </SignedInRider>
+        </SessionIdentityProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
 }
 
+/** Pick pickup/destination and press confirm. */
+async function bookRide() {
+  fireEvent.change(await screen.findByLabelText("Where to?"), { target: { value: DEST.id } });
+  await screen.findByRole("list", { name: "Fare quotes" });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm Motorbike" }));
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  estimateFares.mockResolvedValue(ESTIMATES);
+  getDriverRating.mockResolvedValue({ average: 4.9, count: 10 });
+  listTripHistory.mockResolvedValue([]);
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  vi.useRealTimers();
 });
 
-describe("Feature: ridenow-frontend, rider ride journey", () => {
-  it("keeps the 'Request a trip' heading on the initial journey step", async () => {
-    renderRider();
-    expect(
-      await screen.findByRole("heading", { name: "Request a trip" }),
-    ).toBeInTheDocument();
-    // The in-area nav keeps its accessible name.
-    expect(
-      screen.getByRole("navigation", { name: "Rider screens" }),
-    ).toBeInTheDocument();
-  });
-
-  it("requesting a ride shows the SEARCHING status (Req 9.1)", async () => {
+describe("Rider HomeScreen booking flow", () => {
+  it("shows a quote per vehicle type and enters the searching state on confirm (Req 4.2, 4.4)", async () => {
     requestTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
     getTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    getPaymentForTrip.mockRejectedValue(ApiError.notFound());
-
     renderRider();
 
-    fireEvent.submit(await screen.findByRole("form", { name: "Request a trip" }));
+    fireEvent.change(await screen.findByLabelText("Where to?"), { target: { value: DEST.id } });
+    const quotes = await screen.findByRole("list", { name: "Fare quotes" });
+    expect(within(quotes).getAllByRole("listitem")).toHaveLength(2);
+    expect(quotes.textContent).toContain("Motorbike");
+    expect(quotes.textContent).toContain("Car");
 
-    await waitFor(() => {
-      expect(screen.getByText("Searching")).toBeInTheDocument();
-    });
-    expect(screen.getByText(/searching for a nearby driver/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Motorbike" }));
+
+    expect(await screen.findByText(/searching for a nearby driver/i)).toBeInTheDocument();
     expect(requestTrip).toHaveBeenCalledWith(
-      expect.objectContaining({ passengerId: RIDER_ID, rideType: "MOTORBIKE" }),
+      expect.objectContaining({ passengerId: RIDER.userId, rideType: "MOTORBIKE", paymentMethod: "CASH" }),
     );
   });
 
-  it("surfaces a polled status change to DRIVER_ASSIGNED (Req 9.2)", async () => {
-    requestTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    // First read: still searching. Subsequent polls: a driver has been assigned.
-    getTrip
-      .mockResolvedValueOnce(makeTrip({ status: "SEARCHING" }))
-      .mockResolvedValue(
-        makeTrip({
-          status: "DRIVER_ASSIGNED",
-          driverId: "driver-9",
-          vehicleId: "vehicle-3",
-          acceptedAt: "2024-01-01T00:05:00.000Z",
-        }),
-      );
-    getPaymentForTrip.mockRejectedValue(ApiError.notFound());
-
+  it("keeps Confirm disabled until a destination is chosen", async () => {
     renderRider();
-
-    fireEvent.submit(await screen.findByRole("form", { name: "Request a trip" }));
-
-    // The seeded SEARCHING status shows first.
-    await waitFor(() => expect(screen.getByText("Searching")).toBeInTheDocument());
-
-    // The 3s refetchInterval polls getTrip again; the next read is DRIVER_ASSIGNED.
-    await waitFor(
-      () => {
-        // "Driver assigned" appears in both the status pill and the timeline row.
-        expect(screen.getAllByText("Driver assigned").length).toBeGreaterThan(0);
-      },
-      { timeout: 6000 },
-    );
-    expect(screen.getByText("driver-9")).toBeInTheDocument();
-    expect(screen.getByText("vehicle-3")).toBeInTheDocument();
+    const confirm = await screen.findByRole("button", { name: "Confirm Motorbike" });
+    expect(confirm).toBeDisabled();
   });
 
-  it("cancelling a ride reflects CANCELLED (Req 9.4)", async () => {
-    requestTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    getTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    cancelTrip.mockResolvedValue(
-      makeTrip({ status: "CANCELLED", cancelledAt: "2024-01-01T00:10:00.000Z" }),
-    );
-    getPaymentForTrip.mockRejectedValue(ApiError.notFound());
-
+  it.each<[TripStatus, boolean]>([
+    ["SEARCHING", true],
+    ["DRIVER_ASSIGNED", true],
+    ["DRIVER_ARRIVED", true],
+    ["IN_PROGRESS", false],
+  ])("cancel button visibility for %s is %s (Req 4.6)", async (status, visible) => {
+    const trip = makeTrip({ status, driverId: status === "SEARCHING" ? null : DRIVER.userId });
+    requestTrip.mockResolvedValue(trip);
+    getTrip.mockResolvedValue(trip);
     renderRider();
+    await bookRide();
 
-    fireEvent.submit(await screen.findByRole("form", { name: "Request a trip" }));
-    await waitFor(() => expect(screen.getByText("Searching")).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole("button", { name: /cancel ride/i }));
-
-    await waitFor(() => {
-      // "Cancelled" appears in both the status pill and the timeline row.
-      expect(screen.getAllByText("Cancelled").length).toBeGreaterThan(0);
-    });
-    // Cancel is no longer offered once terminal.
-    expect(screen.queryByRole("button", { name: /cancel ride/i })).not.toBeInTheDocument();
-  });
-
-  it("renders fare fields and a FAILED reason (Req 11.1, 11.3)", async () => {
-    requestTrip.mockResolvedValue(makeTrip({ status: "IN_PROGRESS" }));
-    getTrip.mockResolvedValue(makeTrip({ status: "IN_PROGRESS" }));
-    getPaymentForTrip.mockResolvedValue({
-      id: "pay-1",
-      tripId: "trip-1",
-      amount: 120000,
-      currency: "VND",
-      method: "SIMULATED_CARD",
-      status: "FAILED",
-      idempotencyKey: "idem-trip-1",
-      failureReason: "Payment declined by the card issuer.",
-      createdAt: "2024-01-01T00:00:00.000Z",
-      updatedAt: "2024-01-01T00:00:00.000Z",
-      paidAt: null,
-      failedAt: "2024-01-01T00:00:00.000Z",
-    });
-
-    renderRider();
-
-    fireEvent.submit(await screen.findByRole("form", { name: "Request a trip" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("SIMULATED_CARD")).toBeInTheDocument();
-    });
-    expect(screen.getByText((120000).toLocaleString())).toBeInTheDocument();
-    expect(screen.getByText("VND")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(
-      screen.getByText("Payment declined by the card issuer."),
-    ).toBeInTheDocument();
-  });
-
-  it("shows a quiet 'No fare yet' state when no payment exists (NOT_FOUND)", async () => {
-    requestTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    getTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
-    getPaymentForTrip.mockRejectedValue(ApiError.notFound());
-
-    renderRider();
-
-    fireEvent.submit(await screen.findByRole("form", { name: "Request a trip" }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/no fare yet/i)).toBeInTheDocument();
-    });
-    // The missing-payment state is quiet: no error banner anywhere.
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("lists 'Your rides' and opens a selected ride's journey", async () => {
-    listTrips.mockResolvedValue(
-      page([
-        makeTrip({ id: "trip-7", status: "COMPLETED" }),
-        makeTrip({ id: "trip-8", status: "CANCELLED" }),
-      ]),
-    );
-    getTrip.mockResolvedValue(makeTrip({ id: "trip-7", status: "COMPLETED" }));
-    getPaymentForTrip.mockRejectedValue(ApiError.notFound());
-
-    renderRider();
-
-    // Switch to the "Your rides" screen.
-    fireEvent.click(await screen.findByRole("button", { name: "Your rides" }));
-
-    const list = await screen.findByRole("list", { name: "Your rides" });
-    const rows = within(list).getAllByRole("button");
-    expect(rows).toHaveLength(2);
-
-    // Opening the first ride shows its journey (its trip id is fetched + shown).
-    const firstRow = rows[0];
-    if (firstRow === undefined) {
-      throw new Error("expected at least one ride row");
+    if (visible) {
+      expect(await screen.findByRole("button", { name: "Cancel ride" })).toBeInTheDocument();
+    } else {
+      expect(await screen.findByLabelText("Driver")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Cancel ride" })).toBeNull();
     }
-    fireEvent.click(firstRow);
-
-    await waitFor(() => {
-      expect(screen.getByText(/trip trip-7/i)).toBeInTheDocument();
-    });
-    expect(getTrip).toHaveBeenCalledWith("trip-7");
   });
 
-  it("shows the empty state when the rider has no rides", async () => {
-    listTrips.mockResolvedValue(page([]));
-
+  it("cancelling a searching ride shows the cancelled state", async () => {
+    requestTrip.mockResolvedValue(makeTrip());
+    getTrip.mockResolvedValue(makeTrip());
+    cancelTrip.mockResolvedValue(makeTrip({ status: "CANCELLED" }));
     renderRider();
+    await bookRide();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Your rides" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel ride" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/you have no rides yet/i)).toBeInTheDocument();
-    });
-    expect(screen.queryByRole("list", { name: "Your rides" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Your ride was cancelled.")).toBeInTheDocument();
+    expect(cancelTrip).toHaveBeenCalledWith("trip-1");
+  });
+
+  it("completion shows the summary and submits a 1 to 5 star rating (Req 4.7)", async () => {
+    const done = makeTrip({ status: "COMPLETED", driverId: DRIVER.userId, finalFare: 27000 });
+    requestTrip.mockResolvedValue(done);
+    getTrip.mockResolvedValue(done);
+    rateTrip.mockResolvedValue(undefined);
+    renderRider();
+    await bookRide();
+
+    const group = await screen.findByRole("group", { name: "Rate your ride" });
+    expect(within(group).getAllByRole("button")).toHaveLength(5);
+
+    fireEvent.click(within(group).getByRole("button", { name: "4 stars" }));
+
+    await waitFor(() => expect(rateTrip).toHaveBeenCalledWith("trip-1", 4));
+    expect(await screen.findByText("Thanks for rating.")).toBeInTheDocument();
+  });
+});
+
+describe("Rider ActivityScreen", () => {
+  it("lists trips newest first (Req 4.8)", async () => {
+    listTripHistory.mockResolvedValue([
+      makeEntry("old", "2025-01-01T08:00:00.000Z", "Oldest Driver"),
+      makeEntry("new", "2025-03-01T08:00:00.000Z", "Newest Driver"),
+      makeEntry("mid", "2025-02-01T08:00:00.000Z", "Middle Driver"),
+    ]);
+    renderRider("/rider/activity");
+
+    const list = await screen.findByRole("list", { name: "Trip history" });
+    const hrefs = within(list)
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["/rider/activity/new", "/rider/activity/mid", "/rider/activity/old"]);
+  });
+
+  it("shows an empty state with a link to book a ride", async () => {
+    renderRider("/rider/activity");
+    expect(await screen.findByText(/no rides yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Book a ride" })).toHaveAttribute("href", "/rider");
+  });
+});
+
+describe("Rider bottom navigation and Account", () => {
+  it("links Home, Activity and Account", async () => {
+    renderRider();
+    const nav = await screen.findByRole("navigation", { name: "Rider" });
+    expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/rider");
+    expect(within(nav).getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/rider/activity");
+    expect(within(nav).getByRole("link", { name: "Account" })).toHaveAttribute("href", "/rider/account");
+  });
+
+  it("navigates to Activity and Account from the nav", async () => {
+    renderRider();
+    const nav = await screen.findByRole("navigation", { name: "Rider" });
+
+    fireEvent.click(within(nav).getByRole("link", { name: "Activity" }));
+    expect(await screen.findByRole("heading", { name: "Activity" })).toBeInTheDocument();
+
+    fireEvent.click(within(nav).getByRole("link", { name: "Account" }));
+    expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
+    expect(screen.getByText(RIDER.name)).toBeInTheDocument();
   });
 });

@@ -43,7 +43,7 @@ class PaymentServiceClientTest {
     }
 
     private void authorize() {
-        client.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND", PaymentMethod.SIMULATED_CARD);
+        client.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND", PaymentMethod.SIMULATED_CARD, null);
     }
 
     @Test
@@ -102,7 +102,7 @@ class PaymentServiceClientTest {
                 .andRespond(withSuccess("{\"status\":\"AUTHORIZED\"}", MediaType.APPLICATION_JSON));
 
         assertThatCode(() -> retrying.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND",
-                PaymentMethod.SIMULATED_CARD)).doesNotThrowAnyException();
+                PaymentMethod.SIMULATED_CARD, null)).doesNotThrowAnyException();
         retryServer.verify();
     }
 
@@ -120,7 +120,7 @@ class PaymentServiceClientTest {
                 .andRespond(withSuccess("{\"status\":\"AUTHORIZED\"}", MediaType.APPLICATION_JSON));
 
         assertThatCode(() -> retrying.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND",
-                PaymentMethod.SIMULATED_CARD)).doesNotThrowAnyException();
+                PaymentMethod.SIMULATED_CARD, null)).doesNotThrowAnyException();
         retryServer.verify();
     }
 
@@ -135,7 +135,7 @@ class PaymentServiceClientTest {
                         MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> retrying.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND",
-                PaymentMethod.SIMULATED_CARD))
+                PaymentMethod.SIMULATED_CARD, null))
                 .isInstanceOf(PaymentDeclinedException.class).hasMessageContaining("Card declined");
     }
 
@@ -149,7 +149,7 @@ class PaymentServiceClientTest {
         }
 
         assertThatThrownBy(() -> retrying.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND",
-                PaymentMethod.SIMULATED_CARD)).isInstanceOf(PaymentUnavailableException.class);
+                PaymentMethod.SIMULATED_CARD, null)).isInstanceOf(PaymentUnavailableException.class);
         retryServer.verify();
     }
 
@@ -162,7 +162,7 @@ class PaymentServiceClientTest {
                 .andRespond(withServerError());
 
         assertThatThrownBy(() -> retrying.authorize(tripId, passengerId, new BigDecimal("45000.00"), "VND",
-                PaymentMethod.SIMULATED_CARD)).isInstanceOf(PaymentUnavailableException.class);
+                PaymentMethod.SIMULATED_CARD, null)).isInstanceOf(PaymentUnavailableException.class);
         retryServer.verify();
     }
 

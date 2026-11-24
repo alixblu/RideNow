@@ -3,11 +3,10 @@ import type { Config } from "tailwindcss";
 /**
  * Tailwind configuration for the RideNow frontend.
  *
- * The Uber-like visual language is expressed as semantic color tokens that resolve
+ * The ride-hailing visual language is expressed as semantic color tokens that resolve
  * to CSS variables (defined in src/index.css) so the same class names theme cleanly
- * between the dark-first default and the light variant. Dark mode is driven by a
- * `data-theme="dark"` attribute on <html> (toggled by the ThemeToggle), with dark as
- * the default when no preference is stored.
+ * between the light base and the dark variant. Dark mode is driven by a
+ * `data-theme="dark"` attribute on <html> (toggled by the ThemeToggle).
  */
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
@@ -26,7 +25,7 @@ const config: Config = {
           subtle: "rgb(var(--rn-content-subtle) / <alpha-value>)",
           inverse: "rgb(var(--rn-content-inverse) / <alpha-value>)",
         },
-        // The single muted-emerald accent.
+        // The brand green accent.
         accent: {
           DEFAULT: "rgb(var(--rn-accent) / <alpha-value>)",
           hover: "rgb(var(--rn-accent-hover) / <alpha-value>)",
@@ -41,13 +40,14 @@ const config: Config = {
         info: "rgb(var(--rn-info) / <alpha-value>)",
       },
       borderRadius: {
-        // Tighter, less-uniform radii than the default "everything 2xl" look.
-        lg: "0.5rem",
-        xl: "0.625rem",
-        "2xl": "0.875rem",
+        // Large rounded cards: `xl` (1rem = 16px) is the minimum card radius.
+        lg: "0.75rem",
+        xl: "1rem",
+        "2xl": "1.25rem",
+        "3xl": "1.75rem",
       },
       fontFamily: {
-        // Grotesk body + serif editorial display.
+        // Single bold sans-serif family.
         sans: [
           "Inter Variable",
           "Inter",
@@ -57,19 +57,11 @@ const config: Config = {
           "Roboto",
           "sans-serif",
         ],
-        serif: [
-          "Fraunces Variable",
-          "Fraunces",
-          "Georgia",
-          "Cambria",
-          "Times New Roman",
-          "serif",
-        ],
       },
       boxShadow: {
-        // Restrained: hairline-first design leans on borders, not big shadows.
-        card: "0 1px 0 rgb(0 0 0 / 0.04)",
+        card: "0 1px 2px rgb(0 0 0 / 0.06), 0 4px 16px rgb(0 0 0 / 0.06)",
         pop: "0 10px 30px rgb(0 0 0 / 0.22)",
+        sheet: "0 -8px 32px rgb(0 0 0 / 0.16)",
       },
       keyframes: {
         "fade-in": {

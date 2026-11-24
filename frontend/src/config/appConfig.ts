@@ -19,7 +19,8 @@ export type DomainKey =
   | "trip"
   | "matching"
   | "payment"
-  | "notification";
+  | "notification"
+  | "admin";
 
 /** Resolution mode for a single domain's Service_Client. */
 export type ClientMode = "live" | "mock";
@@ -47,6 +48,8 @@ const DEFAULT_MODES: Record<DomainKey, ClientMode> = {
   notification: "live",
   // matching-service is internal (no public route) — mock-only in the browser.
   matching: "mock",
+  // No backend admin endpoints exist; the data is seeded in the browser.
+  admin: "mock",
 };
 
 /** Env var that overrides each domain's mode, e.g. VITE_CLIENT_DRIVER. */
@@ -58,6 +61,7 @@ const CLIENT_ENV_KEYS: Record<DomainKey, string> = {
   matching: "VITE_CLIENT_MATCHING",
   payment: "VITE_CLIENT_PAYMENT",
   notification: "VITE_CLIENT_NOTIFICATION",
+  admin: "VITE_CLIENT_ADMIN",
 };
 
 function isClientMode(value: string | undefined): value is ClientMode {

@@ -45,6 +45,14 @@ public class Payment {
     @Column(name = "failure_reason")
     private String failureReason;
 
+    /** Provider order the buyer approved (PayPal order id); null for CASH / SIMULATED_CARD. */
+    @Column(name = "provider_order_id")
+    private String providerOrderId;
+
+    /** Provider's id for the hold (PayPal authorization id), used to capture or void it. */
+    @Column(name = "provider_reference")
+    private String providerReference;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -73,6 +81,14 @@ public class Payment {
         this.idempotencyKey = idempotencyKey;
         this.createdAt = now;
         this.updatedAt = now;
+    }
+
+    public void setProviderOrderId(String providerOrderId) {
+        this.providerOrderId = providerOrderId;
+    }
+
+    public void setProviderReference(String providerReference) {
+        this.providerReference = providerReference;
     }
 
     /** PENDING -> PROCESSING: the charge has been handed to the gateway. */

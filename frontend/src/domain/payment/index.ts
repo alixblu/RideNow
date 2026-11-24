@@ -18,6 +18,7 @@ import { createPaymentMockClient } from "./mockClient";
 export type {
   CreatePaymentRequest,
   PaymentMethod,
+  PayPalConfig,
   PaymentResponse,
   PaymentServiceClient,
 } from "./contract";

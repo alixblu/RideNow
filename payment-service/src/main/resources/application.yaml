@@ -30,6 +30,18 @@ ridenow:
     poll:
       wait-seconds: 10
       max-messages: 10
+  # PayPal REST app credentials (developer.paypal.com > Apps & Credentials). Blank
+  # means PayPal is not configured and PAYPAL payments are declined. Never commit
+  # real values; set them as environment variables / secrets.
+  paypal:
+    client-id: ${PAYPAL_CLIENT_ID:}
+    client-secret: ${PAYPAL_CLIENT_SECRET:}
+    base-url: ${PAYPAL_BASE_URL:https://api-m.sandbox.paypal.com}
+    # PayPal does not support VND: fares are converted at vnd-per-unit into currency.
+    currency: ${PAYPAL_CURRENCY:USD}
+    vnd-per-unit: ${PAYPAL_VND_PER_UNIT:25000}
+    # Order amount multiplier so the hold covers a final fare above the estimate.
+    authorization-buffer: ${PAYPAL_AUTHORIZATION_BUFFER:1.25}
 
 # Actuator exposes /actuator/health so Compose and later Kubernetes can probe
 # readiness/liveness without hitting business endpoints.

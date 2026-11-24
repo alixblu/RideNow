@@ -7,19 +7,15 @@
  *     / useMutation hooks have a client. Tests render <App/> under a bare MemoryRouter
  *     (no provider of their own), so App MUST supply the QueryClient itself — otherwise
  *     those hooks throw "No QueryClient set".
- *   - DevIdentityProvider mounted ABOVE the route table so it sits outside every area
- *     subtree: navigating between Rider, Driver, and Admin never unmounts it and the
- *     Current_Identity selection is preserved across areas (Req 1.3). The provider also
- *     renders the Identity_Switcher chrome at the top of the page.
+ *   - SessionIdentityProvider mounted ABOVE the route table so the persisted Session is
+ *     restored on first render and survives navigation between areas.
  *
  * Routing is supplied from OUTSIDE this component: main.tsx wraps <App/> in a
- * BrowserRouter in production, while tests wrap it in a MemoryRouter. App therefore
- * renders no router of its own and just emits the route table (`AppRoutes`), whose `/`
- * element is the `AppShell` chrome (nav + active-area indicator + <Outlet/>) with
- * nested rider/driver/admin subtrees and a catch-all not-found route.
+ * BrowserRouter in production, while tests wrap it in a MemoryRouter. App renders no
+ * router of its own and just emits the route table (`AppRoutes`).
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { DevIdentityProvider } from "./identity/DevIdentityProvider";
+import { SessionIdentityProvider } from "./identity/SessionIdentityProvider";
 import { ToastProvider } from "./shared/ui";
 import { AppRoutes } from "./routes";
 
@@ -31,9 +27,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <DevIdentityProvider>
+        <SessionIdentityProvider>
           <AppRoutes />
-        </DevIdentityProvider>
+        </SessionIdentityProvider>
       </ToastProvider>
     </QueryClientProvider>
   );

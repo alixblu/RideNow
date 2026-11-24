@@ -11,12 +11,14 @@ import type { AppConfig } from "../../config/appConfig";
 import { resolveClient } from "../clientFactory";
 import { createDriverLiveClient } from "./liveClient";
 import { createDriverMockClient } from "./mockClient";
-import type { DriverServiceClient } from "./contract";
+import type { DriverServiceClientExt } from "./contract";
 
 export type {
   CreateDriverRequest,
+  DriverRating,
   DriverResponse,
   DriverServiceClient,
+  DriverServiceClientExt,
   ListDriversParams,
 } from "./contract";
 export type { Page } from "../../shared/page";
@@ -26,8 +28,8 @@ export type { Page } from "../../shared/page";
  * selected purely from `config.clients.driver.mode`; the thunks are lazy, so only the
  * selected client is ever constructed.
  */
-export function resolveDriverClient(config: AppConfig): DriverServiceClient {
-  return resolveClient(
+export function resolveDriverClient(config: AppConfig): DriverServiceClientExt {
+  return resolveClient<DriverServiceClientExt>(
     config.clients.driver.mode,
     createDriverLiveClient,
     createDriverMockClient,

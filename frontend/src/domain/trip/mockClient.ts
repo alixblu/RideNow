@@ -13,11 +13,18 @@
  */
 import { ApiError } from "../../http/ApiError";
 import type { Page } from "../../shared/page";
+import { summarizeEarnings } from "../../apps/driver/earnings";
+import { sortHistory } from "../../apps/rider/history";
+import { estimateFare } from "../fare/estimateFare";
+import { generateSeedHistory } from "../seed/history";
+import { SEED_NOW } from "../seed/people";
 import type {
   CreateTripRequest,
+  EarningsSummary,
+  HistoryEntry,
   ListTripsParams,
   TripResponse,
-  TripServiceClient,
+  TripServiceClientExt,
 } from "./contract";
 
 /** Default/maximum window sizes for listTrips, mirroring the backend list semantics. */
@@ -30,8 +37,12 @@ const MAX_LIMIT = 100;
  * Returned as a factory (not a singleton) to match the client-factory pattern and to
  * keep each resolved client's store isolated.
  */
-export function createTripMockClient(): TripServiceClient {
+export function createTripMockClient(): TripServiceClientExt {
   const store = new Map<string, TripResponse>();
+  const seeded = generateSeedHistory();
+  const ratingOverrides = new Map<string, number>();
+  const withRating = (e: HistoryEntry): HistoryEntry =>
+    ratingOverrides.has(e.trip.id) ? { ...e, rating: ratingOverrides.get(e.trip.id)! } : e;
   /** One legal lifecycle step; anything else is a conflict, like trip-service's 409. */
   function transition(
     id: string,
@@ -59,6 +70,39 @@ export function createTripMockClient(): TripServiceClient {
   }
 
   return {
+    estimateFares(req) {
+      return Promise.resolve((["MOTORBIKE", "CAR"] as const).map((type) => estimateFare(req, type)));
+    },
+
+    listTripHistory({ role, userId }) {
+      const rows = (seeded[role][userId] ?? []).map(withRating);
+      return Promise.resolve(sortHistory(rows));
+    },
+
+    rateTrip(tripId, stars) {
+      const known = store.has(tripId) || seeded.trips.some((t) => t.trip.id === tripId);
+      if (!known) {
+        return Promise.reject(ApiError.notFound("The requested trip could not be found."));
+      }
+      ratingOverrides.set(tripId, stars);
+      return Promise.resolve();
+    },
+
+    getEarnings(driverId): Promise<EarningsSummary> {
+      const seedTrips = (seeded.driver[driverId] ?? []).map((e) => e.trip);
+      const live = [...store.values()].filter((t) => t.driverId === driverId);
+      const a = summarizeEarnings(seedTrips, SEED_NOW);
+      const b = summarizeEarnings(live, new Date());
+      const trips = [...b.trips, ...a.trips].sort(
+        (x, y) => Date.parse(y.completedAt) - Date.parse(x.completedAt),
+      );
+      return Promise.resolve({
+        todayTotal: a.todayTotal + b.todayTotal,
+        weekTotal: a.weekTotal + b.weekTotal,
+        trips,
+      });
+    },
+
     requestTrip(req: CreateTripRequest): Promise<TripResponse> {
       const now = new Date().toISOString();
       const trip: TripResponse = {

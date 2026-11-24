@@ -30,6 +30,7 @@ const CLIENTS: Record<DomainKey, DomainClientMode> = {
   matching: { mode: "mock" },
   payment: { mode: "mock" },
   notification: { mode: "mock" },
+  admin: { mode: "mock" },
 };
 
 // Gateway mode so resolveUrl always succeeds for the documented test path.

@@ -58,6 +58,8 @@ Per-requirement implementation note: each requirement below is tagged **(LIVE)**
 5. THE Identity_Switcher SHALL expose its current selection through a replaceable module boundary so that a real authentication mechanism can supply the Current_Identity later without changing calling screens.
 6. THE Frontend SHALL operate without login, signup, session tokens, or credential storage.
 
+> **SUPERSEDED:** Requirement 2, criterion 6 ("no login") is superseded by the `production-grade-frontend` spec (`.kiro/specs/production-grade-frontend`), which introduces a mock phone sign-in and role-picker session (swappable for real auth). The criterion text above is retained for history and no longer applies.
+
 ### Requirement 3: Configurable base URL and local path-prefix fallback (LIVE)
 
 **User Story:** As a developer, I want a single configurable backend origin with a documented local fallback to individual services, so that the app works today without a gateway and later points at one by changing configuration.

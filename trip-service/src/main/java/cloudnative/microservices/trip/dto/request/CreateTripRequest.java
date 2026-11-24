@@ -12,6 +12,8 @@ public record CreateTripRequest(
         @NotNull BigDecimal pickupLng,
         @NotNull BigDecimal destinationLat,
         @NotNull BigDecimal destinationLng,
-        @NotNull PaymentMethod paymentMethod
+        @NotNull PaymentMethod paymentMethod,
+        /** PayPal order id the rider approved; required when paymentMethod is PAYPAL. */
+        String paypalOrderId
 ) {
 }

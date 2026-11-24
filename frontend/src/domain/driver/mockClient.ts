@@ -22,10 +22,12 @@ import { createVehicleMockClient } from "../vehicle/mockClient";
 import type {
   CreateDriverRequest,
   DriverLiveStateResponse,
+  DriverRating,
   DriverResponse,
-  DriverServiceClient,
+  DriverServiceClientExt,
   ListDriversParams,
 } from "./contract";
+import { generateSeedHistory } from "../seed/history";
 
 /** Default/maximum window sizes for listDrivers, mirroring the backend semantics. */
 const DEFAULT_LIMIT = 20;
@@ -52,7 +54,8 @@ function newId(): string {
  * Build a fresh Mock_Client with its own in-memory driver store and its own composed
  * vehicle Mock_Client. Each call is isolated, which keeps tests deterministic.
  */
-export function createDriverMockClient(): DriverServiceClient {
+export function createDriverMockClient(): DriverServiceClientExt {
+  const seedRatings = generateSeedHistory().ratings;
   const store = new Map<string, DriverResponse>();
   // One shared vehicle mock instance so the driver's vehicle operations read and write
   // the same underlying store.
@@ -112,7 +115,22 @@ export function createDriverMockClient(): DriverServiceClient {
     getLiveState(driverId: string): Promise<DriverLiveStateResponse> {
       const state = live.get(driverId);
       return state ? Promise.resolve(state) : Promise.reject(ApiError.notFound());
-    },    createDriver(req: CreateDriverRequest): Promise<DriverResponse> {
+    },
+
+    getDriverRating(driverId: string): Promise<DriverRating> {
+      const seeded = seedRatings[driverId] ?? seedRatings[store.get(driverId)?.userId ?? ""];
+      if (seeded) {
+        return Promise.resolve({ average: seeded.average, ratedTrips: seeded.ratedTrips });
+      }
+      const driver = store.get(driverId);
+      if (!driver) {
+        return Promise.reject(ApiError.notFound());
+      }
+      const average = Math.min(5, Math.max(1, driver.averageRating ?? 5));
+      return Promise.resolve({ average, ratedTrips: 0 });
+    },
+
+    createDriver(req: CreateDriverRequest): Promise<DriverResponse> {
       const now = new Date().toISOString();
       const driver: DriverResponse = {
         id: newId(),

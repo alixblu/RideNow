@@ -7,7 +7,8 @@
  * line; snapped points are display-only.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, Marker, Polyline, TileLayer, useMap } from "react-leaflet";
+import type { ReactNode } from "react";
+import { MapContainer, Marker, Polyline, TileLayer, ZoomControl, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { appConfig } from "../config/appConfig";
@@ -53,35 +54,73 @@ interface TripMapProps {
   /** The stream ended (trip-ended or refused): refetch the trip. */
   onStreamEnded?: (() => void) | undefined;
   className?: string;
+  /** Fill the positioned parent (`absolute inset-0`) with no rounding, for use behind a bottom sheet. */
+  fullBleed?: boolean;
+  /** Pixels at the bottom of the map covered by a sheet; `fitBounds` keeps the route above it. */
+  bottomInset?: number;
+  children?: ReactNode;
 }
 
-export function TripMap({ pickup, destination, trip = null, onStreamEnded, className }: TripMapProps) {
+export const OSM_TILE_URL = OSM_URL;
+export const OSM_TILE_ATTRIBUTION = OSM_ATTRIBUTION;
+export { PICKUP_ICON, DESTINATION_ICON };
+
+export function TripMap({
+  pickup,
+  destination,
+  trip = null,
+  onStreamEnded,
+  className,
+  fullBleed = false,
+  bottomInset = 0,
+  children,
+}: TripMapProps) {
   const center: [number, number] = [(pickup.lat + destination.lat) / 2, (pickup.lng + destination.lng) / 2];
+  const wrapperClass = fullBleed
+    ? (className ?? "absolute inset-0")
+    : (className ?? "h-64 overflow-hidden rounded-2xl");
   return (
-    <div className={className ?? "h-64 overflow-hidden rounded-2xl border border-border"} data-testid="trip-map">
-      <MapContainer center={center} zoom={13} scrollWheelZoom={false} style={{ height: "100%", width: "100%" }}>
+    <div className={wrapperClass} data-testid="trip-map">
+      <MapContainer
+        center={center}
+        zoom={13}
+        scrollWheelZoom={false}
+        zoomControl={!fullBleed}
+        style={{ height: "100%", width: "100%" }}
+      >
+        {fullBleed ? <ZoomControl position="topright" /> : null}
         <TileLayer url={OSM_URL} attribution={OSM_ATTRIBUTION} />
         <Marker position={[pickup.lat, pickup.lng]} icon={PICKUP_ICON} title="Pickup" />
         <Marker position={[destination.lat, destination.lng]} icon={DESTINATION_ICON} title="Destination" />
-        <FitBounds pickup={pickup} destination={destination} />
+        <FitBounds pickup={pickup} destination={destination} bottomInset={bottomInset} />
         {trip ? <DriverCar trip={trip} onStreamEnded={onStreamEnded} /> : null}
+        {children}
       </MapContainer>
     </div>
   );
 }
 
-function FitBounds({ pickup, destination }: { pickup: LatLng; destination: LatLng }) {
+/** Fit both points, padding the bottom by the height of an overlaying sheet. */
+export function FitBounds({
+  pickup,
+  destination,
+  bottomInset = 0,
+}: {
+  pickup: LatLng;
+  destination: LatLng;
+  bottomInset?: number;
+}) {
   const map = useMap();
   useEffect(() => {
-    map.fitBounds(
-      L.latLngBounds([pickup.lat, pickup.lng], [destination.lat, destination.lng]),
-      { padding: [32, 32] },
-    );
-  }, [map, pickup.lat, pickup.lng, destination.lat, destination.lng]);
+    map.fitBounds(L.latLngBounds([pickup.lat, pickup.lng], [destination.lat, destination.lng]), {
+      paddingTopLeft: [32, 32],
+      paddingBottomRight: [32, 32 + bottomInset],
+    });
+  }, [map, pickup.lat, pickup.lng, destination.lat, destination.lng, bottomInset]);
   return null;
 }
 
-function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStreamEnded?: (() => void) | undefined }) {
+export function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStreamEnded?: (() => void) | undefined }) {
   const map = useMap();
   const smooth = useRef<SmoothMarker | null>(null);
   const raw = useRef<LatLng[]>([]);

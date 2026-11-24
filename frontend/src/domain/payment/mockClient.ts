@@ -121,5 +121,11 @@ export function createPaymentMockClient(): PaymentServiceClient {
       byTripId.set(payment.tripId, payment);
       return Promise.resolve(payment);
     },
+    getPaypalConfig() {
+      return Promise.reject(ApiError.notFound("PayPal is not available in the mock client."));
+    },
+    createPaypalOrder() {
+      return Promise.reject(ApiError.notFound("PayPal is not available in the mock client."));
+    },
   };
 }

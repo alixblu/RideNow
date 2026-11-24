@@ -61,7 +61,7 @@ public class TripService {
         try {
             paymentServiceClient.authorize(
                     tripId, request.passengerId(), estimatedFare, FareEstimator.CURRENCY,
-                    request.paymentMethod());
+                    request.paymentMethod(), request.paypalOrderId());
         } catch (PaymentUnavailableException e) {
             // The request may have reached payment-service before it timed out, so a
             // hold could exist. Releasing a hold that does not exist is a no-op.

@@ -20,9 +20,10 @@ import type {
   CreateDriverRequest,
   DriverLiveStateResponse,
   DriverResponse,
-  DriverServiceClient,
+  DriverServiceClientExt,
   ListDriversParams,
 } from "./contract";
+import { createDriverMockClient } from "./mockClient";
 
 /**
  * Build the driver-service `Live_Client`.
@@ -31,8 +32,11 @@ import type {
  * generic `resolveClient` only invokes this thunk when the driver domain is configured
  * `live`, so a mock-configured driver domain never constructs it.
  */
-export function createDriverLiveClient(): DriverServiceClient {
+export function createDriverLiveClient(): DriverServiceClientExt {
+  // No backend endpoint for ratings: delegate to the mock.
+  const mock = createDriverMockClient();
   return {
+    getDriverRating: (driverId: string) => mock.getDriverRating(driverId),
     createDriver(req: CreateDriverRequest): Promise<DriverResponse> {
       return httpRequest<DriverResponse>("/api/drivers", {
         method: "POST",
