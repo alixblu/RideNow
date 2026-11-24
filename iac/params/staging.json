@@ -24,7 +24,7 @@
     "Environment": "staging",
     "EnableMessaging": "true",
     "EnableRedis": "true",
-    "RedisNodeType": "cache.r6g.large"
+    "RedisNodeType": "cache.t4g.small"
   },
   "06-eks-cluster": {
     "Environment": "staging",

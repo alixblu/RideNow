@@ -23,9 +23,9 @@ vCPU/memory-second. The control plane is the thing to delete when you stop.
 6. **Next**.
 7. **Networking**:
    - VPC: the `ridenow` VPC.
-   - Subnets: select the **three private** subnets (where Fargate pods run) and
-     the **three public** subnets (so a public ALB can attach). If unsure, select
-     all six.
+   - Subnets: select the **two private** subnets (where Fargate pods run) and
+     the **two public** subnets (so a public ALB can attach). If unsure, select
+     all four.
    - Cluster endpoint access: **Public and private** (you reach the API from your
      laptop; pods reach it privately). Tighten to private-only for a locked-down
      production posture.
@@ -109,7 +109,7 @@ Click **Next** → configure add-on versions: accept the defaults → **Next** �
 
 Fargate runs each pod on its own right-sized micro-VM. A **Fargate profile** tells
 EKS "pods in these namespaces run on Fargate". You need three profiles, all using
-the **Fargate pod execution role** from guide 01 and the **three private**
+the **Fargate pod execution role** from guide 01 and the **two private**
 subnets.
 
 1. Open the `ridenow` cluster -> **Compute** tab -> **Fargate profiles** ->
@@ -117,7 +117,7 @@ subnets.
 2. Create the **app** profile:
    - **Name**: `ridenow-app`.
    - **Pod execution role**: `ridenow-eks-fargate-pod-execution-role` (guide 01).
-   - **Subnets**: the **three private** subnets only (pods must not be publicly
+   - **Subnets**: the **two private** subnets only (pods must not be publicly
      addressable; they reach out via the per-AZ NAT gateways).
    - **Next** -> **Namespaces**: add `ridenow`. **Next** -> **Create**.
 3. Repeat for the **system** profile:
@@ -133,16 +133,28 @@ Each profile reaches **Active** in ~1-2 min.
 
 ### Patch CoreDNS to run on Fargate
 
-CoreDNS ships with an annotation that pins it to EC2 compute. With no nodes, its
-pods stay `Pending` until you remove that annotation so the `kube-system` Fargate
-profile can place them:
+With no nodes, CoreDNS pods stay `Pending` ("no nodes available to schedule pods")
+until they are recreated on the `kube-system` Fargate profile. Two things cause it:
+
+- CoreDNS can ship with an annotation that pins it to EC2 compute. Remove it.
+- The pods were created before the Fargate profile was Active. A pod is matched to a
+  profile only when it is created, so these pods never move on their own. This
+  happens with the CloudFormation path too, because the cluster exists before its
+  profiles. The annotation may already be gone, and the restart alone fixes it.
+
+Wait until the profile is **Active**, then:
 
 ```bash
-kubectl patch deployment coredns \
-  -n kube-system \
-  --type=json \
-  -p='[{"op":"remove","path":"/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]'
+# Remove the EC2 pin only if it is still there (the patch fails when it is not).
+if kubectl get deployment coredns -n kube-system \
+     -o jsonpath='{.spec.template.metadata.annotations}' | grep -q compute-type; then
+  kubectl patch deployment coredns \
+    -n kube-system \
+    --type=json \
+    -p='[{"op":"remove","path":"/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]'
+fi
 
+# Always recreate the pods so they are scheduled on the Active profile.
 kubectl rollout restart deployment coredns -n kube-system
 kubectl rollout status deployment coredns -n kube-system
 ```

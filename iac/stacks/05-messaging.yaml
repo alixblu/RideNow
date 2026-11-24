@@ -8,8 +8,9 @@ Description: >
     matching queue      <- trip.requested                  (matching-service)
     payment queue       <- trip.completed, trip.cancelled  (payment-service)
     notifications queue <- every event, no filter          (notification-worker)
-  Plus an ElastiCache Redis replication group (driver GEO / live state, and the
-  Pub/Sub channel notification-worker uses to reach realtime-gateway).
+  Plus an ElastiCache for Valkey replication group (Redis protocol): driver GEO /
+  live state, the location Pub/Sub channel and trip-ended signal for
+  realtime-gateway, and the driver-locations stream matching-service consumes.
   Mirrors localstack/init/01-messaging.sh. Each capability is gated by a
   parameter so an environment can leave it off.
 
@@ -28,7 +29,7 @@ Parameters:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: Create the ElastiCache Redis replication group.
+    Description: Create the ElastiCache for Valkey replication group.
 
   RedisNodeType:
     Type: String
@@ -240,7 +241,7 @@ Resources:
               ArnEquals:
                 aws:SourceArn: !Ref TripEventTopic
 
-  # ---- ElastiCache Redis (driver GEO / live state, notification Pub/Sub) ----
+  # ---- ElastiCache for Valkey (live state, GEO, Pub/Sub, driver-locations stream) ----
   RedisSubnetGroup:
     Type: AWS::ElastiCache::SubnetGroup
     Condition: RedisOn
@@ -276,7 +277,15 @@ Resources:
     Properties:
       ReplicationGroupId: !Sub "ridenow-${Environment}-redis"
       ReplicationGroupDescription: !Sub "ridenow-${Environment} driver GEO / live state"
-      Engine: redis
+      # ElastiCache for Valkey (Redis protocol, ~20% cheaper than Redis OSS).
+      # A major-only EngineVersion lets AWS pick the latest minor, like the
+      # Postgres EngineVersion convention. Moving an existing group from redis
+      # to valkey is an in-place migration and needs the explicit parameter
+      # group below. Logical IDs and parameters keep the "Redis" name on purpose
+      # (renaming them would replace the resource).
+      Engine: valkey
+      EngineVersion: "8.0"
+      CacheParameterGroupName: default.valkey8
       CacheNodeType: !Ref RedisNodeType
       NumCacheClusters: 2
       AutomaticFailoverEnabled: true
@@ -285,7 +294,7 @@ Resources:
       SecurityGroupIds:
         - !Ref RedisSecurityGroup
       AtRestEncryptionEnabled: true
-      # In-transit TLS: Redis clients must connect with SSL enabled
+      # In-transit TLS: clients (Redis protocol) must connect with SSL enabled
       # (REDIS_SSL=true / spring.data.redis.ssl.enabled).
       TransitEncryptionEnabled: true
       Tags:

@@ -2,7 +2,8 @@
 #
 # Internal service (ClusterIP): other services reach it in-cluster; it is not
 # exposed through the Ingress by default. It owns the Redis GEO index used to
-# answer "nearby drivers", so it needs the Redis (ElastiCache) endpoint. Until
+# answer "nearby drivers" and reads driver positions from the driver-locations
+# stream (consumer group "matching"), so it needs the Valkey (ElastiCache) endpoint. Until
 # that endpoint exists, matching cannot answer GEO queries (expected).
 #
 # Matching is triggered asynchronously: it consumes trip.requested from the
@@ -59,7 +60,9 @@ spec:
                 secretKeyRef:
                   name: matching-db-credentials
                   key: password
-            # Redis GEO index (ElastiCache). matching-service owns this index.
+            # Redis GEO index and the driver-locations stream (Valkey on ElastiCache).
+            # matching-service owns the index and reads the stream as group "matching";
+            # the consumer name defaults to the pod hostname.
             - name: REDIS_HOST
               value: "<REDIS_ENDPOINT>"
             - name: REDIS_PORT

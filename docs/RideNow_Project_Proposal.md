@@ -115,7 +115,7 @@
  services for asynchronous workflows.
               Flutter Mobile → API entry point → Microservices
               User • Driver • Trip • Matching • Payment • Notification Worker
-              PostgreSQL per service • ElastiCache/Redis • SQS • SNS • WebSocket layer
+              PostgreSQL per service • ElastiCache for Valkey (Redis protocol) • SQS • SNS • WebSocket layer
               EKS → Deployments/Services/HPA → Observability + CI/CD
 
 ### Target services
@@ -218,7 +218,7 @@
 
    RDS PostgreSQL                             Managed relational storage for durable business data
 
-   ElastiCache for Redis                      Shared cache, driver location, GEO, coordination
+   ElastiCache for Valkey                     Shared cache, driver location, GEO, coordination
 
    SQS                                        Async jobs, retries, worker decoupling, DLQ
 

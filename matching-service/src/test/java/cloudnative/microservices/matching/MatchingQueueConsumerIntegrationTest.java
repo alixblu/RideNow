@@ -51,7 +51,7 @@ class MatchingQueueConsumerIntegrationTest {
             new PostgreSQLContainer<>("postgres:17").withDatabaseName("matching_service");
     @Container
     static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:8-alpine")).withExposedPorts(6379);
     @Container
     static final LocalStackContainer LOCALSTACK =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3"));

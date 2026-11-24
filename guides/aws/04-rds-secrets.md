@@ -44,7 +44,7 @@ RDS needs to know which (private) subnets it may live in.
 
 1. Console -> **RDS** -> **Subnet groups** -> **Create DB subnet group**.
 2. Name: `ridenow-db-subnets`. VPC: the `ridenow` VPC.
-3. Add the **three private** subnets (all three AZs) so Multi-AZ has room to
+3. Add the **two private** subnets (both AZs) so Multi-AZ has room to
    place a standby.
 4. **Create**.
 

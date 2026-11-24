@@ -10,8 +10,8 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
   # Redis Pub/Sub carries driver positions and trip-ended signals to every gateway
-  # pod, and the pairing keys live there too. Config-driven: a local redis container
-  # or Amazon ElastiCache by env only.
+  # pod, and the pairing keys live there too. Config-driven: a local Valkey container
+  # or Amazon ElastiCache for Valkey by env only.
   data:
     redis:
       host: ${REDIS_HOST:localhost}

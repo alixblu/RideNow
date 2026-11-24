@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RideNow network layer (02). Production VPC: public + private subnets across
-  THREE Availability Zones, Internet Gateway, one NAT gateway per AZ, route
+  TWO Availability Zones, Internet Gateway, one NAT gateway per AZ, route
   tables, and base security groups. Exports are consumed by the data (04),
   messaging (05), and EKS (06) stacks.
 
@@ -49,6 +49,10 @@ Resources:
       InternetGatewayId: !Ref InternetGateway
 
   # ---- Public subnets (one per AZ) -----------------------------------------
+  # Two AZs: enough for Multi-AZ RDS and ElastiCache, and it works in any region.
+  # The CIDR carve-out below still reserves 6 /24-sized blocks (indexes 0-1 public,
+  # 3-4 private; 2 and 5 unused) so the subnet ranges did not move when the third AZ
+  # was dropped.
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -73,19 +77,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "ridenow-${Environment}-public-2"
-        - Key: kubernetes.io/role/elb
-          Value: "1"
-
-  PublicSubnet3:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      AvailabilityZone: !Select [2, !GetAZs ""]
-      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 6, 12]]
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "ridenow-${Environment}-public-3"
         - Key: kubernetes.io/role/elb
           Value: "1"
 
@@ -117,19 +108,6 @@ Resources:
         - Key: kubernetes.io/role/internal-elb
           Value: "1"
 
-  PrivateSubnet3:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      AvailabilityZone: !Select [2, !GetAZs ""]
-      CidrBlock: !Select [5, !Cidr [!Ref VpcCidr, 6, 12]]
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub "ridenow-${Environment}-private-3"
-        - Key: kubernetes.io/role/internal-elb
-          Value: "1"
-
   # ---- Public routing ------------------------------------------------------
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -157,12 +135,6 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet3RouteAssoc:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet3
       RouteTableId: !Ref PublicRouteTable
 
   # ---- NAT gateways (egress for private subnets) ---------------------------
@@ -201,24 +173,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "ridenow-${Environment}-nat-2"
-
-  NatEip3:
-    Type: AWS::EC2::EIP
-    DependsOn: VpcGatewayAttachment
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub "ridenow-${Environment}-nat-eip-3"
-
-  NatGateway3:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEip3.AllocationId
-      SubnetId: !Ref PublicSubnet3
-      Tags:
-        - Key: Name
-          Value: !Sub "ridenow-${Environment}-nat-3"
 
   # ---- Private routing (each private subnet -> its AZ's NAT, or the shared one)
   PrivateRouteTable1:
@@ -263,27 +217,6 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable2
-
-  PrivateRouteTable3:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub "ridenow-${Environment}-private-rt-3"
-
-  PrivateDefaultRoute3:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable3
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway3
-
-  PrivateSubnet3RouteAssoc:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet3
-      RouteTableId: !Ref PrivateRouteTable3
 
   # ---- Security groups -----------------------------------------------------
   # Shared SG used by in-VPC resources that must reach the databases. On
@@ -352,14 +285,14 @@ Outputs:
       Name: !Sub "ridenow-${Environment}-network-VpcCidr"
 
   PublicSubnetIds:
-    Description: Comma-separated public subnet ids (3 AZs).
-    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+    Description: Comma-separated public subnet ids (2 AZs).
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
     Export:
       Name: !Sub "ridenow-${Environment}-network-PublicSubnetIds"
 
   PrivateSubnetIds:
-    Description: Comma-separated private subnet ids (workloads + data, 3 AZs).
-    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+    Description: Comma-separated private subnet ids (workloads + data, 2 AZs).
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
     Export:
       Name: !Sub "ridenow-${Environment}-network-PrivateSubnetIds"
 

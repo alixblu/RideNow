@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import cloudnative.microservices.matching.entity.VehicleType;
 import cloudnative.microservices.matching.service.DriverPositionService;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,16 +36,28 @@ class DriverLocationSubscriberTest {
 
         verify(positionService).reportPosition(eq(driverId), eq(VehicleType.MOTORBIKE),
                 argThat(lat -> lat.compareTo(new BigDecimal("10.7769")) == 0),
-                argThat(lng -> lng.compareTo(new BigDecimal("106.7009")) == 0));
+                argThat(lng -> lng.compareTo(new BigDecimal("106.7009")) == 0),
+                eq(Instant.parse("2026-11-11T07:00:00Z")));
+    }
+
+    @Test
+    void aPositionWithoutATimestampIsStampedNow() {
+        Instant before = Instant.now();
+
+        subscriber().onMessage("{\"driverId\":\"" + driverId + "\",\"lat\":10.7769,\"lng\":106.7009,"
+                + "\"vehicleType\":\"CAR\",\"online\":true}");
+
+        verify(positionService).reportPosition(eq(driverId), eq(VehicleType.CAR), any(), any(),
+                argThat(at -> !at.isBefore(before) && !at.isAfter(Instant.now())));
     }
 
     @Test
     void anOfflineMarkerRemovesTheDriver() {
         subscriber().onMessage("{\"driverId\":\"" + driverId + "\",\"lat\":null,\"lng\":null,"
-                + "\"vehicleType\":null,\"online\":false}");
+                + "\"recordedAt\":\"2026-11-11T07:05:00Z\",\"vehicleType\":null,\"online\":false}");
 
-        verify(positionService).removeDriver(driverId);
-        verify(positionService, never()).reportPosition(any(), any(), any(), any());
+        verify(positionService).removeDriver(driverId, Instant.parse("2026-11-11T07:05:00Z"));
+        verify(positionService, never()).reportPosition(any(), any(), any(), any(), any());
     }
 
     @Test

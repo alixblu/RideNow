@@ -1,11 +1,11 @@
 # 02 - VPC: the private network EKS runs in
 
-Goal: a production VPC with public and private subnets across **three
+Goal: a production VPC with public and private subnets across **two
 Availability Zones**, an internet gateway, **one NAT gateway per AZ**, and the
 security groups RDS will use. Fargate pods and databases live in **private**
 subnets; the load balancer lives in **public** subnets.
 
-Time: ~15 min. Cost: the **NAT gateways bill hourly + per GB** — three of them in
+Time: ~15 min. Cost: the **NAT gateways bill hourly + per GB** — two of them in
 this layout, the main steady-state network cost.
 
 ---
@@ -17,9 +17,12 @@ this layout, the main steady-state network cost.
 - **Private subnets**: your Fargate pods and RDS. No direct inbound from the
   internet. For outbound (pulling images, reaching AWS APIs) they route through a
   **NAT gateway** in the same AZ.
-- **Three AZs with a NAT per AZ**: a single AZ (or its NAT) failing never takes
-  the system down, and Multi-AZ RDS has three zones to spread across. Keeping
-  each AZ's egress on its own NAT avoids a cross-AZ single point of failure.
+- **Two AZs with a NAT per AZ**: a single AZ (or its NAT) failing never takes
+  the system down, and Multi-AZ RDS and ElastiCache have two zones to spread
+  across. Keeping each AZ's egress on its own NAT avoids a cross-AZ single point
+  of failure. Two zones also work in every region (some have only two usable
+  zones in an account). For the cheapest setup, use a single NAT gateway and
+  accept that outbound traffic stops if its AZ fails.
 
 This mirrors `../../iac/stacks/02-network.yaml`.
 
@@ -33,16 +36,16 @@ The console's VPC wizard builds subnets, route tables, IGW, and NAT in one shot.
 2. Choose **VPC and more** (this is the wizard - do NOT choose "VPC only").
 3. Name tag auto-generation: `ridenow`.
 4. IPv4 CIDR: `10.30.0.0/16`.
-5. **Number of Availability Zones (AZs): 3**.
-6. **Number of public subnets: 3**.
-7. **Number of private subnets: 3**.
+5. **Number of Availability Zones (AZs): 2**.
+6. **Number of public subnets: 2**.
+7. **Number of private subnets: 2**.
 8. **NAT gateways: 1 per AZ** (resilient — each AZ egresses independently).
 9. **VPC endpoints: None** (optional cost optimization; skip for now).
 10. **DNS options**: leave both **Enable DNS hostnames** and **Enable DNS
     resolution** checked.
 11. **Create VPC**. Wait for all resources to go green.
 
-You now have: 1 VPC, 3 public + 3 private subnets, 1 IGW, 3 NAT gateways, route
+You now have: 1 VPC, 2 public + 2 private subnets, 1 IGW, 2 NAT gateways, route
 tables wired correctly.
 
 ---
@@ -81,14 +84,14 @@ This is the firewall RDS will use (guide 04). It should allow PostgreSQL (5432)
 
 ## Verify
 
-- VPC -> **Resource map** shows the VPC with 3 public + 3 private subnets, an
-  IGW, and 3 NAT gateways.
+- VPC -> **Resource map** shows the VPC with 2 public + 2 private subnets, an
+  IGW, and 2 NAT gateways.
 - Subnets carry the `kubernetes.io/role/*` tags.
 - `ridenow-db-sg` exists and allows 5432 from `10.30.0.0/16` only.
 
 ## Clean up
 
-The **NAT gateways** are the costly part (three of them here). Deleting the whole
+The **NAT gateways** are the costly part (two of them here). Deleting the whole
 VPC is only possible after everything inside it (EKS, RDS) is gone — tear down in
 reverse guide order (08 -> 01).
 

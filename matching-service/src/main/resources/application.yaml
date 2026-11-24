@@ -12,8 +12,9 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
-  # Redis is used by the GEO finder (Task B4). Config-driven; same code points at
-  # a local redis container or Amazon ElastiCache by env only.
+  # Redis-protocol cache: the GEO finder (Task B4) and the driver-locations stream
+  # this service consumes. Config-driven; the same code points at a local Valkey
+  # container or Amazon ElastiCache for Valkey by env only.
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -34,6 +35,26 @@ ridenow:
     poll:
       wait-seconds: 10
       max-messages: 10
+    # Driver positions arrive on the Redis stream driver-service appends to, read
+    # through a consumer group: every entry goes to one pod, is acknowledged after it
+    # is applied, and is retried if the pod dies or the handler fails. Delivery is
+    # at-least-once; the position service ignores duplicates and older reports.
+    location-subscriber:
+      enabled: ${RIDENOW_LOCATION_SUBSCRIBER_ENABLED:true}
+      stream: ridenow:stream:driver-locations
+      group: matching
+      # Blank = the pod hostname (unique per pod on Kubernetes).
+      consumer-name: ${RIDENOW_LOCATION_CONSUMER_NAME:}
+      batch-size: 100
+      block-timeout: 2s
+      # A pending entry idle this long (pod died, handler failed) is taken over and
+      # retried; the check runs every reclaim-interval.
+      reclaim-idle: 30s
+      reclaim-interval: 30s
+      # After this many deliveries an entry is moved to the capped dead-letter stream.
+      max-deliveries: 5
+      dead-letter-stream: ridenow:stream:driver-locations-dlq
+      dead-letter-max-length: 1000
 
 management:
   endpoints:

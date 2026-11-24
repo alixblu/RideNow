@@ -92,8 +92,8 @@ reconnect after the jittered `retry:` delay to the remaining pods. In Kubernetes
 ## Run
 
 ```bash
-./mvnw spring-boot:run          # needs Redis on localhost:6379 (REDIS_HOST/REDIS_PORT)
-./mvnw test                     # no Redis needed; the relays are driven directly
+./mvnw spring-boot:run          # needs Valkey/Redis on localhost:6379 (REDIS_HOST/REDIS_PORT)
+./mvnw test                     # no Valkey/Redis needed; the relays are driven directly
 curl -N "http://localhost:8086/live/trips/<tripId>/location?userId=<passengerId>"
 ```
 

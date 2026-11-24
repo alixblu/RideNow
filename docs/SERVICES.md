@@ -14,11 +14,11 @@ Base package for all Java services: `cloudnative.microservices.<name>`
 | Service | Port | Database | Redis | AWS messaging | Public via ALB |
 |---------|------|----------|-------|---------------|----------------|
 | `user-service` | 8081 | `user-db` (Postgres) | - | - | yes `/api/users` |
-| `driver-service` | 8080 | `driver-db` (Postgres) | live state, GEO publish, Pub/Sub, profile cache | - | yes `/api/drivers` |
+| `driver-service` | 8080 | `driver-db` (Postgres) | live state, Pub/Sub and stream publish, profile cache | - | yes `/api/drivers` |
 | `trip-service` | 8082 | `trip-db` (Postgres) | - | publishes to SNS | yes `/api/trips` |
 | `payment-service` | 8083 | `payment-db` (Postgres) | - | publishes to SNS, consumes SQS payment queue | yes `/api/payments` |
 | `notification-worker` | 8084 | `notification-db` (Postgres) | tracking pairing keys, publishes trip-ended | consumes SQS notifications queue | yes `/api/notifications` |
-| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index, subscribes to driver locations | consumes SQS matching queue, publishes to SNS | no |
+| `matching-service` | 8085 | `matching-db` (Postgres) | GEO index, reads the driver-locations stream (consumer group) | consumes SQS matching queue, publishes to SNS | no |
 | `realtime-gateway` | 8086 | none | subscribes to driver locations and trip-ended, reads pairing keys | - | SSE `/live` |
 | `frontend` | - | - | - | - | static SPA (React + Vite) |
 
@@ -39,10 +39,12 @@ Driver accounts, vehicles, and live driver state.
 - `GET|POST /api/drivers`, `GET /api/drivers/{id}`
 - `GET|POST /api/drivers/{driverId}/vehicles`, `GET /api/vehicles/{id}`
 - `PATCH /api/drivers/{driverId}/status`
-- Live (Redis is the primary store): `POST /api/drivers/{driverId}/online|offline|location`,
+- Live (Valkey is the primary store): `POST /api/drivers/{driverId}/online|offline|location`,
   `GET /api/drivers/{driverId}/live`. `online` takes an optional `{"vehicleId"}`; without it the
   newest active vehicle is used, and with none it returns 409. Positions are published on
-  `ridenow:driver:locations` with `recordedAt` and `vehicleType`; going offline publishes `online:false`.
+  `ridenow:driver:locations` (the gateway) and appended to the stream `ridenow:stream:driver-locations`
+  (matching-service, capped at about 10,000 entries), with `recordedAt` and `vehicleType`; going offline
+  publishes `online:false`.
 - Sync dependency: calls user-service to validate the user when creating a driver.
 
 ### trip-service
@@ -52,7 +54,11 @@ locking (exactly one winner).
 - `POST /api/trips/{id}/accept|arrive|start|complete|cancel`
 - `GET /api/trip-offers/{id}`
 - Sync dependency: authorizes the fare with payment-service on `POST /trips` (strict, no
-  hold means no trip).
+  hold means no trip). A timeout or connection failure is retried (3 attempts, 500ms
+  apart, `SERVICES_PAYMENT_SERVICE_MAX_ATTEMPTS` / `_RETRY_BACKOFF`), because a payment
+  pod that has just started can miss the 3s read timeout on its first authorize. The
+  trip id is the idempotency key, so a retry never places a second hold; a retry that
+  gets 409 reads the payment with `GET /api/payments?tripId=`. HTTP errors are not retried.
 - Publishes: `trip.requested`, `driver.accepted`, `driver.arrived`, `trip.started`,
   `trip.completed`, `trip.cancelled`.
 
@@ -67,7 +73,10 @@ Payment records and explicit payment states, behind a `PaymentGateway` interface
 ### matching-service
 Driver-to-trip matching decisions and offers.
 - `POST /api/matching/match`, `GET /api/matching/trips/{tripId}/offers`
-- `/api/matching/positions` ingests driver positions.
+- `/api/matching/positions` ingests driver positions over HTTP. Positions from driver-service arrive
+  on the `ridenow:stream:driver-locations` stream, read through the consumer group `matching`
+  (acknowledged after they are applied, retried, dead-lettered after 5 deliveries). Reports that are not
+  newer than the stored one are ignored.
 - `NearbyDriverFinder` has two implementations: `PostgresNearbyDriverFinder` and
   `RedisGeoNearbyDriverFinder` (selected by `MATCHING_FINDER`, `redis` in compose).
 - Consumes: `trip.requested`. Publishes: `match.offered`.
@@ -88,7 +97,7 @@ SQS consumer plus the inbox API.
 Streams the driver's position to the trip's passenger over SSE. No database, no business API.
 - `GET /live/trips/{tripId}/location?userId=`: 400 for a bad UUID, 410 with no pairing,
   403 for anyone but the passenger. Events `location` and `trip-ended`; `: ping` every 15s.
-- `LocationRelay` and `TripEndedRelay` handle the two Redis channels; `StreamRegistry`
+- `LocationRelay` and `TripEndedRelay` handle the two Redis Pub/Sub channels; `StreamRegistry`
   holds this pod's streams (at most 3 per trip). Contract: `realtime-gateway/README.md`.
 ### frontend
 React + Vite + Tailwind SPA with `apps/`, `domain/`, `http/`, `identity/`, `shared/`,
@@ -109,7 +118,7 @@ React + Vite + Tailwind SPA with `apps/`, `domain/`, `http/`, `identity/`, `shar
     client/       # outbound HTTP (driver, trip)
     event/        # DomainEvent publisher + SQS consumers (trip, payment, matching)
     gateway/      # payment gateway abstraction (payment)
-    live/ cache/  # Redis live state and cache-aside (driver)
+    live/ cache/  # Valkey live state, location publish and cache-aside (driver)
   src/main/resources/
     application.yaml
     db/migration/V1__init_schema.sql          # Flyway schema
@@ -157,15 +166,16 @@ trip-service --trip.completed/cancelled--> [payment queue] --> payment-service -
 all events --> [notifications queue] --> notification-worker --> inbox table <-- apps poll
                                               |  pairing keys, trip-ended (Redis)
                                               v
-driver-service --ridenow:driver:locations--> realtime-gateway --SSE--> passenger app
-                                         \--> matching-service (GEO index)
+driver-service --ridenow:driver:locations (Pub/Sub)--> realtime-gateway --SSE--> passenger app
+                 \--ridenow:stream:driver-locations (Stream)--> matching-service (GEO index)
 ```
 
-### Redis roles
+### Valkey roles (ElastiCache for Valkey; Redis protocol, so the clients and `REDIS_*` variables are unchanged)
 1. Live driver state and location (driver-service, primary store, not in Postgres).
 2. GEO index for nearby-driver search (matching-service).
-3. Pub/Sub for live tracking and notification relay.
-4. Cache-aside for the driver profile (driver-service).
+3. Pub/Sub for live tracking and the trip-ended signal to the gateway.
+4. Stream of driver locations, read by matching-service through a consumer group.
+5. Cache-aside for the driver profile (driver-service).
 
 ---
 
@@ -192,7 +202,7 @@ Ratings ownership is intentionally undecided; no ratings service or tables exist
 
 ```text
 ridenow/
-  docker-compose.yml        # whole local system: 6 Postgres, Redis, LocalStack, 7 services
+  docker-compose.yml        # whole local system: 6 Postgres, Valkey, LocalStack, 7 services
   .env.example              # compose defaults (DB creds, AWS region, topic ARN)
   localstack/               # init/01-messaging.sh (topic, queues, DLQs, subscriptions), smoke-test.sh
   iac/
@@ -217,8 +227,8 @@ notification-worker and realtime-gateway (`iac/k8s/20-26`). The ingress routes
 | Stage | Mechanism |
 |-------|-----------|
 | Single service | `mvnw spring-boot:run` + the service's own `docker-compose.yml` (DB only) |
-| Whole system | root `docker compose up --build` with LocalStack and Redis |
-| Cloud | EKS Fargate, RDS (Multi-AZ, per service), ElastiCache, SNS, SQS |
+| Whole system | root `docker compose up --build` with LocalStack and Valkey |
+| Cloud | EKS Fargate, RDS (Multi-AZ, per service), ElastiCache for Valkey, SNS, SQS |
 
 Local to cloud is a config swap (endpoints, credentials via env or Secrets Manager); the
 service boundaries do not change.

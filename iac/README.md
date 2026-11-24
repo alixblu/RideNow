@@ -6,7 +6,7 @@ The console guides teach each AWS resource by hand; this folder reproduces the
 same footprint as reviewable, repeatable templates.
 
 > These templates provision the full architecture in `../docs/ARCHITECTURE.md`: a
-> 3-AZ VPC, one RDS instance per data-owning service (six), SNS/SQS/Redis, and an
+> 2-AZ VPC, one RDS instance per data-owning service (six), SNS/SQS/Valkey, and an
 > EKS cluster whose seven services run on **AWS
 > Fargate** (serverless — no EC2 node groups to size, patch, or autoscale). Pods
 > are scheduled by namespace-matched Fargate profiles and billed per vCPU/memory
@@ -19,10 +19,10 @@ same footprint as reviewable, repeatable templates.
 | Layer | Template | Creates | Hardening |
 |-------|----------|---------|-----------|
 | 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / topic ARN its service uses |
-| 2 | `stacks/02-network.yaml` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
+| 2 | `stacks/02-network.yaml` | VPC, public + private subnets (2 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
 | 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment,matching}-service`, `ridenow/notification-worker`, `ridenow/realtime-gateway` | Scan-on-push, KMS encryption, lifecycle expiry |
 | 4 | `stacks/04-data.yaml` | Six RDS PostgreSQL instances, **one per service that owns data**: user, driver, trip, payment, matching, notification (realtime-gateway has none) | Multi-AZ per params, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
-| 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache Redis | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Redis private with in-transit TLS |
+| 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache for Valkey (Redis protocol; logical IDs keep the `Redis` name) | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Valkey private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
 | 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
 
@@ -106,13 +106,13 @@ coexist in one account/region.
 
 | Knob | `dev` | `staging` / `prod` |
 |------|-------|--------------------|
-| AZ count / NAT gateways | 3 AZ, one NAT per AZ | same |
+| AZ count / NAT gateways | 2 AZ, one NAT per AZ | same |
 | RDS instances | 6 (one per data-owning service) | same |
 | RDS instance class / storage | `db.t4g.micro`, 20 GiB | same |
 | RDS Multi-AZ | false | true |
 | RDS backup retention (days) | 1 | 30 |
 | RDS deletion protection | false (snapshot on delete) | false (snapshot on delete) |
-| Redis node type | `cache.t4g.micro` | `cache.r6g.large` |
+| Cache node type (`RedisNodeType`) | `cache.t4g.micro` | `cache.t4g.small` |
 | EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) | same |
 | Messaging (SNS/SQS) | on | on |
 
@@ -205,7 +205,7 @@ free tier — tear down environments you are no longer using.
   you pass `--apply`, mirroring the safety pattern in `../scripts/push-to-ecr.sh`.
 - Secrets Manager **generates** every database master password. No plaintext
   password ever appears in a template, a parameter file, or git history.
-- SNS / SQS / Redis are **on**. Event routing (mirrors
+- SNS / SQS / Valkey are **on**. Event routing (mirrors
   `../localstack/init/01-messaging.sh`). Publishers send to the `ridenow-<env>-events`
   topic. Each queue has one raw-delivery subscription, so the SQS body is the event JSON
   itself, and the filter policy matches the body's top-level `type`:
@@ -216,17 +216,25 @@ free tier — tear down environments you are no longer using.
   | `ridenow-<env>-payment` | `trip.completed`, `trip.cancelled` | payment-service |
   | `ridenow-<env>-notifications` | none (every event) | notification-worker |
 
-  Each has a `-dlq` (maxReceiveCount 5). Redis serves driver live state, the GEO
-  index, the driver location Pub/Sub channel, and the trip tracking pairing keys
-  that notification-worker writes and realtime-gateway (the SSE service at `/live`
-  on the ALB) reads.
+  Each has a `-dlq` (maxReceiveCount 5). Valkey serves driver live state, the GEO
+  index, the driver location Pub/Sub channel, the `ridenow:stream:driver-locations`
+  stream that matching-service reads through a consumer group (deploy driver-service
+  first, then matching-service), and the trip tracking pairing keys that
+  notification-worker writes and realtime-gateway (the SSE service at `/live` on the
+  ALB) reads.
+- **Valkey engine:** stack 05 uses `Engine: valkey` (version 8.0, parameter group
+  `default.valkey8`), about 20% cheaper than Redis OSS with the same clients. The
+  `Redis*` logical IDs, the `EnableRedis` / `RedisNodeType` parameters and the
+  `RedisPrimaryEndpoint` export keep their names, because renaming would replace the
+  cluster. An existing Redis OSS group is migrated in place when the stack is updated;
+  its data is ephemeral and rebuilt by the apps.
 - **Upgrading an existing stack 01:** the shared `ridenow-<env>-app-access`
   policy no longer grants SQS / SNS. Anything that relied on it for
   messaging (for example a hand-made notification-worker role from guide 08)
   must move to the per-service role from stack 07 *before* stack 01 is updated,
   or it loses queue access.
-- **Redis TLS:** ElastiCache has in-transit encryption on, so clients must
-  connect with TLS. Every Redis client (driver-service, matching-service,
+- **Valkey TLS:** ElastiCache has in-transit encryption on, so clients must
+  connect with TLS. Every Redis-protocol client (driver-service, matching-service,
   notification-worker, realtime-gateway) reads `REDIS_SSL` (default `false` locally)
   and the Kubernetes manifests set it to `true`.
 
@@ -238,10 +246,10 @@ free tier — tear down environments you are no longer using.
 iac/
   stacks/
     01-iam.yaml            # cluster role + Fargate pod execution role
-    02-network.yaml        # 3-AZ VPC, NAT per AZ, cluster SG, DB SG
+    02-network.yaml        # 2-AZ VPC, NAT per AZ, cluster SG, DB SG
     03-ecr.yaml
     04-data.yaml
-    05-messaging.yaml      # SNS/SQS/Redis
+    05-messaging.yaml      # SNS/SQS/Valkey
     06-eks-cluster.yaml    # control plane + Fargate profiles (no node group)
     07-eks-addons.yaml     # gated: ALB controller / external-secrets IRSA
   params/
@@ -251,6 +259,7 @@ iac/
   scripts/
     check-consistency.sh   # static checks: stacks, manifests, params and guides agree (no AWS calls)
     deploy.sh              # 01 -> 07, dry-run by default; --parallel runs independent stacks together (auto-resolves OIDC for 07)
+    alb-controller-policy.sh # attaches the versioned ALB controller IAM policy to stack 07's role (after the Helm install)
     cleanup-cluster.sh     # in-cluster + hand-created resources; run before teardown
     teardown.sh            # 07 -> 01, dry-run by default
   README.md

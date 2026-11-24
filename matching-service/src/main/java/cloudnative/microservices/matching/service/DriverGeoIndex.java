@@ -3,6 +3,8 @@ package cloudnative.microservices.matching.service;
 import cloudnative.microservices.matching.dto.response.CandidateDriver;
 import cloudnative.microservices.matching.entity.VehicleType;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Sort;
@@ -27,6 +29,12 @@ public class DriverGeoIndex {
 
     private static final String KEY_PREFIX = "ridenow:matching:geo:";
 
+    /** When a driver last went offline, so a late position cannot bring them back. */
+    private static final String OFFLINE_KEY_PREFIX = "ridenow:matching:offline:";
+
+    /** Long enough to outlast any retry or reclaim of an older stream entry. */
+    private static final Duration OFFLINE_MARKER_TTL = Duration.ofMinutes(10);
+
     private final StringRedisTemplate redis;
 
     public DriverGeoIndex(StringRedisTemplate redis) {
@@ -47,6 +55,25 @@ public class DriverGeoIndex {
     /** Removes a driver from the index (e.g. when they go offline). */
     public void remove(UUID driverId, VehicleType vehicleType) {
         redis.opsForGeo().remove(key(vehicleType), driverId.toString());
+    }
+
+    /** Remembers that the driver went offline at {@code at}; expires on its own. */
+    public void markOffline(UUID driverId, Instant at) {
+        redis.opsForValue().set(OFFLINE_KEY_PREFIX + driverId, Long.toString(at.toEpochMilli()),
+                OFFLINE_MARKER_TTL);
+    }
+
+    /** When the driver last went offline, or null if no recent offline marker exists. */
+    public Instant offlineAt(UUID driverId) {
+        String value = redis.opsForValue().get(OFFLINE_KEY_PREFIX + driverId);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Instant.ofEpochMilli(Long.parseLong(value));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** Nearby drivers within the radius, nearest first, capped at limit. */

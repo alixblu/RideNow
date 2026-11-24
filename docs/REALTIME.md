@@ -7,6 +7,8 @@ Two separate paths carry live data to the apps:
 - **Notifications** are stored in an inbox table and read by the frontend through polling. Nothing is pushed.
 - **Driver location** streams to the trip's passenger over SSE, only while the trip is active.
 
+The cache behind both paths is ElastiCache for Valkey (Redis protocol, run as a Valkey container locally). The Redis client code, keys and `REDIS_*` variables are unchanged.
+
 Authentication is out of scope for now. Both paths trust the `userId` the client sends. This is a documented gap.
 
 ---
@@ -22,9 +24,9 @@ flowchart LR
   DB --> NW
 
   DR[driver app] -->|POST /api/drivers/id/location| DS[driver-service]
-  DS -->|PUBLISH ridenow:driver:locations| R[(Redis)]
-  R -->|SUBSCRIBE| GW[realtime-gateway]
-  R -->|SUBSCRIBE| MS[matching-service]
+  DS -->|PUBLISH ridenow:driver:locations, XADD ridenow:stream:driver-locations| R[(Valkey)]
+  R -->|SUBSCRIBE channel| GW[realtime-gateway]
+  R -->|XREADGROUP stream, group matching| MS[matching-service]
   GW -->|SSE location| CU[customer app]
   NW -->|SET / DEL ridenow:tracking:*| R
 ```
@@ -32,7 +34,8 @@ flowchart LR
 - notification-worker handles each event once. The inbox row and the processed-event ledger row are written in one transaction.
 - On `driver.accepted`, notification-worker also writes the pairing keys that tell the gateway who may watch whom (section 2).
 - The driver keeps posting over plain HTTP. Only the customer opens a long-lived connection.
-- matching-service subscribes to the same location channel to fill its GEO index.
+- matching-service reads the same updates from a Redis Stream (`ridenow:stream:driver-locations`) through the consumer group `matching`, to fill its GEO index. Unlike Pub/Sub, an entry stays in the stream until a pod acknowledges it, so a restarted matching pod catches up and a failed update is retried (section 4a).
+- The gateway stays on Pub/Sub: it needs every message on every pod, and a missed position is replaced by the next one.
 
 ---
 ## 2. Live location sequence
@@ -41,7 +44,7 @@ flowchart LR
 sequenceDiagram
   participant D as Driver app
   participant DS as driver-service
-  participant R as Redis
+  participant R as Valkey
   participant NW as notification-worker
   participant GW as realtime-gateway
   participant C as Customer app
@@ -55,7 +58,7 @@ sequenceDiagram
   GW-->>C: 200 text/event-stream
   loop about once a second
     D->>DS: POST /api/drivers/{id}/location
-    DS->>R: PUBLISH ridenow:driver:locations
+    DS->>R: PUBLISH ridenow:driver:locations + XADD ridenow:stream:driver-locations
     R->>GW: location update
     GW-->>C: event: location
   end
@@ -99,7 +102,10 @@ If the gateway restarts, the client reconnects while the trip is still in a trac
 | `ridenow:driver:track:{driverId}` | sorted set | driver-service | nothing yet | 5m |
 | `ridenow:tracking:trip:{tripId}` | string (JSON) | notification-worker | realtime-gateway | 3h |
 | `ridenow:tracking:driver:{driverId}` | string (JSON) | notification-worker | realtime-gateway | 3h |
-| `ridenow:driver:locations` | pub/sub channel | driver-service | realtime-gateway, matching-service | none |
+| `ridenow:driver:locations` | pub/sub channel | driver-service | realtime-gateway | none |
+| `ridenow:stream:driver-locations` | stream (group `matching`) | driver-service | matching-service | capped, about 10,000 entries |
+| `ridenow:stream:driver-locations-dlq` | stream | matching-service | nobody (inspect by hand) | capped, about 1,000 entries |
+| `ridenow:matching:offline:{driverId}` | string (epoch millis) | matching-service | matching-service | 10m |
 | `ridenow:tracking:ended` | pub/sub channel | notification-worker | realtime-gateway | none |
 
 Payloads:
@@ -108,13 +114,33 @@ Payloads:
 |---|---|
 | `ridenow:tracking:trip:{tripId}` | `passengerId`, `driverId` |
 | `ridenow:tracking:driver:{driverId}` | `tripId`, `passengerId` |
-| `ridenow:driver:locations` | `driverId`, `lat`, `lng`, `recordedAt`, `vehicleType` (the vehicle the driver went online with: the one picked with `vehicleId`, else the newest active one), `online` (false on going offline, with no `lat`/`lng`) |
+| `ridenow:driver:locations` and `ridenow:stream:driver-locations` | `driverId`, `lat`, `lng`, `recordedAt`, `vehicleType` (the vehicle the driver went online with: the one picked with `vehicleId`, else the newest active one), `online` (false on going offline, with no `lat`/`lng`). In the stream, the same JSON is the single field `payload` of each entry |
 | `ridenow:tracking:ended` | `tripId` |
 | `ridenow:driver:track:{driverId}` | member `lat,lng,epochMillis`, score `epochMillis`. Read oldest first with `ZRANGE`. The timestamp in the member keeps two updates from the same spot as two points |
 
 The track holds the last 5 minutes of a driver's positions. Every location write adds a point and trims the ones older than 5 minutes, and the key expires 5 minutes after the last write. Going offline deletes it. It is stored only: no endpoint or service reads it yet, so reconnect replay, a trail on the map and refresh-safe road snapping are not built. Memory is about 600 points (roughly 30 KB) per driver at one update a second.
 
-Pub/Sub is lossy. That is acceptable here: the latest position wins, and the next update arrives about a second later. Fields are additive, and readers ignore unknown fields.
+Pub/Sub is lossy. That is acceptable for the gateway: the latest position wins, and the next update arrives about a second later. Matching cannot afford to miss updates while a pod restarts, which is why it reads the stream instead. Fields are additive, and readers ignore unknown fields.
+
+---
+## 4a. Driver-location stream (matching-service)
+
+driver-service appends every update to `ridenow:stream:driver-locations` (`XADD ... MAXLEN ~ 10000`) as well as publishing it on the channel. The two writes are independent: if one fails, the other and the location write still happen. The cap suits a small deployment (50 to 100 drivers posting about once a second is 50 to 100 entries a second, so about 100 to 200 seconds of history, around 2.5 MB). Set `RIDENOW_LOCATION_STREAM_MAX_LENGTH` to change it.
+
+matching-service reads the stream through the consumer group `matching` (`XREADGROUP`, up to 100 entries per read, blocking 2s). The consumer name is the pod hostname.
+
+| Situation | What happens |
+|---|---|
+| Normal | The entry is applied, then acknowledged (`XACK`) |
+| Matching pod is down or restarting | Entries wait in the stream. The pod reads them when it is back, as long as they have not been trimmed |
+| Handler fails (database or cache error) | The entry is not acknowledged. After 30s idle, a reclaimer on any live pod takes it over and runs it again |
+| Pod dies mid-batch | Same: its pending entries are reclaimed by another pod after 30s |
+| 5 deliveries without success | The entry is copied to `ridenow:stream:driver-locations-dlq` (capped) and acknowledged |
+| Malformed entry | Logged, dropped and acknowledged, so it is not retried |
+
+Delivery is at-least-once, so the same entry can arrive twice and entries can arrive out of order. matching-service therefore compares each report's `recordedAt` with the stored one and ignores anything that is not newer. When a driver goes offline it also writes `ridenow:matching:offline:{driverId}` (10 minute TTL), so a late position recorded before that moment cannot bring the driver back.
+
+The group is created at the beginning of the stream on first start, so entries driver-service wrote before matching first started are applied rather than skipped (replaying them is safe because older reports are ignored). Deploy driver-service first (it writes the stream), then matching-service. While matching is down, entries older than the cap are lost, but the next position from each driver repairs the index.
 
 ---
 ## 5. SSE client contract

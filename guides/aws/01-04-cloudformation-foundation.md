@@ -28,7 +28,7 @@ realtime-gateway is the only service with no database.
 | Stack | Template | Creates |
 |-------|----------|---------|
 | 01-iam | `iac/stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped policies |
-| 02-network | `iac/stacks/02-network.yaml` | VPC, subnets (3 AZ), IGW, one NAT per AZ, SGs |
+| 02-network | `iac/stacks/02-network.yaml` | VPC, subnets (2 AZ), IGW, one NAT per AZ, SGs |
 | 03-ecr | `iac/stacks/03-ecr.yaml` | ECR repos for user/driver/trip/payment/matching/notification/realtime-gateway |
 | **04-data** | **`iac/stacks/04-data.yaml`** | Six RDS instances (user/driver/trip/payment/matching/notification) with Secrets Manager credentials. Multi-AZ follows `MultiAz` in the params file |
 

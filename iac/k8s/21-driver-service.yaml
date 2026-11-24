@@ -3,7 +3,7 @@
 # Reaches user-service in-cluster by Kubernetes Service DNS
 # (http://user-service:8081) - the cloud equivalent of the compose service name
 # used locally. DB creds come from the driver-db Secret projected by
-# external-secrets. Redis (ElastiCache) holds live location/availability, so the
+# external-secrets. Valkey (ElastiCache, Redis protocol) holds live location/availability, so the
 # <REDIS_ENDPOINT> placeholder is templated from the messaging stack (05).
 #
 # Runs on AWS Fargate (scheduled by the `ridenow` namespace Fargate profile).
@@ -51,14 +51,18 @@ spec:
             # Service-to-service: in-cluster DNS, same shape as compose.
             - name: SERVICES_USER_SERVICE_BASE_URL
               value: "http://user-service:8081"
-            # Live driver state, location Pub/Sub and the profile cache live in
-            # Redis (ElastiCache, in-transit TLS).
+            # Live driver state, location Pub/Sub, the driver-locations stream and the
+            # profile cache live in Valkey (ElastiCache, Redis protocol, in-transit TLS).
             - name: REDIS_HOST
               value: "<REDIS_ENDPOINT>"
             - name: REDIS_PORT
               value: "6379"
             - name: REDIS_SSL
               value: "true"
+            # The driver-locations stream (read by matching-service) is trimmed to about
+            # this many entries: roughly 100-200 s at 50-100 drivers posting once a second.
+            - name: RIDENOW_LOCATION_STREAM_MAX_LENGTH
+              value: "10000"
           resources:
             requests:
               cpu: "250m"

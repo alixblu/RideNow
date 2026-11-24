@@ -22,7 +22,7 @@ started with the simplest local mechanism and is swapped for the managed one by
 | Service-to-service call | HTTP to `localhost` / compose DNS | HTTP to Kubernetes Service DNS | a URL in config + a small client class |
 | Domain events | SNS + SQS on LocalStack | Amazon SNS + SQS | `DomainEventPublisher` (logging impl or SNS impl) |
 | Durable data | Postgres container per service | RDS PostgreSQL per service | datasource URL |
-| Live driver state, GEO, Pub/Sub, cache | Redis container | ElastiCache | Redis host/port (+ TLS flag) |
+| Live driver state, GEO, Pub/Sub, streams, cache | Valkey container | ElastiCache for Valkey | Redis-protocol host/port (+ TLS flag) |
 | Nearby-driver search | Postgres scan | Redis GEO | `NearbyDriverFinder` |
 | Payment provider | `SimulatedPaymentGateway` | a real provider | `PaymentGateway` |
 | Delivery to apps | inbox table, read by polling; driver position over SSE | the same; the gateway sits behind the ALB `/live` path | `NotificationSender`, `RoadSnapper` (frontend) |
@@ -42,7 +42,7 @@ logic, the boundary has leaked. Fix that before adding anything new.
                     v                                    v
    +--------------+      +--------------+      +----------------+
    | user-service |<-----| driver-svc   |----->| matching-svc   |
-   | accounts     | HTTP | drivers,     | Redis | offers,        |
+   | accounts     | HTTP | drivers,     |stream| offers,        |
    +--------------+      | live state   |      | Redis GEO      |
                          +--------------+      +----------------+
                     REST                            ^ trip.requested
@@ -65,10 +65,10 @@ logic, the boundary has leaked. Fix that before adding anything new.
 | Service | Owns | Talks to others by |
 |---|---|---|
 | user-service | users | serves HTTP |
-| driver-service | drivers, vehicles; live state in Redis | HTTP to user-service; publishes positions on a Redis channel that matching-service subscribes to |
+| driver-service | drivers, vehicles; live state in Redis | HTTP to user-service; publishes positions on a Redis channel (the gateway) and appends them to a Redis stream (matching-service) |
 | trip-service | trips, trip offers, the accept race | HTTP to payment-service; publishes events |
 | payment-service | payments | serves HTTP; consumes its queue; publishes events |
-| matching-service | driver positions, offers it makes, the GEO index | consumes its queue; publishes events |
+| matching-service | driver positions, offers it makes, the GEO index | consumes its queue and the driver-locations stream; publishes events |
 | notification-worker | the processed-notification ledger, the notification inbox | consumes its queue; writes tracking keys to Redis; serves `/api/notifications` |
 | realtime-gateway | nothing (no database) | subscribes to Redis; holds SSE streams |
 
@@ -96,7 +96,7 @@ interactions stay synchronous, and async is added per interaction, not project-w
 | `arrive`, `start`, `complete`, `cancel` | Sync, then event | the state change is the answer; reactions come later |
 | Trip ends -> payment **capture / release** | **Async** (`trip.completed` / `trip.cancelled`) | the rider never waits on it; retries are safe |
 | Any event -> tell the user | **Async** | delivery must never slow the business flow |
-| Driver location write | Sync write + Redis Pub/Sub | Redis is the primary store; the stream may lose updates |
+| Driver location write | Sync write + Redis Pub/Sub + Redis Stream | Redis is the primary store; the gateway may lose updates, matching reads a retained stream with retries |
 | Trip / payment reads | Sync | the caller needs the answer |
 
 ### 3.1 Event routing
@@ -172,7 +172,7 @@ AUTHORIZED -> FAILED                    capture failed (compensation path)
 
 ---
 
-## 4. Messaging and Redis: one job per tool
+## 4. Messaging and Valkey: one job per tool
 
 | Need | Tool | Not this |
 |---|---|---|
@@ -180,19 +180,33 @@ AUTHORIZED -> FAILED                    capture failed (compensation path)
 | Do one task later, reliably | SQS (+ DLQ) | Redis Pub/Sub |
 | One event, many independent reactors | SNS -> one SQS queue per consumer | EventBridge (an alternative to SNS; we picked one) |
 | Real-time, lossy, latest-value-wins stream | Redis Pub/Sub | SQS |
+| High-rate updates that one consumer group must not miss (driver positions) | Redis Stream + consumer group | SQS (one message per second per driver is costly), Pub/Sub (drops while a pod is down) |
 
 **Redis Pub/Sub is not a queue.** It is fire-and-forget: a subscriber that is down
 misses the message forever, and nothing is stored, retried or dead-lettered. That suits
 GPS pings and the last hop to the SSE gateway, because the client resyncs over
 REST. It never suits payments or anything that must not be lost.
 
-**Redis has four roles,** and caching is the smallest:
+**A Redis Stream is the middle ground for driver positions.** The matching index must
+not miss updates while a pod restarts, but positions are high-rate and each one is
+replaced by the next, so SQS is the wrong cost and Pub/Sub the wrong guarantee.
+driver-service appends each update to `ridenow:stream:driver-locations` (capped at
+about 10,000 entries). matching-service reads it through a consumer group: an entry is
+acknowledged after it is applied, retried if the pod dies or fails, and moved to a
+dead-letter stream after 5 deliveries. Delivery is at-least-once, so matching ignores
+reports that are not newer than what it holds. Domain events that must not be lost
+still use SNS and SQS.
+
+**The cache runs ElastiCache for Valkey** (Redis protocol, about 20% cheaper than Redis
+OSS; the Redis client code and `REDIS_*` variables did not change). It has five roles,
+and caching is the smallest:
 
 1. **Primary store for live driver state** (availability and position, with a TTL). Kept
    out of Postgres on purpose. Losing it is fine, because the app re-reports.
 2. **GEO index** for nearby-driver search, owned by matching-service.
 3. **Pub/Sub** for driver location, and for the trip-ended signal to the gateway.
-4. **Cache-aside** on the driver profile only.
+4. **Stream** of driver locations, consumed by matching-service through a consumer group.
+5. **Cache-aside** on the driver profile only.
 
 **Cache a read only when all three hold:**
 
@@ -206,7 +220,7 @@ Default: no cache.
 
 ## 5. Real-time delivery
 
-Two paths, both read-only for the client. `REALTIME.md` has the diagrams, the Redis keys,
+Two paths, both read-only for the client. `REALTIME.md` has the diagrams, the Valkey keys,
 the SSE client contract and the map guidance.
 
 - **Notifications** are written to an inbox table in notification-worker, in the same
@@ -237,8 +251,8 @@ the SSE client contract and the map guidance.
 | Stage | How |
 |---|---|
 | One service | `./mvnw spring-boot:run` + that service's own `docker-compose.yml` (DB only) |
-| Whole system | root `docker compose up --build`: 6 Postgres, Redis, LocalStack, 7 services |
-| Cloud | EKS on **Fargate** (no node groups), one RDS instance per service that owns data (six), ElastiCache, SNS, SQS |
+| Whole system | root `docker compose up --build`: 6 Postgres, Valkey, LocalStack, 7 services |
+| Cloud | EKS on **Fargate** (no node groups), one RDS instance per service that owns data (six), ElastiCache for Valkey, SNS, SQS |
 
 **Cloud footprint.** CloudFormation in `iac/stacks/`, deployed in order by
 `iac/scripts/deploy.sh` (`--parallel` runs independent stacks together). The script resolves the cluster's OIDC id between stacks 06 and 07.
@@ -246,10 +260,10 @@ the SSE client contract and the map guidance.
 | Stack | Provides |
 |---|---|
 | 01 | IAM: cluster and Fargate roles, a shared ECR/Secrets policy, one messaging policy per service scoped to its exact queue/topic |
-| 02 | three-AZ network with a NAT per AZ |
+| 02 | two-AZ network with a NAT per AZ |
 | 03 | ECR, one repo per service |
 | 04 | six RDS instances: user, driver, trip, payment, matching, notification (realtime-gateway has none) |
-| 05 | topic, three queues + DLQs, subscriptions, queue policies, Redis |
+| 05 | topic, three queues + DLQs, subscriptions, queue policies, ElastiCache for Valkey |
 | 06 | EKS cluster + Fargate profiles |
 | 07 | IRSA roles for the add-ons and for trip, payment, matching and notification-worker |
 
@@ -258,7 +272,7 @@ the SSE client contract and the map guidance.
 
 **Network posture.**
 
-- RDS and Redis sit in private subnets and admit only cluster traffic. Per-service
+- RDS and Valkey sit in private subnets and admit only cluster traffic. Per-service
   security groups narrow that to "own database only".
 - Services are `ClusterIP`. The only internet-facing entry is the ALB: five API paths (users, drivers, trips, payments, notifications)
   plus `/live`, with a 300s idle timeout for streams.

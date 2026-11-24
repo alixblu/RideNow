@@ -61,7 +61,7 @@ class NotificationWorkerIntegrationTest {
 
     @Container
     static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:8-alpine")).withExposedPorts(6379);
     static SqsClient sqs;
     static String queueUrl;
     static String dlqUrl;

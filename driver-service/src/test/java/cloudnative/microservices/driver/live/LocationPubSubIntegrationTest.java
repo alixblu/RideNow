@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -25,8 +27,9 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * Task B6 verification: a location update published on the Redis Pub/Sub channel
- * is received by a subscriber. Proves the backend side of live tracking end to
- * end against real Redis. Skipped when Docker is unavailable.
+ * is received by a subscriber, and the same update lands in the capped stream that
+ * matching-service consumes. Proves the backend side of live tracking end to end
+ * against a real Valkey. Skipped when Docker is unavailable.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -38,7 +41,7 @@ class LocationPubSubIntegrationTest {
 
     @Container
     static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:8-alpine")).withExposedPorts(6379);
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry registry) {
@@ -49,6 +52,8 @@ class LocationPubSubIntegrationTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        // Small cap so the trimming test does not need thousands of entries.
+        registry.add("ridenow.live.location.stream-max-length", () -> "100");
     }
 
     @Autowired
@@ -56,6 +61,9 @@ class LocationPubSubIntegrationTest {
 
     @Autowired
     RedisConnectionFactory connectionFactory;
+
+    @Autowired
+    StringRedisTemplate redis;
 
     @Test
     void publishedLocationUpdateIsReceivedBySubscriber() {
@@ -82,5 +90,37 @@ class LocationPubSubIntegrationTest {
         } finally {
             container.stop();
         }
+    }
+
+    @Test
+    void publishedLocationUpdateIsAppendedToTheStreamWithTheSameJson() {
+        UUID driverId = UUID.randomUUID();
+        publisher.publish(driverId, new BigDecimal("10.5"), new BigDecimal("106.5"),
+                java.time.Instant.parse("2026-11-11T07:00:00Z"),
+                cloudnative.microservices.driver.entity.VehicleType.CAR);
+
+        List<MapRecord<String, Object, Object>> entries =
+                redis.opsForStream().range(LocationPublisher.STREAM_KEY,
+                        org.springframework.data.domain.Range.unbounded());
+        assertThat(entries).anySatisfy(entry -> {
+            assertThat(entry.getValue()).containsOnlyKeys(LocationPublisher.PAYLOAD_FIELD);
+            assertThat(entry.getValue().get(LocationPublisher.PAYLOAD_FIELD).toString())
+                    .contains(driverId.toString()).contains("\"online\":true");
+        });
+    }
+
+    @Test
+    void theStreamIsTrimmedToRoughlyTheConfiguredCap() {
+        UUID driverId = UUID.randomUUID();
+        for (int i = 0; i < 1_000; i++) {
+            publisher.publish(driverId, new BigDecimal("10.5"), new BigDecimal("106.5"),
+                    java.time.Instant.parse("2026-11-11T07:00:00Z"),
+                    cloudnative.microservices.driver.entity.VehicleType.CAR);
+        }
+
+        // Approximate trimming ("MAXLEN ~") drops whole internal nodes, so the length
+        // can overshoot the cap a little, but never grows without bound.
+        Long length = redis.opsForStream().size(LocationPublisher.STREAM_KEY);
+        assertThat(length).isNotNull().isLessThan(400);
     }
 }

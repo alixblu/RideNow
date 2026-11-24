@@ -5,11 +5,11 @@ monorepo. Passengers request rides, drivers accept and complete them. The produc
 is intentionally simple; the engineering underneath - concurrency, distributed
 messaging, Redis, and a path to Amazon EKS - is the point.
 
-Stack: **Java 25**, **Spring Boot 4.1.1**, PostgreSQL (one DB per service), Redis,
+Stack: **Java 25**, **Spring Boot 4.1.1**, PostgreSQL (one DB per service), Valkey (Redis protocol),
 AWS SDK v2 (SNS + SQS), Docker, Kubernetes/EKS.
 
 > Built **local-first**: every boundary runs against a local stand-in first
-> (Postgres containers, a Redis container, LocalStack for SNS/SQS), then
+> (Postgres containers, a Valkey container, LocalStack for SNS/SQS), then
 > the *same code* points at managed AWS by changing environment variables only.
 
 ---
@@ -19,10 +19,10 @@ AWS SDK v2 (SNS + SQS), Docker, Kubernetes/EKS.
 | Service | Port | Owns | Notes |
 |---------|------|------|-------|
 | `user-service` | 8081 | accounts / profiles | — |
-| `driver-service` | 8080 | drivers, vehicles; live driver state | live location/availability in **Redis** (not Postgres); publishes location on a Pub/Sub channel; profile reads are cache-aside |
+| `driver-service` | 8080 | drivers, vehicles; live driver state | live location/availability in **Valkey** (not Postgres); publishes location on a Pub/Sub channel (gateway) and appends it to a capped **Redis Stream** (matching); profile reads are cache-aside |
 | `trip-service` | 8082 | trip lifecycle & state machine | optimistic-lock "exactly one driver wins"; estimates the fare and **authorizes it synchronously** with payment-service (no hold, no trip); publishes `trip.*`/`driver.*` events |
 | `payment-service` | 8083 | payments | idempotent authorize -> capture / release; captures on `trip.completed` and releases on `trip.cancelled` from its own SQS queue; publishes `payment.*` events |
-| `matching-service` | 8085 | matching decisions, `trip_offers` | matches **asynchronously** on `trip.requested` (SQS); finds nearby drivers via **Redis GEO** (swappable from a Postgres scan); publishes `match.offered`; internal (no public route) |
+| `matching-service` | 8085 | matching decisions, `trip_offers` | matches **asynchronously** on `trip.requested` (SQS); finds nearby drivers via **Redis GEO** (swappable from a Postgres scan), kept current from the driver-locations **stream** through a consumer group (retried, dead-lettered); publishes `match.offered`; internal (no public route) |
 | `notification-worker` | 8084 | notification inbox, delivery ledger | consumes the notifications SQS queue; idempotent, retries, dead-letter queue; writes each notification to an **inbox** the apps poll at `/api/notifications`; keeps the trip tracking pairing in Redis |
 | `realtime-gateway` | 8086 | nothing (no database) | streams the driver's live position to the trip's passenger over **SSE** at `/live/trips/{tripId}/location` |
 
@@ -54,7 +54,7 @@ events, and store other services' identifiers as plain UUIDs.
             +------+------+        +-----------+------------+
                    |                           |
               +----+----+                      v
-              |  Redis  |            +-------------------+
+              | Valkey  |            +-------------------+
               | GEO/live|            |notification-worker|
               | /pubsub |            | SQS consumer+DLQ  |
               +---------+            +-------------------+
@@ -73,16 +73,18 @@ The two big distributed-systems boundaries:
   `realtime-gateway` (see `docs/REALTIME.md`). The event transport sits behind a
   `DomainEventPublisher` interface (logging default, SNS impl), so it's a
   swap, not a rewrite. See `docs/ARCHITECTURE.md` section 3.
-- **Redis**, four roles - primary store for live driver location/availability,
-  **GEO** index for nearby-driver matching, **Pub/Sub** for live tracking, and
-  **cache-aside** on the driver profile. It also holds the short-lived trip
-  tracking pairing that tells the gateway who may watch whom.
+- **Valkey** (ElastiCache for Valkey in the cloud; Redis protocol, so the Redis clients and
+  REDIS_* variables are unchanged), five roles - primary store for live driver
+  location/availability, **GEO** index for nearby-driver matching, **Pub/Sub** for live
+  tracking, a **Stream** of driver locations that matching-service reads through a consumer
+  group (so a restarted pod catches up), and **cache-aside** on the driver profile. It also
+  holds the short-lived trip tracking pairing that tells the gateway who may watch whom.
 
 ---
 
 ## Run it locally
 
-Everything runs with one command - all services, their databases, Redis, and
+Everything runs with one command - all services, their databases, Valkey, and
 LocalStack (local SNS + SQS):
 
 ```bash
@@ -110,7 +112,7 @@ cd trip-service
 ./mvnw test        # unit + web-slice tests; integration tests use Testcontainers
 ```
 
-Integration tests (Testcontainers for Postgres / Redis / LocalStack) are skipped
+Integration tests (Testcontainers for Postgres / Valkey / LocalStack) are skipped
 automatically when Docker isn't available. They need Docker running (verified with
 Docker Engine 29 and Testcontainers 1.21.4). The `*ApplicationTests` context tests in
 user, driver, trip and payment (and trip's `AcceptTripConcurrencyTest`) connect to a

@@ -62,7 +62,10 @@ See `ARCHITECTURE.md` for how these fit together.
 | Redis as primary store | Redis is the only home of some data | BUILT: driver live availability and position (hash with TTL), never in Postgres |
 | Redis sorted set (ZSET) | Members ordered by a numeric score, with range queries and range trims | BUILT: driver-service keeps each driver's last 5 minutes of positions at `ridenow:driver:track:{driverId}`, scored by epoch milliseconds. Each write trims older points, and the key expires after 5 minutes. Nothing reads it yet |
 | Redis GEO | In-memory geospatial radius queries | BUILT: matching-service's GEO index answers "drivers near this pickup" with GEOSEARCH |
-| Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel. BUILT: the `ridenow:tracking:ended` channel to the gateway (replaced `ridenow.notifications`) |
+| Redis Pub/Sub | Fire-and-forget fan-out to everyone connected; not durable | BUILT: driver location channel, read by the gateway. BUILT: the `ridenow:tracking:ended` channel to the gateway (replaced `ridenow.notifications`) |
+| Redis Streams and consumer groups | An append-only log that stays until acknowledged; a group gives each entry to one consumer, tracks what is pending and lets another consumer take over | BUILT: driver-service appends every location to `ridenow:stream:driver-locations` (`XADD MAXLEN ~`); matching-service reads it as group `matching` (`XREADGROUP` / `XACK`), reclaims entries idle for 30s and dead-letters after 5 deliveries |
+| At-least-once, idempotent consumer | Duplicates and reordering are possible, so applying a message twice or late must change nothing | BUILT: matching ignores a location whose `recordedAt` is not newer than the stored one, and keeps a 10 minute offline marker so a late position cannot revive an offline driver |
+| Valkey instead of Redis OSS | A Redis-protocol fork; same clients and commands, lower AWS price | BUILT: ElastiCache for Valkey in stack 05 and the `valkey` container locally and in tests; no application code change |
 | Cache-aside | A disposable copy of hot DB data with a TTL | BUILT (scoped): driver profile only; evicted on writes. Never trip status or the accept read |
 
 ## Real-time
@@ -117,7 +120,7 @@ See `ARCHITECTURE.md` for how these fit together.
 
 | Technique | Basic description | How it is used in this project |
 |-----------|-------------------|-------------------------------|
-| Local-first, swap mechanism | Keep boundaries fixed; swap local stand-ins for managed services | BUILT: Postgres -> RDS, LocalStack -> SNS / SQS, Redis container -> ElastiCache, Compose -> EKS. Config only |
+| Local-first, swap mechanism | Keep boundaries fixed; swap local stand-ins for managed services | BUILT: Postgres -> RDS, LocalStack -> SNS / SQS, Valkey container -> ElastiCache for Valkey, Compose -> EKS. Config only |
 | LocalStack | Local emulator for AWS APIs | BUILT: `localstack/init/01-messaging.sh` creates the same topic, queues and subscriptions as stack 05; `smoke-test.sh` checks routing |
 | Containerization | Package each app as a portable image | BUILT: multi-stage Dockerfile per service; one image runs locally and on EKS |
 | Docker Compose | Run the whole system on one machine | BUILT: 6 Postgres, Redis, LocalStack and 7 services with health checks |

@@ -48,9 +48,9 @@ infra half is one command.
 
 | Slow resource | Typical wait |
 |---|---|
-| 02 network (3 NAT gateways) | 3-5 min |
+| 02 network (2 NAT gateways) | 3-5 min |
 | 04 data (6 RDS instances) | 10-20 min |
-| 05 messaging (Redis replication group) | 10-15 min |
+| 05 messaging (Valkey replication group) | 10-15 min |
 | 06 EKS cluster + Fargate profiles | 10-15 min |
 
 - `--parallel` runs three phases: (01, 02, 03), then (04, 05, 06), then 07. Stacks
@@ -71,10 +71,10 @@ What this provisions, in order:
 | Stack | Creates | Notes |
 |-------|---------|-------|
 | 01-iam | Cluster role + Fargate pod execution role + app-access policy + one messaging policy per service | messaging policies attach to 07's roles |
-| 02-network | 3-AZ VPC, NAT per AZ, cluster SG, DB SG | — |
+| 02-network | 2-AZ VPC, NAT per AZ, cluster SG, DB SG | — |
 | 03-ecr | One repo per service | **images come in Phase 2** |
 | 04-data | 6 RDS instances (user, driver, trip, payment, matching, notification) + Secrets Manager secrets | pods need these to be healthy; realtime-gateway has no database |
-| 05-messaging | SNS topic; matching / payment / notifications queues + DLQs; one filtered subscription per queue (raw delivery, filter on `type`); ElastiCache Redis | consumed by matching / payment / worker |
+| 05-messaging | SNS topic; matching / payment / notifications queues + DLQs; one filtered subscription per queue (raw delivery, filter on `type`); ElastiCache for Valkey | consumed by matching / payment / worker |
 | 06-eks-cluster | EKS control plane + 3 Fargate profiles | **no node group** |
 | 07-eks-addons | ALB-controller + External-Secrets IRSA roles, plus trip / payment / matching / notification-worker IRSA roles | OIDC id injected automatically |
 
@@ -119,12 +119,24 @@ Verify each repo has the `v1.0.0` tag (guide 03 shows the `describe-images` chec
 
 ## Phase 3 - Make the cluster usable (guide 05 Part B)
 
-Fargate has no nodes, and CoreDNS ships pinned to EC2 — patch it so it schedules
-on the `kube-system` Fargate profile, or in-cluster DNS never comes up.
+Fargate has no nodes. CoreDNS pods stay `Pending` ("no nodes available") in two
+cases, and both are fixed by recreating them once the `kube-system` Fargate profile
+is **Active**:
+
+- the CoreDNS template still carries the annotation that pins it to EC2 (remove it);
+- the pods were created before the Fargate profile existed (stack 06 creates the
+  cluster first and the profiles one at a time). A pod is matched to a profile only
+  when it is created, so these pods never move to Fargate on their own. The
+  annotation can already be gone in this case, and the restart alone is the fix.
 
 ```bash
-kubectl patch deployment coredns -n kube-system --type=json \
-  -p='[{"op":"remove","path":"/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]'
+# Remove the EC2 pin only if it is still there (the patch fails when it is not).
+if kubectl get deployment coredns -n kube-system \
+     -o jsonpath='{.spec.template.metadata.annotations}' | grep -q compute-type; then
+  kubectl patch deployment coredns -n kube-system --type=json \
+    -p='[{"op":"remove","path":"/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]'
+fi
+# Always recreate the pods, so they are scheduled on the now-Active profile.
 kubectl rollout restart deployment coredns -n kube-system
 kubectl rollout status  deployment coredns -n kube-system
 ```
@@ -138,9 +150,16 @@ Also enable the OIDC identity provider in IAM if the console didn't
 
 These use the IRSA roles stack 07 created. Order matters.
 
-1. **AWS Load Balancer Controller** (Helm) — guide 06 step 1a/1b. Provisions the
-   ALB for the Ingress in Phase 6.
-2. **External Secrets Operator** (Helm) — guide 06 step 2 B2.
+1. **AWS Load Balancer Controller** (Helm) — guide 06 step 1b. Provisions the
+   ALB for the Ingress in Phase 6. Then give its role permissions (stack 07 creates
+   the role with no policy, because the policy is versioned with the controller):
+   `./iac/scripts/alb-controller-policy.sh prod`. Without it the Ingress never gets
+   an address and the controller logs `AccessDenied ... DescribeLoadBalancers`.
+2. **External Secrets Operator** (Helm) — guide 06 step 2 B2. Install it with
+   `--set webhook.port=9443`: the chart's default webhook port, 10250, is the port
+   the Fargate kubelet already uses on every pod, so the API server reaches the
+   kubelet instead and every `ExternalSecret` apply fails with
+   `x509: certificate is valid for fargate-ip-...`.
 3. **KMS grant** so ESO can decrypt the RDS-managed secrets — guide 06 step 2 B1.
    (Without it ESO fails with `Access to KMS is not allowed`.)
 
@@ -206,13 +225,13 @@ aws cloudformation list-exports --region ap-southeast-1 \
 
 ---
 
-## Phase 7 - Wire the async + Redis features (guides 07, 08)
+## Phase 7 - Wire the async + Valkey features (guides 07, 08)
 
-Stack 05 already created Redis, the SQS queue/DLQ, and the SNS topic. These
+Stack 05 already created the Valkey cache, the SQS queue/DLQ, and the SNS topic. These
 guides set the per-pod env + IRSA so matching-service and notification-worker use
 them:
 
-- `07-elasticache-redis.md` — point driver/matching at the Redis endpoint.
+- `07-elasticache-redis.md` — point driver/matching at the Valkey endpoint. Deploy driver-service first (it writes the location stream), then matching-service (it reads it).
 - `08-sqs-sns.md` — topic/queue/subscription env + the worker's IRSA role.
 
 ---
@@ -232,10 +251,10 @@ deploy.sh prod --apply        # stacks 01->07 (OIDC auto-resolved for 07; add --
   └─ (03 done) push images     # Phase 2
 update-kubeconfig
 patch CoreDNS                  # Phase 3
-Helm: ALB controller, ESO + KMS grant   # Phase 4  (needs 07's roles)
+Helm: ALB controller + alb-controller-policy.sh, ESO (webhook.port=9443) + KMS grant   # Phase 4  (needs 07's roles)
 namespace, per-pod SGs, log router, ExternalSecrets   # Phase 5
 service manifests 20-26, ingress 30     # Phase 6
-Redis + SQS env wiring (07, 08)         # Phase 7
+Valkey + SQS env wiring (07, 08)         # Phase 7
 observability (06a)                     # Phase 8
 ```
 

@@ -27,3 +27,8 @@ services:
     base-url: ${SERVICES_PAYMENT_SERVICE_BASE_URL:http://localhost:8083}
     connect-timeout: ${SERVICES_PAYMENT_SERVICE_CONNECT_TIMEOUT:2s}
     read-timeout: ${SERVICES_PAYMENT_SERVICE_READ_TIMEOUT:3s}
+    # A payment pod that has just started can miss the read timeout on its first
+    # authorize. The call is idempotent on the trip id, so it is retried on a
+    # timeout or connection failure (not on an HTTP error).
+    max-attempts: ${SERVICES_PAYMENT_SERVICE_MAX_ATTEMPTS:3}
+    retry-backoff: ${SERVICES_PAYMENT_SERVICE_RETRY_BACKOFF:500ms}

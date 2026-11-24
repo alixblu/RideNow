@@ -37,33 +37,14 @@ pools or taints.
 The ALB Ingress (step 4) needs this controller running in the cluster. It reads
 the Ingress annotations and provisions a real ALB.
 
-### 1a. Create its IRSA role
+### 1a. Its IRSA role
 
-1. Download the controller's IAM policy JSON and create the policy:
-
-   ```bash
-   # The policy MUST match the controller version Helm installs (step 1b). An older
-   # policy works for the first deploy but later fails with AccessDenied on
-   # SetRulePriorities when an Ingress path is added. Look the version up first:
-   helm repo add eks https://aws.github.io/eks-charts && helm repo update
-   ALB_VERSION=$(helm search repo eks/aws-load-balancer-controller -o json | jq -r '.[0].app_version')
-   curl -o iam_policy.json "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${ALB_VERSION}/docs/install/iam_policy.json"
-
-   aws iam create-policy \
-     --policy-name AWSLoadBalancerControllerIAMPolicy \
-     --policy-document file://iam_policy.json \
-     --region ap-southeast-1 \
-     --no-cli-pager
-   ```
-2. IAM -> **Roles** -> **Create role** -> **Web identity**.
-   - Identity provider: the cluster's **OIDC provider** (guide 05 Part D).
-   - Audience: `sts.amazonaws.com`.
-3. Attach `AWSLoadBalancerControllerIAMPolicy`. Name the role
-   `ridenow-alb-controller-role`.
-4. Edit the role's **trust policy** so the `sub` is scoped to the controller's
-   service account:
-   `system:serviceaccount:kube-system:aws-load-balancer-controller`.
-
+Stack 07 (`iac/stacks/07-eks-addons.yaml`) creates the role
+`ridenow-prod-alb-controller`, trusted only by the controller's service account
+(`system:serviceaccount:kube-system:aws-load-balancer-controller`), and exports its
+ARN as `ridenow-prod-eks-AlbControllerRoleArn`. The role has **no permissions** yet:
+the controller's IAM policy is published per controller version, so it is attached in
+step 1b after Helm has installed a known version.
 ### 1b. Install the controller (Helm)
 
 **Prerequisites — install Helm on Linux (WSL or EC2) if not already installed:**
@@ -93,15 +74,32 @@ echo "VPC ID: $VPC_ID"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 echo "Account ID: $ACCOUNT_ID"
 
+ALB_ROLE_ARN=$(aws cloudformation list-exports \
+  --region ap-southeast-1 \
+  --query "Exports[?Name=='ridenow-prod-eks-AlbControllerRoleArn'].Value" \
+  --output text --no-cli-pager)
+
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
-  --set clusterName=ridenow \
+  --set clusterName=ridenow-prod \
   --set serviceAccount.create=true \
   --set serviceAccount.name=aws-load-balancer-controller \
-  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/ridenow-alb-controller-role" \
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${ALB_ROLE_ARN}" \
   --set region=ap-southeast-1 \
   --set vpcId=${VPC_ID}
 ```
+
+**Give the role its permissions** (creates or updates
+`AWSLoadBalancerControllerIAMPolicy` for the installed controller version, attaches it,
+and restarts the controller):
+
+```bash
+./iac/scripts/alb-controller-policy.sh prod
+```
+
+Skip this and the Ingress in step 4 never gets an address; the controller logs
+`AccessDenied ... elasticloadbalancing:DescribeLoadBalancers`. Re-run it after
+upgrading the controller, since a newer version can need new permissions.
 
 **Verify the controller is running:**
 
@@ -205,10 +203,15 @@ above and the ESO install in step 2.
 
    # Create the namespace and install the operator; annotate its service account
    # with the IRSA role so it can call Secrets Manager without static keys.
+   # webhook.port=9443: the chart's default (10250) is the port the Fargate
+   # kubelet already listens on in every pod. With it, the API server's webhook calls
+   # reach the kubelet, and every ExternalSecret apply fails with
+   # "x509: certificate is valid for fargate-ip-..., not external-secrets-webhook...".
    helm install external-secrets external-secrets/external-secrets \
      -n external-secrets \
      --create-namespace \
      --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$ESO_ROLE_ARN \
+     --set webhook.port=9443 \
      --wait
    ```
 

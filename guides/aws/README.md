@@ -35,13 +35,13 @@ the codified templates in `../../iac/`.
         |                                                       |                |
    SNS topic ridenow-<env>-events --> 3 SQS queues + DLQs ------+                |
         |                                                                        |
-   ElastiCache Redis: driver live state, GEO index, location Pub/Sub,            |
+   ElastiCache Valkey: driver live state, GEO index, location Pub/Sub + stream,  |
                       tracking pairing keys  --------------------(Pub/Sub)-------+
 ```
 
 All services run in the `ridenow` namespace. Only user, driver, trip, payment,
 matching and notification-worker have a database (six RDS instances).
-realtime-gateway holds the SSE streams and reads Redis.
+realtime-gateway holds the SSE streams and reads Valkey (Redis protocol).
 
 Every pod runs on **Fargate**: EKS schedules it onto a right-sized micro-VM based
 on the pod's CPU/memory requests — there are no nodes in the cluster. The
@@ -67,12 +67,12 @@ parallel once the network exists.
 | # | Guide | What it creates | Needed for EKS? |
 |---|-------|-----------------|-----------------|
 | 01 | `01-iam.md` | An admin IAM user/role for yourself; the EKS cluster role and the Fargate pod execution role | yes (prereq) |
-| 02 | `02-vpc.md` | VPC, public + private subnets (3 AZs), IGW, one NAT per AZ, route tables, security groups | yes |
+| 02 | `02-vpc.md` | VPC, public + private subnets (2 AZs), IGW, one NAT per AZ, route tables, security groups | yes |
 | 03 | `03-ecr.md` | One ECR repo per service; build & push images | yes |
 | 04 | `04-rds-secrets.md` | One Multi-AZ RDS PostgreSQL per service; credentials in Secrets Manager | yes (pods need a DB) |
 | 05 | `05-eks-cluster.md` | The EKS cluster + Fargate profiles; connect `kubectl` | **the main event** |
 | 06 | `06-eks-deploy.md` | Namespace, Secrets, Deployments/Services, the ALB Ingress; verify traffic | yes (this is "done") |
-| 07 | `07-elasticache-redis.md` | ElastiCache for Redis (live state, GEO, cache, pub/sub, tracking keys) | matching-service, notification-worker, realtime-gateway |
+| 07 | `07-elasticache-redis.md` | ElastiCache for Valkey (live state, GEO, cache, pub/sub, location stream, tracking keys) | matching-service, notification-worker, realtime-gateway |
 | 08 | `08-sqs-sns.md` | SNS topic, three filtered SQS queues + DLQs; wire the consumers | matching-service, payment-service, notification-worker |
 
 Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the

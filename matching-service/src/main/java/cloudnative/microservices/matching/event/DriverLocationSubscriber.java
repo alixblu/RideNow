@@ -3,6 +3,8 @@ package cloudnative.microservices.matching.event;
 import cloudnative.microservices.matching.entity.VehicleType;
 import cloudnative.microservices.matching.service.DriverPositionService;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,18 +13,21 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Handles one message from driver-service's {@code ridenow:driver:locations}
- * channel: the position handoff that keeps matching's nearby-driver index current
- * for drivers who only post their location over HTTP.
+ * Handles one message from driver-service's {@code ridenow:stream:driver-locations}
+ * stream (read by {@link DriverLocationStreamConsumer}): the position handoff that
+ * keeps matching's nearby-driver index current for drivers who only post their
+ * location over HTTP.
  *
  * <ul>
  *   <li>{@code online=false} removes the driver;</li>
  *   <li>a position with a vehicle type is upserted;</li>
- *   <li>anything malformed is dropped (logged, never thrown).</li>
+ *   <li>anything malformed is dropped (logged, never thrown), so the consumer can
+ *       acknowledge it instead of retrying it forever.</li>
  * </ul>
  *
- * Pub/Sub is lossy, which is fine here: the latest position wins, and the next one
- * arrives a second or two later.
+ * Delivery is at-least-once, so a message can arrive twice or out of order. Each
+ * call carries the message's {@code recordedAt}, and {@link DriverPositionService}
+ * ignores anything that is not newer than what it already holds.
  */
 @Component
 public class DriverLocationSubscriber {
@@ -53,8 +58,9 @@ public class DriverLocationSubscriber {
             log.warn("Dropping a driver location message without a valid driverId");
             return;
         }
+        Instant recordedAt = recordedAt(update.path("recordedAt").asString(""));
         if (!update.path("online").asBoolean(true)) {
-            positionService.removeDriver(driverId);
+            positionService.removeDriver(driverId, recordedAt);
             return;
         }
         VehicleType vehicleType = vehicleType(update.path("vehicleType").asString(""));
@@ -64,7 +70,16 @@ public class DriverLocationSubscriber {
             log.warn("Dropping a location for driver {} without a valid vehicleType, lat and lng", driverId);
             return;
         }
-        positionService.reportPosition(driverId, vehicleType, lat, lng);
+        positionService.reportPosition(driverId, vehicleType, lat, lng, recordedAt);
+    }
+
+    /** The message's timestamp, or now for a message that carries none (older writers). */
+    private static Instant recordedAt(String value) {
+        try {
+            return value.isEmpty() ? Instant.now() : Instant.parse(value);
+        } catch (DateTimeParseException e) {
+            return Instant.now();
+        }
     }
 
     private static BigDecimal coordinate(JsonNode node, BigDecimal max) {

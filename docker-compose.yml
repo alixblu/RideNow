@@ -105,17 +105,20 @@ services:
       timeout: 3s
       retries: 10
 
-  # ---- Redis: live driver state, GEO matching, pub/sub, cache ----------------
-  # The local stand-in for Amazon ElastiCache. The client code is identical;
-  # only the host/port change in the cloud. Redis is the PRIMARY store for live
-  # driver location/availability (the DBML keeps that out of Postgres), the GEO
-  # index matching-service queries, the pub/sub channel for live tracking, and
-  # an optional cache-aside store.
+  # ---- Valkey: live driver state, GEO matching, pub/sub, streams, cache -------
+  # The local stand-in for Amazon ElastiCache for Valkey (Redis protocol, so the
+  # Spring Data Redis client code and the REDIS_* env vars are unchanged; only
+  # the host/port change in the cloud). The service is still named "redis" so
+  # the REDIS_HOST=redis wiring below keeps working. It is the PRIMARY store for
+  # live driver location/availability (the DBML keeps that out of Postgres), the
+  # GEO index matching-service queries, the pub/sub channel for live tracking,
+  # the driver-locations stream matching-service consumes, and a cache-aside
+  # store for the driver profile.
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -179,9 +182,12 @@ services:
       # Service-to-service: reach user-service by its compose service name, the
       # local equivalent of Kubernetes Service DNS.
       SERVICES_USER_SERVICE_BASE_URL: http://user-service:8081
-      # Redis: live driver state (primary store) + GEO publish + pub/sub.
+      # Valkey (Redis protocol): live driver state (primary store), the pub/sub
+      # channel for live tracking, and the driver-locations stream matching-service
+      # consumes (trimmed to about this many entries).
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      RIDENOW_LOCATION_STREAM_MAX_LENGTH: 10000
     ports:
       - "8080:8080"
     healthcheck:
@@ -265,7 +271,7 @@ services:
         condition: service_healthy
     environment:
       SERVER_PORT: 8084
-      # Redis holds the trip tracking pairing keys that realtime-gateway reads.
+      # Valkey holds the trip tracking pairing keys that realtime-gateway reads.
       # Notifications themselves go to the inbox table (GET /api/notifications).
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -287,6 +293,8 @@ services:
       start_period: 40s
 
   # ---- Matching service: nearby-driver matching via Redis GEO ----------------
+  # Reads driver positions from the ridenow:stream:driver-locations stream through
+  # the 'matching' consumer group (retained, retried, dead-lettered).
   matching-service:
     build: ./matching-service
     depends_on:
@@ -323,7 +331,8 @@ services:
       start_period: 40s
 
   # ---- Realtime gateway: SSE live driver location to the trip's passenger ------
-  # Subscribes to ridenow:driver:locations and ridenow:tracking:ended on Redis.
+  # Subscribes to the ridenow:driver:locations and ridenow:tracking:ended Pub/Sub
+  # channels (the gateway needs every message on every pod; it does not use the stream).
   # Stream: curl -N "http://localhost:8086/live/trips/{tripId}/location?userId={passengerId}"
   realtime-gateway:
     build: ./realtime-gateway

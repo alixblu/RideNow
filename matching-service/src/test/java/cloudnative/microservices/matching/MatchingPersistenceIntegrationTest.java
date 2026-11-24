@@ -40,7 +40,7 @@ class MatchingPersistenceIntegrationTest {
 
     @Container
     static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:8-alpine")).withExposedPorts(6379);
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry registry) {

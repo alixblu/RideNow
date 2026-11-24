@@ -12,7 +12,7 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
-  # Redis holds the trip tracking pairing keys read by the realtime-gateway.
+  # Valkey (Redis protocol) holds the trip tracking pairing keys read by the realtime-gateway.
   data:
     redis:
       host: ${REDIS_HOST:localhost}

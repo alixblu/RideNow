@@ -26,10 +26,11 @@ spring:
         format_sql: true
     show-sql: true
 
-  # Redis connection (Spring Data Redis / Lettuce). Config-driven host/port so
-  # the same code points at a local redis container or Amazon ElastiCache by env
-  # only. Redis is the PRIMARY store for live driver location/availability - that
-  # state is deliberately NOT in Postgres (see docs/database/ridenow.dbml).
+  # Redis-protocol connection (Spring Data Redis / Lettuce). Config-driven
+  # host/port so the same code points at a local Valkey container or Amazon
+  # ElastiCache for Valkey by env only. The cache is the PRIMARY store for live
+  # driver location/availability - that state is deliberately NOT in Postgres
+  # (see docs/database/ridenow.dbml).
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -37,6 +38,15 @@ spring:
       # ElastiCache is provisioned with in-transit TLS; set REDIS_SSL=true there.
       ssl:
         enabled: ${REDIS_SSL:false}
+
+ridenow:
+  live:
+    location:
+      # Every location update is also appended to the Redis stream
+      # ridenow:stream:driver-locations that matching-service consumes. The stream
+      # is trimmed approximately (MAXLEN ~) to this many entries: about 100-200 s at
+      # 50-100 drivers posting once a second, enough to ride out a matching restart.
+      stream-max-length: ${RIDENOW_LOCATION_STREAM_MAX_LENGTH:10000}
 
 # Actuator exposes a /actuator/health endpoint so you (and later Kubernetes)
 # can ask "is this service healthy?" without hitting business endpoints.
