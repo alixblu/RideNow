@@ -36,8 +36,9 @@ public class DriverController {
     public PageResponse<DriverResponse> listDrivers(
             @RequestParam(defaultValue = "20") @Min(0) int limit,
             @RequestParam(defaultValue = "0") @Min(0) int offset,
-            @RequestParam(required = false) DriverStatus status) {
-        return driverService.listDrivers(limit, offset, status);
+            @RequestParam(required = false) DriverStatus status,
+            @RequestParam(required = false) UUID userId) {
+        return driverService.listDrivers(limit, offset, status, userId);
     }
 
     @PostMapping("/drivers")

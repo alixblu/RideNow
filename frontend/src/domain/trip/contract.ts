@@ -31,6 +31,10 @@ export interface CreateTripRequest {
   pickupLng: number;
   destinationLat: number;
   destinationLng: number;
+  /** Optional human-readable pickup address (trip-service validates its length). */
+  pickupAddress?: string;
+  /** Optional human-readable destination address (trip-service validates its length). */
+  destinationAddress?: string;
   /** Required: the fare is authorized with this method before the trip exists. */
   paymentMethod: PaymentMethod;
 }

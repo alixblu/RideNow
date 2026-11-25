@@ -205,3 +205,100 @@ export function createSmoothMarker(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Glide marker (rider live tracking, Req 7.12 to 7.14)
+// ---------------------------------------------------------------------------
+
+/** Longest glide between two location events. */
+export const MAX_GLIDE_MS = 1500;
+
+/** Glide duration for an event arriving `sinceLastEventMs` after the previous one, capped at 1500 ms. */
+export function glideDuration(sinceLastEventMs: number): number {
+  if (!Number.isFinite(sinceLastEventMs)) return 0;
+  return Math.min(MAX_GLIDE_MS, Math.max(0, sinceLastEventMs));
+}
+
+/** True when the operating system asks for reduced motion. */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/**
+ * Moves the marker from its current position to each new event over
+ * `min(time since previous event, 1500 ms)`. The first event, and every event while
+ * reduced motion is requested, places the marker without animation.
+ */
+export function createGlideMarker(
+  target: MarkerTarget,
+  options: {
+    reducedMotion?: () => boolean;
+    clock?: { now(): number; raf(cb: () => void): number; cancel(id: number): void };
+  } = {},
+): SmoothMarker {
+  const clock = options.clock ?? {
+    now: () => Date.now(),
+    raf: (cb: () => void) => requestAnimationFrame(cb),
+    cancel: (id: number) => cancelAnimationFrame(id),
+  };
+  const reducedMotion = options.reducedMotion ?? prefersReducedMotion;
+
+  let current: { lat: number; lng: number } | null = null;
+  let heading = 0;
+  let lastEventAt: number | null = null;
+  let anim: { from: { lat: number; lng: number }; to: { lat: number; lng: number }; start: number; duration: number } | null = null;
+  let frame: number | null = null;
+  let stopped = false;
+
+  const place = (lat: number, lng: number) => {
+    current = { lat, lng };
+    const stale = lastEventAt !== null && clock.now() - lastEventAt > STALE_AFTER_MS;
+    target.setPosition(lat, lng, heading, stale);
+    if (!target.isWellInView(lat, lng)) target.panTo(lat, lng);
+  };
+
+  const step = () => {
+    frame = null;
+    if (stopped || anim === null) return;
+    const f = Math.min(1, (clock.now() - anim.start) / anim.duration);
+    place(anim.from.lat + (anim.to.lat - anim.from.lat) * f, anim.from.lng + (anim.to.lng - anim.from.lng) * f);
+    if (f >= 1) {
+      anim = null;
+    } else {
+      frame = clock.raf(step);
+    }
+  };
+
+  return {
+    push(point) {
+      if (stopped) return;
+      const now = clock.now();
+      const next = { lat: point.lat, lng: point.lng };
+      const duration = lastEventAt === null ? 0 : glideDuration(now - lastEventAt);
+      lastEventAt = now;
+      if (frame !== null) {
+        clock.cancel(frame);
+        frame = null;
+      }
+      if (current !== null && distanceMeters(current, next) > 1) {
+        heading = bearingDegrees(current, next);
+      }
+      if (current === null || duration === 0 || reducedMotion()) {
+        anim = null;
+        place(next.lat, next.lng);
+        return;
+      }
+      anim = { from: current, to: next, start: now, duration };
+      frame = clock.raf(step);
+    },
+    stop() {
+      stopped = true;
+      anim = null;
+      if (frame !== null) clock.cancel(frame);
+    },
+  };
+}

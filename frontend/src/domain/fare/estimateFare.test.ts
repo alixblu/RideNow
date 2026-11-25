@@ -1,19 +1,29 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { estimateFare } from "./estimateFare";
+import type { Place } from "../../geocoding/contract";
 
 // Feature: production-grade-frontend, Property 7: Fare estimate derivation
-// **Validates: Requirements 7.1**
+// **Validates: Requirements 7.1, 6.1**
 
 const lat = fc.double({ min: 8.5, max: 23, noNaN: true });
 const lng = fc.double({ min: 102.5, max: 109, noNaN: true });
 
-const route = fc.record({
-  pickupLat: lat,
-  pickupLng: lng,
-  destinationLat: lat,
-  destinationLng: lng,
-});
+const place = fc
+  .record({ address: fc.string({ minLength: 1, maxLength: 40 }), lat, lng })
+  .map((p): Place => p);
+
+/** Requests are derived from selected Places, as the Booking_Sheet does (Req 6.1). */
+function fromPlaces(pickup: Place, destination: Place) {
+  return {
+    pickupLat: pickup.lat,
+    pickupLng: pickup.lng,
+    destinationLat: destination.lat,
+    destinationLng: destination.lng,
+  };
+}
+
+const route = fc.tuple(place, place).map(([a, b]) => fromPlaces(a, b));
 
 describe("Property 7: Fare estimate derivation", () => {
   it("is deterministic and yields positive integer VND amounts", () => {
@@ -50,12 +60,9 @@ describe("Property 7: Fare estimate derivation", () => {
         fc.double({ min: 0, max: 1, noNaN: true }),
         (pLat, pLng, dLat, dLng, s1, s2) => {
           const [near, far] = s1 <= s2 ? [s1, s2] : [s2, s1];
-          const at = (t: number) => ({
-            pickupLat: pLat,
-            pickupLng: pLng,
-            destinationLat: pLat + dLat * t,
-            destinationLng: pLng + dLng * t,
-          });
+          const pickup: Place = { address: "pickup", lat: pLat, lng: pLng };
+          const at = (t: number) =>
+            fromPlaces(pickup, { address: "destination", lat: pLat + dLat * t, lng: pLng + dLng * t });
           for (const vt of ["MOTORBIKE", "CAR"] as const) {
             expect(estimateFare(at(far), vt).amount).toBeGreaterThanOrEqual(estimateFare(at(near), vt).amount);
           }

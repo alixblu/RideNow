@@ -10,7 +10,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { LayoutDashboard, Menu, Route as RouteIcon, X } from "lucide-react";
 import { Car, CreditCard, Users } from "lucide-react";
 import { SIGN_IN_PATH } from "../../identity/guard";
-import { mockProfiles } from "../../identity/mockProfiles";
+import { mockProfiles } from "../../domain/seed/people";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 import { Avatar, Button, cn } from "../../shared/ui";
 

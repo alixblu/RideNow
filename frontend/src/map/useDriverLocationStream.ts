@@ -45,7 +45,7 @@ export interface UseDriverLocationStreamOptions {
 
 const CLOSED = 2;
 
-export type StreamState = "idle" | "connecting" | "open" | "ended";
+export type StreamState = "idle" | "connecting" | "open" | "reconnecting" | "ended";
 
 export function isTracking(status: TripStatus): boolean {
   return TRACKING_STATUSES.includes(status);
@@ -91,11 +91,13 @@ export function useDriverLocationStream(
       const es = create(opts.current.streamUrl(tripId, passengerId));
       source = es;
       es.addEventListener("open", () => {
-        if (!cancelled) setState("open");
+        // After a drop, stay "reconnecting" until a location event arrives (Req 7.4).
+        if (!cancelled) setState((prev) => (prev === "reconnecting" ? prev : "open"));
       });
       es.addEventListener("location", (event) => {
         try {
           opts.current.onPoint(JSON.parse(event.data) as LocationPoint);
+          if (!cancelled) setState("open");
         } catch {
           // ignore a malformed event
         }
@@ -113,6 +115,9 @@ export function useDriverLocationStream(
           es.close();
           setState("ended");
           opts.current.onEnded?.();
+        } else if (!cancelled) {
+          // Dropped connection: the browser retries by itself.
+          setState("reconnecting");
         }
       };
     })();

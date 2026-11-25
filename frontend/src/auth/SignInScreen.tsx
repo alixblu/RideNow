@@ -1,64 +1,91 @@
 /**
- * SignInScreen — brand mark, phone input, Continue. A valid phone navigates to
- * `/role` with `state: { phone }`; an invalid one shows an inline aria-live message
- * and stays on the page (Req 2.2, 2.3, 2.4).
+ * SignInScreen — email-and-password login (Req 3.2, 3.5-3.8, 3.12).
  */
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { homeRouteFor } from "../identity/guard";
+import { useCurrentIdentity } from "../identity/useCurrentIdentity";
 import { Button, Field, Input } from "../shared/ui";
-import { validatePhone } from "./phone";
+import { login, roleForAccountType } from "./authApi";
+import { toAuthFailure, type AuthFailure } from "./authError";
+import { AuthLayout } from "./AuthLayout";
+import { PasswordField } from "./PasswordField";
+import { validateEmail, validatePassword, type AuthField } from "./validate";
 
 export function SignInScreen() {
+  const { signIn } = useCurrentIdentity();
   const navigate = useNavigate();
-  const [phone, setPhone] = useState("");
-  const [error, setError] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState<Partial<Record<AuthField, string>>>({});
+  const [failure, setFailure] = useState<AuthFailure | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    const result = validatePhone(phone);
-    if (!result.ok) {
-      setError(result.message);
-      return;
+  const submit = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (submitting) return;
+    const found = [validateEmail(email), validatePassword(password)];
+    const next: Partial<Record<AuthField, string>> = {};
+    for (const e of found) if (e) next[e.field] = e.message;
+    setErrors(next);
+    setFailure(null);
+    if (Object.keys(next).length > 0) return;
+
+    setSubmitting(true);
+    try {
+      const user = await login({ email: email.trim(), password });
+      const identity = { role: roleForAccountType(user.accountType), id: user.id };
+      signIn(identity);
+      navigate(homeRouteFor(identity), { replace: true });
+    } catch (error) {
+      setFailure(toAuthFailure(error));
+      setSubmitting(false);
     }
-    setError("");
-    navigate("/role", { state: { phone: result.digits } });
-  }
+  };
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col justify-center gap-8 px-6 py-10">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <span
-          aria-hidden="true"
-          className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent text-3xl font-extrabold text-accent-fg"
-        >
-          R
-        </span>
-        <h1 className="text-3xl font-extrabold text-content">RideNow</h1>
-        <p className="text-content-muted">Sign in with your phone number to get moving.</p>
-      </div>
-      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4" data-touch>
-        <Field htmlFor="phone" label="Phone number">
+    <AuthLayout title="Sign in to your account">
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <Field htmlFor="signin-email" label="Email" error={errors.email}>
           <Input
-            id="phone"
-            name="phone"
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="0901 234 567"
-            value={phone}
-            invalid={error !== ""}
-            aria-describedby="phone-error"
-            onChange={(e) => setPhone(e.target.value)}
+            id="signin-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            invalid={Boolean(errors.email)}
+            autoComplete="email"
+            disabled={submitting}
           />
-          <span id="phone-error" aria-live="polite" className="min-h-4 text-xs text-danger">
-            {error}
-          </span>
         </Field>
-        <Button type="submit" size="lg" block>
-          Continue
+        <PasswordField
+          id="signin-password"
+          value={password}
+          onChange={setPassword}
+          error={errors.password}
+          autoComplete="current-password"
+          disabled={submitting}
+        />
+        {failure ? (
+          <div role="alert" className="flex flex-col gap-2 text-sm text-danger">
+            <p>{failure.message}</p>
+            {failure.unavailable ? (
+              <Button variant="secondary" onClick={() => void submit()} disabled={submitting}>
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        <Button type="submit" size="lg" block loading={submitting}>
+          Sign in
         </Button>
       </form>
-    </main>
+      <p className="text-center text-sm text-content-muted">
+        New to RideNow?{" "}
+        <Link to="/sign-up" className="inline-flex min-h-11 items-center font-semibold text-accent underline">
+          Create an account
+        </Link>
+      </p>
+    </AuthLayout>
   );
 }

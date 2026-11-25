@@ -196,6 +196,10 @@ Pods that need AWS permissions (the ALB controller in guide 06; External Secrets
 and the SNS/SQS access in the later ops) use **IRSA**, which requires an
 OIDC identity provider associated with the cluster.
 
+> **Console path only.** If you deploy with CloudFormation (`00-deploy-runbook.md`),
+> skip this part: stack 07 creates the provider. Adding it here as well makes stack
+> 07 fail with `EntityAlreadyExists`, because IAM allows one provider per URL.
+
 1. EKS -> `ridenow` cluster -> **Overview** -> copy the **OpenID Connect provider
    URL**.
 2. IAM -> **Identity providers** -> **Add provider** -> **OpenID Connect**.

@@ -1,16 +1,15 @@
 /**
  * DriverLayout — the Driver_App's own layout (Req 5.1, 5.9): a centered phone column
- * with the routed screen above a bottom nav (Drive, Earnings, Account).
+ * with the routed screen above a bottom nav (Drive, Account).
  */
 import { Outlet } from "react-router-dom";
-import { Car, User, Wallet } from "lucide-react";
+import { Car, User } from "lucide-react";
 import { BottomNav } from "../../shared/layout/BottomNav";
 import type { BottomNavItem } from "../../shared/layout/BottomNav";
 import { PhoneColumn } from "../../shared/layout/PhoneColumn";
 
 export const DRIVER_NAV_ITEMS: BottomNavItem[] = [
   { to: "/driver", label: "Drive", icon: <Car className="h-5 w-5" />, end: true },
-  { to: "/driver/earnings", label: "Earnings", icon: <Wallet className="h-5 w-5" /> },
   { to: "/driver/account", label: "Account", icon: <User className="h-5 w-5" /> },
 ];
 

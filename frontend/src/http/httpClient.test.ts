@@ -36,7 +36,7 @@ const CLIENTS: Record<DomainKey, DomainClientMode> = {
 };
 
 // Gateway mode so resolveUrl always succeeds for the documented test path.
-const CONFIG: AppConfig = { apiBaseUrl: "http://gw.test", clients: CLIENTS, osrmUrl: null };
+const CONFIG: AppConfig = { apiBaseUrl: "http://gw.test", clients: CLIENTS, osrmUrl: null, geocoderUrl: null, simSpeedKmh: 30 };
 const PATH = "/api/drivers/123";
 
 // Status -> expected ApiError code mapping the client guarantees.

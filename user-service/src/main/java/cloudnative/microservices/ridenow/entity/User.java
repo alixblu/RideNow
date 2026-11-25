@@ -20,7 +20,7 @@ public class User {
     @Id
     private UUID id;
 
-    @Column(name = "cognito_sub", nullable = false, unique = true)
+    @Column(name = "cognito_sub", unique = true)
     private String cognitoSub;
 
     @Column(nullable = false, unique = true)
@@ -39,6 +39,14 @@ public class User {
     @Column(nullable = false)
     private UserStatus status;
 
+    /** BCrypt hash; null for accounts created without a password. Never exposed in responses. */
+    @Column(name = "password_hash")
+    private String passwordHash;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_type", nullable = false)
+    private AccountType accountType;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -54,6 +62,20 @@ public class User {
         this.phone = phone;
         this.fullName = fullName;
         this.avatarUrl = avatarUrl;
+        this.status = UserStatus.ACTIVE;
+        this.accountType = AccountType.RIDER;
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    /** Creates a new active password account; it has no Cognito identity. */
+    public User(UUID id, String email, String fullName, String passwordHash,
+                AccountType accountType, Instant now) {
+        this.id = id;
+        this.email = email;
+        this.fullName = fullName;
+        this.passwordHash = passwordHash;
+        this.accountType = accountType;
         this.status = UserStatus.ACTIVE;
         this.createdAt = now;
         this.updatedAt = now;

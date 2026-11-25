@@ -11,41 +11,43 @@ import { useEffect } from "react";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FareEstimate, HistoryEntry } from "../../domain/trip/contract";
+import type { FareEstimate } from "../../domain/trip/contract";
 import type { TripResponse } from "../../domain/trip";
 import type { TripStatus } from "../../shared/enums";
 
-const { estimateFares, requestTrip, getTrip, cancelTrip, rateTrip, listTripHistory, getDriverRating } =
+const { estimateFares, requestTrip, getTrip, cancelTrip, listTrips, search } =
   vi.hoisted(() => ({
     estimateFares: vi.fn(),
     requestTrip: vi.fn(),
     getTrip: vi.fn(),
     cancelTrip: vi.fn(),
-    rateTrip: vi.fn(),
-    listTripHistory: vi.fn(),
-    getDriverRating: vi.fn(),
+    listTrips: vi.fn(),
+    search: vi.fn(),
   }));
 
 vi.mock("../../domain/trip", () => ({
-  resolveTripClient: () => ({ estimateFares, requestTrip, getTrip, cancelTrip, rateTrip, listTripHistory }),
+  resolveTripClient: () => ({ estimateFares, requestTrip, getTrip, cancelTrip, listTrips }),
 }));
-vi.mock("../../domain/driver", () => ({
-  resolveDriverClient: () => ({ getDriverRating }),
+vi.mock("../../config/appConfig", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/appConfig")>();
+  return { ...actual, appConfig: { ...actual.appConfig, geocoderUrl: "http://geocoder.test" } };
+});
+vi.mock("../../geocoding/nominatimGeocoder", () => ({
+  createNominatimGeocoder: () => ({ search, reverse: vi.fn() }),
 }));
 vi.mock("../../map/MapCanvas", () => ({
   MapCanvas: () => <div data-testid="map-stub" />,
 }));
 
 import { RiderApp } from "./RiderApp";
-import { PRESET_LOCATIONS } from "../../domain/seed/places";
 import { SessionIdentityProvider } from "../../identity/SessionIdentityProvider";
-import { mockProfiles } from "../../identity/mockProfiles";
+import { mockProfiles } from "../../domain/seed/people";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 
 const RIDER = mockProfiles.rider[0]!;
 const DRIVER = mockProfiles.driver[0]!;
-const PICKUP = PRESET_LOCATIONS[0]!;
-const DEST = PRESET_LOCATIONS[1]!;
+const PICKUP = { address: "Ben Thanh Market", lat: 10.7725, lng: 106.698 };
+const DEST = { address: "Notre-Dame Cathedral", lat: 10.7797, lng: 106.699 };
 
 const ESTIMATES: FareEstimate[] = [
   { vehicleType: "MOTORBIKE", amount: 25000, currency: "VND", distanceKm: 3.2, durationMin: 9 },
@@ -61,10 +63,10 @@ function makeTrip(overrides: Partial<TripResponse> = {}): TripResponse {
     rideType: "MOTORBIKE",
     pickupLat: PICKUP.lat,
     pickupLng: PICKUP.lng,
-    pickupAddress: PICKUP.label,
+    pickupAddress: PICKUP.address,
     destinationLat: DEST.lat,
     destinationLng: DEST.lng,
-    destinationAddress: DEST.label,
+    destinationAddress: DEST.address,
     status: "SEARCHING",
     estimatedFare: 25000,
     finalFare: null,
@@ -79,17 +81,6 @@ function makeTrip(overrides: Partial<TripResponse> = {}): TripResponse {
     createdAt: "2025-01-01T00:00:00.000Z",
     updatedAt: "2025-01-01T00:00:00.000Z",
     ...overrides,
-  };
-}
-
-function makeEntry(id: string, requestedAt: string, counterpartName: string): HistoryEntry {
-  return {
-    trip: makeTrip({ id, requestedAt, status: "COMPLETED", finalFare: 30000 }),
-    counterpartName,
-    counterpartRating: 4.8,
-    vehicleLabel: null,
-    paymentStatus: "PAID",
-    rating: null,
   };
 }
 
@@ -119,9 +110,17 @@ function renderRider(path = "/rider") {
   );
 }
 
+/** Type an address in the labelled field and choose the first suggestion. */
+async function pickPlace(label: string, place: { address: string; lat: number; lng: number }) {
+  search.mockResolvedValueOnce([place]);
+  fireEvent.change(await screen.findByLabelText(label), { target: { value: place.address } });
+  fireEvent.mouseDown(await screen.findByRole("option", { name: place.address }, { timeout: 3000 }));
+}
+
 /** Pick pickup/destination and press confirm. */
 async function bookRide() {
-  fireEvent.change(await screen.findByLabelText("Where to?"), { target: { value: DEST.id } });
+  await pickPlace("Pickup", PICKUP);
+  await pickPlace("Where to?", DEST);
   await screen.findByRole("list", { name: "Fare quotes" });
   fireEvent.click(screen.getByRole("button", { name: "Confirm Motorbike" }));
 }
@@ -129,8 +128,7 @@ async function bookRide() {
 beforeEach(() => {
   localStorage.clear();
   estimateFares.mockResolvedValue(ESTIMATES);
-  getDriverRating.mockResolvedValue({ average: 4.9, count: 10 });
-  listTripHistory.mockResolvedValue([]);
+  listTrips.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 });
 });
 
 afterEach(() => {
@@ -144,7 +142,8 @@ describe("Rider HomeScreen booking flow", () => {
     getTrip.mockResolvedValue(makeTrip({ status: "SEARCHING" }));
     renderRider();
 
-    fireEvent.change(await screen.findByLabelText("Where to?"), { target: { value: DEST.id } });
+    await pickPlace("Pickup", PICKUP);
+    await pickPlace("Where to?", DEST);
     const quotes = await screen.findByRole("list", { name: "Fare quotes" });
     expect(within(quotes).getAllByRole("listitem")).toHaveLength(2);
     expect(quotes.textContent).toContain("Motorbike");
@@ -153,8 +152,15 @@ describe("Rider HomeScreen booking flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm Motorbike" }));
 
     expect(await screen.findByText(/searching for a nearby driver/i)).toBeInTheDocument();
+    expect(quotes.textContent).toContain("Estimated fare");
     expect(requestTrip).toHaveBeenCalledWith(
-      expect.objectContaining({ passengerId: RIDER.userId, rideType: "MOTORBIKE", paymentMethod: "CASH" }),
+      expect.objectContaining({
+        passengerId: RIDER.userId,
+        rideType: "MOTORBIKE",
+        paymentMethod: "CASH",
+        pickupAddress: PICKUP.address,
+        destinationAddress: DEST.address,
+      }),
     );
   });
 
@@ -192,36 +198,59 @@ describe("Rider HomeScreen booking flow", () => {
     await bookRide();
 
     fireEvent.click(await screen.findByRole("button", { name: "Cancel ride" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, cancel" }));
 
     expect(await screen.findByText("Your ride was cancelled.")).toBeInTheDocument();
     expect(cancelTrip).toHaveBeenCalledWith("trip-1");
   });
 
-  it("completion shows the summary and submits a 1 to 5 star rating (Req 4.7)", async () => {
+  it("completion shows the summary without a star rating (Req 8.8)", async () => {
     const done = makeTrip({ status: "COMPLETED", driverId: DRIVER.userId, finalFare: 27000 });
     requestTrip.mockResolvedValue(done);
     getTrip.mockResolvedValue(done);
-    rateTrip.mockResolvedValue(undefined);
     renderRider();
     await bookRide();
 
-    const group = await screen.findByRole("group", { name: "Rate your ride" });
-    expect(within(group).getAllByRole("button")).toHaveLength(5);
+    expect(await screen.findByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Rate your ride" })).toBeNull();
+  });
 
-    fireEvent.click(within(group).getByRole("button", { name: "4 stars" }));
+  it("disables Confirm and explains when pickup and destination are under 100 m apart (Req 6.2)", async () => {
+    renderRider();
+    await pickPlace("Pickup", PICKUP);
+    await pickPlace("Where to?", { address: "Next door", lat: PICKUP.lat + 0.0003, lng: PICKUP.lng });
+    expect(await screen.findByText(/too close/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Motorbike" })).toBeDisabled();
+  });
 
-    await waitFor(() => expect(rateTrip).toHaveBeenCalledWith("trip-1", 4));
-    expect(await screen.findByText("Thanks for rating.")).toBeInTheDocument();
+  it("keeps the places and shows the backend error when the request fails (Req 6.6)", async () => {
+    requestTrip.mockRejectedValue(new Error("boom"));
+    renderRider();
+    await bookRide();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pickup")).toHaveValue(PICKUP.address);
+    expect(screen.getByLabelText("Where to?")).toHaveValue(DEST.address);
+  });
+
+  it("resumes an in-progress trip on mount (Req 6.10)", async () => {
+    const active = makeTrip({ status: "DRIVER_ASSIGNED", driverId: DRIVER.userId });
+    listTrips.mockResolvedValue({ items: [makeTrip({ id: "old", status: "COMPLETED" }), active], total: 2, limit: 20, offset: 0 });
+    getTrip.mockResolvedValue(active);
+    renderRider();
+    expect(await screen.findByLabelText("Driver")).toBeInTheDocument();
+    expect(getTrip).toHaveBeenCalledWith("trip-1");
   });
 });
 
 describe("Rider ActivityScreen", () => {
-  it("lists trips newest first (Req 4.8)", async () => {
-    listTripHistory.mockResolvedValue([
-      makeEntry("old", "2025-01-01T08:00:00.000Z", "Oldest Driver"),
-      makeEntry("new", "2025-03-01T08:00:00.000Z", "Newest Driver"),
-      makeEntry("mid", "2025-02-01T08:00:00.000Z", "Middle Driver"),
-    ]);
+  it("lists trips newest first (Req 8.2)", async () => {
+    const t = (id: string, requestedAt: string) => makeTrip({ id, requestedAt, status: "COMPLETED", finalFare: 30000 });
+    listTrips.mockResolvedValue({
+      items: [t("old", "2025-01-01T08:00:00.000Z"), t("new", "2025-03-01T08:00:00.000Z"), t("mid", "2025-02-01T08:00:00.000Z")],
+      total: 3,
+      limit: 20,
+      offset: 0,
+    });
     renderRider("/rider/activity");
 
     const list = await screen.findByRole("list", { name: "Trip history" });
@@ -229,6 +258,34 @@ describe("Rider ActivityScreen", () => {
       .getAllByRole("link")
       .map((a) => a.getAttribute("href"));
     expect(hrefs).toEqual(["/rider/activity/new", "/rider/activity/mid", "/rider/activity/old"]);
+  });
+
+  it("requests 20 trips for the signed-in rider and shows coordinates when an address is missing (Req 8.1, 8.3)", async () => {
+    listTrips.mockResolvedValue({
+      items: [makeTrip({ id: "x", pickupAddress: null, pickupLat: 10.123456, pickupLng: 106.1, status: "COMPLETED" })],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    renderRider("/rider/activity");
+    expect(await screen.findByText(/10\.1235, 106\.1000/)).toBeInTheDocument();
+    expect(listTrips).toHaveBeenCalledWith({ passengerId: RIDER.userId, limit: 20, offset: 0 });
+  });
+
+  it("loads the next page when more trips exist (Req 8.5)", async () => {
+    const page = (id: string, offset: number) => ({ items: [makeTrip({ id })], total: 2, limit: 20, offset });
+    listTrips.mockResolvedValueOnce(page("a", 0)).mockResolvedValueOnce(page("b", 1));
+    renderRider("/rider/activity");
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(listTrips).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 1 })));
+    expect(await screen.findAllByRole("link", { name: /→/ })).toHaveLength(2);
+  });
+
+  it("shows an error with retry when loading fails (Req 8.7)", async () => {
+    listTrips.mockRejectedValueOnce(new Error("boom"));
+    renderRider("/rider/activity");
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/no rides yet/i)).toBeInTheDocument();
   });
 
   it("shows an empty state with a link to book a ride", async () => {

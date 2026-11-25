@@ -13,26 +13,33 @@ import { resolveDriverClient } from "../../domain/driver";
 import type { DriverServiceClient } from "../../domain/driver";
 import { resolveTripClient } from "../../domain/trip";
 import type { TripResponse, TripServiceClientExt } from "../../domain/trip/contract";
-import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 import { MapCanvas } from "../../map/MapCanvas";
 import { createRoadSnapper } from "../../map/roadSnapper";
 import type { LatLng, RoadSnapper } from "../../map/roadSnapper";
+import { ApiError } from "../../http/ApiError";
+import { driverNextAction } from "./nextAction";
+import type { DriverAction } from "./nextAction";
 import { friendlyError } from "../../shared/errors";
 import { formatDistance, formatVnd } from "../../shared/format";
 import { Badge, BottomSheet, Button, Skeleton, cn, useToast } from "../../shared/ui";
 import { tripView } from "../rider/tripView";
 import { densify, useLocationSender } from "./useLocationSender";
 import type { LocationSource } from "./useLocationSender";
+import { useDriver } from "./DriverContext";
 import { useOnlineToggle } from "./useOnlineToggle";
+import { SimulationControl } from "./simulation/SimulationControl";
+import { selectLocationSource } from "./simulation/locationSource";
+import { hasAssignedTrip, useSimulator } from "./simulation/useSimulator";
+
+export { selectLocationSource };
 
 /** Where a simulated drive starts when there is no trip yet (near Ben Thanh Market). */
 const START: LatLng = { lat: 10.7745, lng: 106.6955 };
 
-const ACTION_LABEL = {
-  arrive: "Arrived at pickup",
-  start: "Start trip",
-  complete: "Complete trip",
-} as const;
+/** Offer list refresh period (Req 10.4). */
+const OFFER_POLL_MS = 5000;
+/** Location post period (Req 10.8). */
+const LOCATION_POST_MS = 3000;
 
 interface DriveScreenProps {
   client?: DriverServiceClient;
@@ -50,7 +57,7 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
   const driverClient = useMemo(() => client ?? resolveDriverClient(appConfig), [client]);
   const trips = useMemo(() => tripClient ?? resolveTripClient(appConfig), [tripClient]);
   const roads = useMemo(() => snapper ?? createRoadSnapper(appConfig.osrmUrl), [snapper]);
-  const driverId = useCurrentIdentity().current("driver")?.id ?? "";
+  const driverId = useDriver().id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -72,32 +79,25 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
   });
   const trip = tripId !== null ? (tripQuery.data ?? null) : null;
   const view = trip ? tripView(trip.status) : null;
+  const next = trip ? driverNextAction(trip.status) : null;
 
   const offersQuery = useQuery({
     queryKey: ["drive-offers"],
     enabled: online && tripId === null,
     queryFn: () => trips.listTrips({ status: "SEARCHING" }),
-    refetchInterval: 4000,
+    refetchInterval: OFFER_POLL_MS,
   });
-  const offer: TripResponse | null =
-    tripId === null && online
-      ? ((offersQuery.data?.items ?? []).find((t) => !declined.has(t.id)) ?? null)
-      : null;
+  const offers: TripResponse[] =
+    tripId === null && online ? (offersQuery.data?.items ?? []).filter((t) => !declined.has(t.id)) : [];
+  const offer: TripResponse | null = offers[0] ?? null;
 
-  const fareQuery = useQuery({
-    queryKey: ["drive-offer-fare", offer?.id],
-    enabled: offer !== null,
-    queryFn: async () => {
-      const o = offer!;
-      const fares = await trips.estimateFares({
-        pickupLat: o.pickupLat,
-        pickupLng: o.pickupLng,
-        destinationLat: o.destinationLat,
-        destinationLng: o.destinationLng,
-      });
-      return fares.find((f) => f.vehicleType === o.rideType) ?? null;
-    },
-  });
+  // Req 10.10: a finished or cancelled trip returns the driver to the offer list.
+  useEffect(() => {
+    if (trip && (trip.status === "COMPLETED" || trip.status === "CANCELLED")) {
+      setTripId(null);
+      void queryClient.invalidateQueries({ queryKey: ["drive-offers"] });
+    }
+  }, [trip, queryClient]);
 
   // The simulated drive follows the trip: to the pickup, wait, then to the destination.
   const status = trip?.status ?? null;
@@ -128,14 +128,31 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trip?.id, status, roads]);
 
+  const assigned = hasAssignedTrip(trip?.status);
+  const simulator = useSimulator({
+    driverClient,
+    driverId,
+    tripStatus: trip?.status ?? null,
+    pickup: trip ? { lat: trip.pickupLat, lng: trip.pickupLng } : null,
+    destination: trip ? { lat: trip.destinationLat, lng: trip.destinationLng } : null,
+    lastKnownPosition: lastSent.current,
+    snapper: roads,
+    speedKmh: appConfig.simSpeedKmh,
+  });
+  const simulating = simulator.running || simulator.paused;
+  // Requirement 11.6: simulate while running/paused, otherwise GPS (or the denied fallback).
+  const locationSource: LocationSource = simulating ? selectLocationSource(simulator.state.state) : source;
+
   useLocationSender({
     online,
-    source,
+    source: locationSource,
     route,
-    intervalMs,
+    intervalMs: intervalMs ?? LOCATION_POST_MS,
     geolocation,
     onDenied: () => setSource("simulate"),
     send: (point) => {
+      // While simulating, the Simulator posts its own path; don't double-post.
+      if (simulating) return;
       lastSent.current = point;
       void driverClient.updateLocation(driverId, point.lat, point.lng).catch(() => {
         // Loss-tolerant: the next position replaces this one.
@@ -150,14 +167,19 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
       setTripId(accepted.id);
       void queryClient.invalidateQueries({ queryKey: ["drive-offers"] });
     },
-    onError: (error) => {
-      toast(friendlyError(error), "error");
+    onError: (error, id) => {
+      if (error instanceof ApiError && error.code === "CONFLICT") {
+        toast("Another driver took this trip.", "error");
+        setDeclined((prev) => new Set(prev).add(id));
+      } else {
+        toast(friendlyError(error), "error");
+      }
       void queryClient.invalidateQueries({ queryKey: ["drive-offers"] });
     },
   });
 
   const actionMutation = useMutation({
-    mutationFn: (action: "arrive" | "start" | "complete") =>
+    mutationFn: (action: DriverAction) =>
       action === "arrive"
         ? trips.arriveTrip(tripId!)
         : action === "start"
@@ -217,53 +239,31 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
               <Badge status={trip.status} />
             </div>
             <Route trip={trip} />
-            {view.driverNextAction ? (
+            {assigned ? <SimulationControl simulator={simulator} hasAssignedTrip={assigned} /> : null}
+            {next ? (
               <Button
                 size="lg"
                 block
                 loading={actionMutation.isPending}
-                onClick={() => actionMutation.mutate(view.driverNextAction!)}
+                onClick={() => actionMutation.mutate(next.action)}
               >
-                {ACTION_LABEL[view.driverNextAction]}
+                {next.label}
               </Button>
-            ) : (
-              <Button size="lg" block variant="secondary" onClick={() => setTripId(null)}>
-                Done
-              </Button>
-            )}
+            ) : null}
           </div>
-        ) : offer ? (
-          <div className="flex flex-col gap-3" aria-label="Trip offer">
-            <h2 className="text-lg font-semibold">New trip offer</h2>
-            <Route trip={offer} />
-            {fareQuery.isPending ? (
-              <Skeleton className="h-12 w-full" />
-            ) : fareQuery.data ? (
-              <dl className="grid grid-cols-2 gap-3">
-                <div>
-                  <dt className="text-xs text-content-muted">Estimated fare</dt>
-                  <dd className="text-xl font-bold">{formatVnd(fareQuery.data.amount)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-content-muted">Distance</dt>
-                  <dd className="text-xl font-bold">{formatDistance(fareQuery.data.distanceKm)}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="text-sm text-content-muted">Fare estimate unavailable.</p>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                size="lg"
-                variant="secondary"
-                onClick={() => setDeclined((prev) => new Set(prev).add(offer.id))}
-              >
-                Decline
-              </Button>
-              <Button size="lg" loading={acceptMutation.isPending} onClick={() => acceptMutation.mutate(offer.id)}>
-                Accept
-              </Button>
-            </div>
+        ) : offers.length > 0 ? (
+          <div className="flex flex-col gap-4">
+            <h2 className="text-lg font-semibold">Trip offers</h2>
+            {offers.map((o) => (
+              <OfferCard
+                key={o.id}
+                offer={o}
+                trips={trips}
+                accepting={acceptMutation.isPending && acceptMutation.variables === o.id}
+                onAccept={() => acceptMutation.mutate(o.id)}
+                onDecline={() => setDeclined((prev) => new Set(prev).add(o.id))}
+              />
+            ))}
           </div>
         ) : (
           <div className="flex flex-col gap-1 py-2">
@@ -274,6 +274,58 @@ export function DriveScreen({ client, tripClient, snapper, geolocation, interval
           </div>
         )}
       </BottomSheet>
+    </div>
+  );
+}
+
+interface OfferCardProps {
+  offer: TripResponse;
+  trips: TripServiceClientExt;
+  accepting: boolean;
+  onAccept: () => void;
+  onDecline: () => void;
+}
+
+function OfferCard({ offer, trips, accepting, onAccept, onDecline }: OfferCardProps) {
+  const fareQuery = useQuery({
+    queryKey: ["drive-offer-fare", offer.id],
+    queryFn: async () => {
+      const fares = await trips.estimateFares({
+        pickupLat: offer.pickupLat,
+        pickupLng: offer.pickupLng,
+        destinationLat: offer.destinationLat,
+        destinationLng: offer.destinationLng,
+      });
+      return fares.find((f) => f.vehicleType === offer.rideType) ?? null;
+    },
+  });
+  return (
+    <div className="flex flex-col gap-3" aria-label="Trip offer">
+      <Route trip={offer} />
+      {fareQuery.isPending ? (
+        <Skeleton className="h-12 w-full" />
+      ) : fareQuery.data ? (
+        <dl className="grid grid-cols-2 gap-3">
+          <div>
+            <dt className="text-xs text-content-muted">Estimated fare</dt>
+            <dd className="text-xl font-bold">{formatVnd(fareQuery.data.amount)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-content-muted">Distance</dt>
+            <dd className="text-xl font-bold">{formatDistance(fareQuery.data.distanceKm)}</dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="text-sm text-content-muted">Fare estimate unavailable.</p>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <Button size="lg" variant="secondary" onClick={onDecline}>
+          Decline
+        </Button>
+        <Button size="lg" loading={accepting} onClick={onAccept}>
+          Accept
+        </Button>
+      </div>
     </div>
   );
 }

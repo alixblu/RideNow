@@ -17,10 +17,10 @@ import type { TripResponse } from "../domain/trip";
 import { resolveUrl } from "../http/resolveUrl";
 import { createRoadSnapper } from "./roadSnapper";
 import type { LatLng } from "./roadSnapper";
-import { createSmoothMarker } from "./smoothMarker";
+import { createGlideMarker } from "./smoothMarker";
 import type { SmoothMarker } from "./smoothMarker";
 import { useDriverLocationStream } from "./useDriverLocationStream";
-import type { LocationPoint } from "./useDriverLocationStream";
+import type { LocationPoint, StreamState } from "./useDriverLocationStream";
 
 const OSM_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -53,6 +53,8 @@ interface TripMapProps {
   trip?: TripResponse | null;
   /** The stream ended (trip-ended or refused): refetch the trip. */
   onStreamEnded?: (() => void) | undefined;
+  /** Reports the live-stream connection state. */
+  onStreamState?: ((state: StreamState) => void) | undefined;
   className?: string;
   /** Fill the positioned parent (`absolute inset-0`) with no rounding, for use behind a bottom sheet. */
   fullBleed?: boolean;
@@ -70,6 +72,7 @@ export function TripMap({
   destination,
   trip = null,
   onStreamEnded,
+  onStreamState,
   className,
   fullBleed = false,
   bottomInset = 0,
@@ -93,7 +96,7 @@ export function TripMap({
         <Marker position={[pickup.lat, pickup.lng]} icon={PICKUP_ICON} title="Pickup" />
         <Marker position={[destination.lat, destination.lng]} icon={DESTINATION_ICON} title="Destination" />
         <FitBounds pickup={pickup} destination={destination} bottomInset={bottomInset} />
-        {trip ? <DriverCar trip={trip} onStreamEnded={onStreamEnded} /> : null}
+        {trip ? <DriverCar trip={trip} onStreamEnded={onStreamEnded} onStreamState={onStreamState} /> : null}
         {children}
       </MapContainer>
     </div>
@@ -120,7 +123,15 @@ export function FitBounds({
   return null;
 }
 
-export function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStreamEnded?: (() => void) | undefined }) {
+export function DriverCar({
+  trip,
+  onStreamEnded,
+  onStreamState,
+}: {
+  trip: TripResponse;
+  onStreamEnded?: (() => void) | undefined;
+  onStreamState?: ((state: StreamState) => void) | undefined;
+}) {
   const map = useMap();
   const smooth = useRef<SmoothMarker | null>(null);
   const raw = useRef<LatLng[]>([]);
@@ -131,7 +142,7 @@ export function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStrea
   useEffect(() => {
     const car = L.marker(map.getCenter(), { icon: CAR_ICON, title: "Driver", keyboard: false });
     let added = false;
-    smooth.current = createSmoothMarker({
+    smooth.current = createGlideMarker({
       setPosition(lat, lng, heading, stale) {
         if (!added) {
           car.addTo(map);
@@ -160,7 +171,7 @@ export function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStrea
     };
   }, [map]);
 
-  useDriverLocationStream(trip, {
+  const streamState = useDriverLocationStream(trip, {
     streamUrl: (tripId, passengerId) =>
       resolveUrl(
         `/live/trips/${encodeURIComponent(tripId)}/location?userId=${encodeURIComponent(passengerId)}`,
@@ -177,6 +188,9 @@ export function DriverCar({ trip, onStreamEnded }: { trip: TripResponse; onStrea
     },
     onEnded: onStreamEnded,
   });
+  useEffect(() => {
+    onStreamState?.(streamState);
+  }, [streamState, onStreamState]);
 
   return trail.length >= 2 && appConfig.osrmUrl ? (
     <Polyline positions={trail.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ weight: 4, opacity: 0.6 }} />

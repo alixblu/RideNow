@@ -17,7 +17,7 @@ import { homeRouteFor } from "./identity/guard";
 import type { Identity } from "./identity/types";
 import { AppRoutes } from "./routes";
 
-const KNOWN_FIRST_SEGMENTS = new Set(["rider", "driver", "admin", "sign-in", "role"]);
+const KNOWN_FIRST_SEGMENTS = new Set(["rider", "driver", "admin", "sign-in", "sign-up", "role"]);
 
 const segment = fc.stringMatching(/^[a-zA-Z0-9_-]{1,24}$/);
 
@@ -61,6 +61,11 @@ describe("Feature: production-grade-frontend, Property 6: Not-found destination"
           </MemoryRouter>,
         );
 
+        if (session === null) {
+          // Req 3.1: without a Session every non-public path redirects to /sign-in.
+          expect(screen.getByText("Sign in to your account")).toBeInTheDocument();
+          return;
+        }
         const notFound = screen.getByRole("alert");
         expect(within(notFound).getByText(/page not found/i)).toBeInTheDocument();
         const links = within(notFound).getAllByRole("link");

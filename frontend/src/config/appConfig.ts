@@ -36,6 +36,24 @@ export interface AppConfig {
   clients: Record<DomainKey, DomainClientMode>;
   /** OSRM server for road snapping; null => off (raw points, straight-line simulation). */
   osrmUrl: string | null;
+  /** Nominatim-compatible geocoder base URL; null => address search is not configured. */
+  geocoderUrl: string | null;
+  /** Simulated driver speed in km/h (positive); defaults to 30. */
+  simSpeedKmh: number;
+}
+
+export const DEFAULT_SIM_SPEED_KMH = 30;
+
+function readOptionalUrl(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+function readSimSpeedKmh(raw: unknown): number {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return DEFAULT_SIM_SPEED_KMH;
+  }
+  const value = Number(raw.trim());
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_SIM_SPEED_KMH;
 }
 
 /** Default mode per domain: LIVE domains serve `live`, STUBBED serve `mock`. */
@@ -94,12 +112,12 @@ export function buildConfig(env: ImportMetaEnv): AppConfig {
   for (const domain of Object.keys(DEFAULT_MODES) as DomainKey[]) {
     clients[domain] = { mode: resolveDomainMode(env, domain) };
   }
-  const osrmRaw = env.VITE_OSRM_URL;
-  const osrmUrl = typeof osrmRaw === "string" && osrmRaw.trim().length > 0 ? osrmRaw.trim() : null;
   return {
     apiBaseUrl: readApiBaseUrl(env),
     clients,
-    osrmUrl,
+    osrmUrl: readOptionalUrl(env.VITE_OSRM_URL),
+    geocoderUrl: readOptionalUrl(env.VITE_GEOCODER_URL),
+    simSpeedKmh: readSimSpeedKmh(env.VITE_SIM_SPEED_KMH),
   };
 }
 

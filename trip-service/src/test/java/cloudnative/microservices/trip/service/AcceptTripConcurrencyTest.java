@@ -45,7 +45,7 @@ class AcceptTripConcurrencyTest {
                 UUID.randomUUID(), RideType.CAR,
                 new BigDecimal("10.762622"), new BigDecimal("106.660172"),
                 new BigDecimal("10.776889"), new BigDecimal("106.700806"),
-                PaymentMethod.CASH, null));
+                PaymentMethod.CASH, null, null, null));
 
         int driverCount = 50;
         ExecutorService pool = Executors.newFixedThreadPool(driverCount);

@@ -6,7 +6,7 @@
 # AWS access via IRSA (no static keys): the role is stack 07's
 # PaymentServiceRoleArn export.
 #
-# Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <ENV> <PAYMENT_DB_ENDPOINT>
+# Placeholders: <ACCOUNT_ID> <REGION> <IMAGE_TAG> <ENV> <PAYMENT_DB_ENDPOINT> <APP_ORIGIN>
 #               <PAYMENT_QUEUE_URL> <PAYMENT_SERVICE_ROLE_ARN>
 apiVersion: v1
 kind: ServiceAccount
@@ -63,6 +63,9 @@ spec:
               value: "<PAYMENT_QUEUE_URL>"
             - name: AWS_REGION
               value: "<REGION>"
+            # Browser origin(s) of the app allowed to call /api/**. Never "*" here.
+            - name: RIDENOW_CORS_ALLOWED_ORIGINS
+              value: "<APP_ORIGIN>"
           resources:
             requests:
               cpu: "250m"

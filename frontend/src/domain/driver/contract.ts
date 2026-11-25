@@ -71,6 +71,8 @@ export interface ListDriversParams {
   limit?: number;
   offset?: number;
   status?: DriverStatus;
+  /** Filter to the driver that belongs to this user (account) id. */
+  userId?: string;
 }
 
 // ---------------------------------------------------------------------------

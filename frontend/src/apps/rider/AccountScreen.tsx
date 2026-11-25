@@ -4,7 +4,7 @@
 import { CreditCard } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { SIGN_IN_PATH } from "../../identity/guard";
-import { mockProfiles } from "../../identity/mockProfiles";
+import { mockProfiles } from "../../domain/seed/people";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 import { Avatar, Button, Card, CardBody } from "../../shared/ui";
 

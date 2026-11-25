@@ -1,8 +1,10 @@
 package cloudnative.microservices.ridenow.exception;
 
+import tools.jackson.databind.exc.InvalidFormatException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,10 +37,25 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleValidation(
             MethodArgumentNotValidException exception, HttpServletRequest request) {
         String message = exception.getBindingResult().getFieldErrors().stream()
-                .findFirst()
                 .map(e -> e.getField() + ": " + e.getDefaultMessage())
-                .orElse("Validation failed");
+                .distinct()
+                .collect(Collectors.joining("; "));
+        if (message.isEmpty()) {
+            message = "Validation failed";
+        }
         return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    @ExceptionHandler(AuthenticationFailedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthenticationFailed(
+            AuthenticationFailedException exception, HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(AccountSuspendedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccountSuspended(
+            AccountSuspendedException exception, HttpServletRequest request) {
+        return build(HttpStatus.FORBIDDEN, exception.getMessage(), request);
     }
 
     // A path or query value of the wrong type (e.g. GET /api/users/not-a-uuid) is a client
@@ -78,6 +95,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleUnreadableBody(
             HttpMessageNotReadableException exception, HttpServletRequest request) {
+        // A bad enum/UUID value: name the field only (never the parser detail).
+        if (exception.getCause() instanceof InvalidFormatException invalid
+                && !invalid.getPath().isEmpty()
+                && invalid.getPath().get(invalid.getPath().size() - 1).getPropertyName() != null) {
+            String field = invalid.getPath().get(invalid.getPath().size() - 1).getPropertyName();
+            return build(HttpStatus.BAD_REQUEST, field + ": invalid value", request);
+        }
         return build(HttpStatus.BAD_REQUEST, "Malformed request body", request);
     }
     // Final catch-all: anything unexpected becomes a clean 500. The real cause is

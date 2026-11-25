@@ -57,7 +57,11 @@ export function createTripLiveClient(): TripServiceClientExt {
     rateTrip: (tripId, stars) => mock.rateTrip(tripId, stars),
     getEarnings: (driverId) => mock.getEarnings(driverId),
     requestTrip(req: CreateTripRequest): Promise<TripResponse> {
-      return httpRequest<TripResponse>(TRIPS_PATH, { method: "POST", body: req });
+      // The body carries the optional pickupAddress/destinationAddress when present.
+      const body: CreateTripRequest = { ...req };
+      if (req.pickupAddress === undefined) delete body.pickupAddress;
+      if (req.destinationAddress === undefined) delete body.destinationAddress;
+      return httpRequest<TripResponse>(TRIPS_PATH, { method: "POST", body });
     },
 
     getTrip(id: string): Promise<TripResponse> {

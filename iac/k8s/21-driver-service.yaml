@@ -63,6 +63,9 @@ spec:
             # this many entries: roughly 100-200 s at 50-100 drivers posting once a second.
             - name: RIDENOW_LOCATION_STREAM_MAX_LENGTH
               value: "10000"
+            # Browser origin(s) of the app allowed to call /api/**. Never "*" here.
+            - name: RIDENOW_CORS_ALLOWED_ORIGINS
+              value: "<APP_ORIGIN>"
           resources:
             requests:
               cpu: "250m"

@@ -259,6 +259,7 @@ iac/
   scripts/
     check-consistency.sh   # static checks: stacks, manifests, params and guides agree (no AWS calls)
     deploy.sh              # 01 -> 07, dry-run by default; --parallel runs independent stacks together (auto-resolves OIDC for 07)
+    deploy-and-test.sh     # whole runbook in one command: stacks, in-cluster setup, services, Ingress, API test
     alb-controller-policy.sh # attaches the versioned ALB controller IAM policy to stack 07's role (after the Helm install)
     cleanup-cluster.sh     # in-cluster + hand-created resources; run before teardown
     teardown.sh            # 07 -> 01, dry-run by default

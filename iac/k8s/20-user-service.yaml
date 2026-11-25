@@ -41,6 +41,9 @@ spec:
                 secretKeyRef:
                   name: user-db-credentials
                   key: password
+            # Browser origin(s) of the app allowed to call /api/**. Never "*" here.
+            - name: RIDENOW_CORS_ALLOWED_ORIGINS
+              value: "<APP_ORIGIN>"
           resources:
             requests:
               cpu: "250m"

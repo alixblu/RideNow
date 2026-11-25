@@ -69,6 +69,6 @@ public class UserService {
         return new UserResponse(
                 user.getId(), user.getCognitoSub(), user.getEmail(), user.getPhone(),
                 user.getFullName(), user.getAvatarUrl(), user.getStatus(),
-                user.getCreatedAt(), user.getUpdatedAt());
+                user.getAccountType(), user.getCreatedAt(), user.getUpdatedAt());
     }
 }

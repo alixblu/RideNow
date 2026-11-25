@@ -10,24 +10,34 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
-import type { DriverServiceClientExt } from "../../domain/driver/contract";
+import type { DriverResponse, DriverServiceClientExt } from "../../domain/driver/contract";
 import type { TripResponse, TripServiceClientExt } from "../../domain/trip/contract";
 import type { VehicleResponse } from "../../domain/vehicle/contract";
 import { SessionIdentityProvider } from "../../identity/SessionIdentityProvider";
 import { SESSION_KEY, saveSession } from "../../identity/sessionStore";
-import { mockProfiles } from "../../identity/mockProfiles";
+import { mockProfiles } from "../../domain/seed/people";
 import { NoopSnapper } from "../../map/roadSnapper";
 import { ToastProvider } from "../../shared/ui";
 import { formatVnd } from "../../shared/format";
 import { AccountScreen } from "./AccountScreen";
 import { DriveScreen } from "./DriveScreen";
+import { DriverContext } from "./DriverContext";
 import { DriverLayout } from "./DriverLayout";
-import { EarningsScreen } from "./EarningsScreen";
 
 vi.mock("../../map/MapCanvas", () => ({ MapCanvas: () => <div data-testid="map" /> }));
 
 const profile = mockProfiles.driver[0]!;
-const DRIVER_ID = profile.userId;
+const DRIVER_ID = "driver-1";
+const DRIVER: DriverResponse = {
+  id: DRIVER_ID,
+  userId: profile.userId,
+  licenseNumber: "LIC-123",
+  status: "ACTIVE",
+  averageRating: null,
+  totalTrips: 0,
+  createdAt: "2024-01-01T00:00:00.000Z",
+  updatedAt: "2024-01-01T00:00:00.000Z",
+};
 
 function makeTrip(overrides: Partial<TripResponse> = {}): TripResponse {
   return {
@@ -89,7 +99,9 @@ function renderApp(ui: ReactElement, path = "/") {
     <MemoryRouter initialEntries={[path]}>
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <SessionIdentityProvider>{ui}</SessionIdentityProvider>
+          <SessionIdentityProvider>
+            <DriverContext.Provider value={DRIVER}>{ui}</DriverContext.Provider>
+          </SessionIdentityProvider>
         </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -98,7 +110,7 @@ function renderApp(ui: ReactElement, path = "/") {
 
 beforeEach(() => {
   localStorage.clear();
-  saveSession(localStorage, { role: "driver", id: DRIVER_ID });
+  saveSession(localStorage, { role: "driver", id: DRIVER.userId });
 });
 
 afterEach(() => {
@@ -191,10 +203,9 @@ describe("DriveScreen", () => {
   });
 
   it.each([
-    ["DRIVER_ASSIGNED", "Arrived at pickup"],
+    ["DRIVER_ASSIGNED", "I have arrived"],
     ["DRIVER_ARRIVED", "Start trip"],
     ["IN_PROGRESS", "Complete trip"],
-    ["COMPLETED", "Done"],
   ] as const)("after accepting, status %s shows the single primary button '%s'", async (status, label) => {
     const accepted = makeTrip({ status, driverId: DRIVER_ID });
     const trips = tripStubs(makeTrip(), accepted);
@@ -208,98 +219,66 @@ describe("DriveScreen", () => {
     expect(trips.acceptTrip).toHaveBeenCalledWith("trip-1", DRIVER_ID);
     const sheet = screen.getByRole("heading", { name: "Current trip" }).closest("div")!.parentElement!;
     expect(await within(sheet).findByRole("button", { name: label })).toBeInTheDocument();
-    expect(within(sheet).getAllByRole("button")).toHaveLength(1);
-  });
-});
-
-describe("EarningsScreen", () => {
-  it("renders today and week totals and each completed trip with its fare", async () => {
-    const trips = {
-      getEarnings: vi.fn().mockResolvedValue({
-        todayTotal: 120000,
-        weekTotal: 560000,
-        trips: [
-          { tripId: "t1", completedAt: "2025-06-15T01:00:00.000Z", fare: 45000, route: "Ben Thanh to Landmark 81" },
-          { tripId: "t2", completedAt: "2025-06-14T01:00:00.000Z", fare: 75000, route: "Airport to District 1" },
-        ],
-      }),
-    } as unknown as TripServiceClientExt;
-    renderApp(<EarningsScreen tripClient={trips} />);
-
-    expect(await screen.findByTestId("earnings-today")).toHaveTextContent(formatVnd(120000));
-    expect(screen.getByTestId("earnings-week")).toHaveTextContent(formatVnd(560000));
-    expect(trips.getEarnings).toHaveBeenCalledWith(DRIVER_ID);
-
-    const items = within(screen.getByRole("region", { name: "Completed trips" })).getAllByRole("listitem");
-    expect(items).toHaveLength(2);
-    expect(within(items[0]!).getByText("Ben Thanh to Landmark 81")).toBeInTheDocument();
-    expect(within(items[0]!).getByText(formatVnd(45000))).toBeInTheDocument();
-    expect(within(items[1]!).getByText(formatVnd(75000))).toBeInTheDocument();
+    // Lifecycle buttons only: the Simulation controls are a separate region (task 13.10).
+    const lifecycle = within(sheet)
+      .getAllByRole("button")
+      .filter((b) => !b.closest('[aria-label="Simulation"]'));
+    expect(lifecycle).toHaveLength(1);
+    expect(within(sheet).getByRole("region", { name: "Simulation" })).toBeInTheDocument();
   });
 
-  it("shows an empty state when there are no completed trips", async () => {
-    const trips = {
-      getEarnings: vi.fn().mockResolvedValue({ todayTotal: 0, weekTotal: 0, trips: [] }),
-    } as unknown as TripServiceClientExt;
-    renderApp(<EarningsScreen tripClient={trips} />);
+  it("returns to the offer list when the accepted trip is COMPLETED", async () => {
+    const accepted = makeTrip({ status: "COMPLETED", driverId: DRIVER_ID });
+    const trips = tripStubs(makeTrip(), accepted);
+    const client = driverStubs();
+    renderDrive(trips, client);
+    await goOnline(client);
 
-    expect(await screen.findByText("No completed trips yet.")).toBeInTheDocument();
-    expect(screen.getByTestId("earnings-today")).toHaveTextContent(formatVnd(0));
+    fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Current trip" })).not.toBeInTheDocument());
   });
 });
 
 describe("AccountScreen", () => {
-  function accountClient(rating: { average: number; ratedTrips: number } | Error, vehicles: VehicleResponse[]) {
-    return {
-      getDriverRating: vi.fn().mockImplementation(() =>
-        rating instanceof Error ? Promise.reject(rating) : Promise.resolve(rating),
-      ),
-      listVehicles: vi.fn().mockResolvedValue(vehicles),
-    } as unknown as DriverServiceClientExt;
+  const users = {
+    getUser: vi.fn().mockResolvedValue({ id: DRIVER.userId, fullName: "Tran Van Tai", email: "tai@example.com" }),
+  };
+  function accountClient(vehicles: VehicleResponse[]) {
+    return { listVehicles: vi.fn().mockResolvedValue(vehicles) } as unknown as DriverServiceClientExt;
   }
-
-  it("renders name, rating, vehicles and a sign-out control", async () => {
-    const client = accountClient({ average: 4.75, ratedTrips: 12 }, [makeVehicle()]);
-    renderApp(<AccountScreen client={client} />);
-
-    expect(screen.getByText(profile.name)).toBeInTheDocument();
-    const rating = await screen.findByLabelText("Driver rating");
-    expect(rating).toHaveTextContent("4.8");
-    expect(rating).toHaveTextContent("(12 trips)");
-
+  it("renders name, email, license, vehicles and a sign-out control, with no rating", async () => {
+    const client = accountClient([makeVehicle()]);
+    renderApp(<AccountScreen client={client} userClient={users} />);
+    expect(await screen.findByText("Tran Van Tai")).toBeInTheDocument();
+    expect(screen.getByText("tai@example.com")).toBeInTheDocument();
+    expect(screen.getByText("LIC-123")).toBeInTheDocument();
+    expect(client.listVehicles).toHaveBeenCalledWith(DRIVER_ID);
+    expect(screen.queryByLabelText("Driver rating")).not.toBeInTheDocument();
     const vehicles = screen.getByRole("region", { name: "Vehicles" });
     expect(await within(vehicles).findByText("Honda Vision")).toBeInTheDocument();
     expect(within(vehicles).getByText(/59X1-123\.45/)).toBeInTheDocument();
     expect(within(vehicles).getByText("Motorbike")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
-
-  it("shows 'No rating yet' and an empty vehicles state", async () => {
-    const client = accountClient(new Error("none"), []);
-    renderApp(<AccountScreen client={client} />);
-
-    expect(await screen.findByText("No rating yet")).toBeInTheDocument();
+  it("shows an empty vehicles state", async () => {
+    renderApp(<AccountScreen client={accountClient([])} userClient={users} />);
     expect(await screen.findByText("No vehicles registered.")).toBeInTheDocument();
   });
-
   it("signs out: clears the session and leaves the screen", async () => {
-    const client = accountClient({ average: 5, ratedTrips: 1 }, []);
     renderApp(
       <Routes>
-        <Route path="/" element={<AccountScreen client={client} />} />
+        <Route path="/" element={<AccountScreen client={accountClient([])} userClient={users} />} />
         <Route path="*" element={<p>signed-out destination</p>} />
       </Routes>,
     );
-
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
-
     expect(await screen.findByText("signed-out destination")).toBeInTheDocument();
     expect(localStorage.getItem(SESSION_KEY)).toBeNull();
   });
 });
-
 describe("DriverLayout", () => {
-  it("offers Drive, Earnings and Account in the bottom nav", () => {
+  it("offers Drive and Account in the bottom nav and hides Earnings", () => {
     renderApp(
       <Routes>
         <Route path="/" element={<DriverLayout />}>
@@ -307,10 +286,9 @@ describe("DriverLayout", () => {
         </Route>
       </Routes>,
     );
-
     const nav = screen.getByRole("navigation", { name: "Driver" });
     expect(within(nav).getByRole("link", { name: /Drive/ })).toHaveAttribute("href", "/driver");
-    expect(within(nav).getByRole("link", { name: /Earnings/ })).toHaveAttribute("href", "/driver/earnings");
+    expect(within(nav).queryByRole("link", { name: /Earnings/ })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: /Account/ })).toHaveAttribute("href", "/driver/account");
   });
 });

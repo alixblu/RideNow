@@ -3,6 +3,7 @@ package cloudnative.microservices.driver.repository;
 import cloudnative.microservices.driver.entity.Driver;
 import cloudnative.microservices.driver.entity.DriverStatus;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -13,6 +14,9 @@ public interface DriverRepository extends JpaRepository<Driver, UUID> {
     boolean existsByLicenseNumber(String licenseNumber);
 
     boolean existsByUserId(UUID userId);
+
+    // user_id is unique, so this is a 0-or-1 lookup.
+    Optional<Driver> findByUserId(UUID userId);
 
     List<Driver> findAllByOrderByCreatedAtDesc();
 

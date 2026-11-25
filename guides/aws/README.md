@@ -74,6 +74,7 @@ parallel once the network exists.
 | 06 | `06-eks-deploy.md` | Namespace, Secrets, Deployments/Services, the ALB Ingress; verify traffic | yes (this is "done") |
 | 07 | `07-elasticache-redis.md` | ElastiCache for Valkey (live state, GEO, cache, pub/sub, location stream, tracking keys) | matching-service, notification-worker, realtime-gateway |
 | 08 | `08-sqs-sns.md` | SNS topic, three filtered SQS queues + DLQs; wire the consumers | matching-service, payment-service, notification-worker |
+| 09 | `09-manual-walkthrough.md` | Nothing; run one ride by hand and watch SNS, SQS, Redis and the live SSE tab | no (verification) |
 
 Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the
 Redis and async messaging that matching-service, payment-service,

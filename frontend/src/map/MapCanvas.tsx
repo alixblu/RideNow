@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import "leaflet/dist/leaflet.css";
 import type { TripResponse } from "../domain/trip";
 import type { LatLng } from "./roadSnapper";
+import type { StreamState } from "./useDriverLocationStream";
 import {
   DESTINATION_ICON,
   DriverCar,
@@ -27,6 +28,7 @@ export interface MapCanvasProps {
   /** When set, the driver's position is streamed while the trip is tracked. */
   trip?: TripResponse | null;
   onStreamEnded?: (() => void) | undefined;
+  onStreamState?: ((state: StreamState) => void) | undefined;
   /** Height in pixels of the sheet overlaying the lower map. */
   sheetHeight?: number;
   className?: string;
@@ -38,6 +40,7 @@ export function MapCanvas({
   destination = null,
   trip = null,
   onStreamEnded,
+  onStreamState,
   sheetHeight = 0,
   className = "absolute inset-0",
   children,
@@ -50,6 +53,7 @@ export function MapCanvas({
         destination={destination}
         trip={trip}
         onStreamEnded={onStreamEnded}
+        onStreamState={onStreamState}
         bottomInset={sheetHeight}
         className={className}
       >
@@ -75,7 +79,7 @@ export function MapCanvas({
         {destination ? (
           <Marker position={[destination.lat, destination.lng]} icon={DESTINATION_ICON} title="Destination" />
         ) : null}
-        {trip ? <DriverCar trip={trip} onStreamEnded={onStreamEnded} /> : null}
+        {trip ? <DriverCar trip={trip} onStreamEnded={onStreamEnded} onStreamState={onStreamState} /> : null}
         {children}
       </MapContainer>
     </div>

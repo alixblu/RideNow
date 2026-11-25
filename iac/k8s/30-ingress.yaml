@@ -35,6 +35,15 @@ spec:
                 name: user-service
                 port:
                   number: 8081
+          # Register and login are served by user-service. Prefix matching is per
+          # path segment, so /api/users does NOT cover /api/auth: it needs its own rule.
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8081
           - path: /api/drivers
             pathType: Prefix
             backend:

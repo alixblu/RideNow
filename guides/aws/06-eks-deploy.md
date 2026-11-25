@@ -427,7 +427,7 @@ spec:
     matchLabels:
       app: user-service
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-XXXXXXXX   # user-service SG
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -440,7 +440,7 @@ spec:
     matchLabels:
       app: driver-service
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-YYYYYYYY   # driver-service SG
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -453,7 +453,7 @@ spec:
     matchLabels:
       app: trip-service
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-ZZZZZZZZ   # trip-service SG
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -466,7 +466,7 @@ spec:
     matchLabels:
       app: payment-service
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-WWWWWWWW   # payment-service SG
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -479,7 +479,7 @@ spec:
     matchLabels:
       app: matching-service
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-MMMMMMMM   # matching-service SG
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -492,7 +492,7 @@ spec:
     matchLabels:
       app: notification-worker
   securityGroups:
-    securityGroupIds:
+    groupIds:
       - sg-NNNNNNNN   # notification-worker SG
 ```
 

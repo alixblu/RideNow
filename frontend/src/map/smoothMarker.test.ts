@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
+import fc from "fast-check";
 import {
+  MAX_GLIDE_MS,
+  createGlideMarker,
+  glideDuration,
   JUMP_METERS,
   RENDER_DELAY_MS,
   STALE_AFTER_MS,
@@ -153,5 +157,44 @@ describe("createSmoothMarker", () => {
     marker.stop();
     step(16);
     expect(positions.length).toBe(3);
+  });
+});
+
+// **Validates: Requirements 7.12**
+describe("glide duration cap", () => {
+  it("equals min(gap, 1500 ms) for every gap", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 600_000 }), (gap) => {
+        const d = glideDuration(gap);
+        expect(d).toBe(Math.min(gap, MAX_GLIDE_MS));
+        expect(d).toBeLessThanOrEqual(1500);
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it("a marker never takes longer than 1500 ms to reach a new event", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 60_000 }), (gap) => {
+        let now = 0;
+        const frames: (() => void)[] = [];
+        const lats: number[] = [];
+        const marker = createGlideMarker(
+          { setPosition: (lat) => lats.push(lat), isWellInView: () => true, panTo: () => {} },
+          {
+            reducedMotion: () => false,
+            clock: { now: () => now, raf: (cb) => frames.push(cb), cancel: () => {} },
+          },
+        );
+        marker.push({ ...P0, recordedAt: 0 });
+        now = gap;
+        marker.push({ ...P1, recordedAt: gap });
+        now = gap + MAX_GLIDE_MS;
+        while (frames.length > 0) frames.shift()!();
+        expect(lats[lats.length - 1]).toBeCloseTo(P1.lat, 9);
+        marker.stop();
+      }),
+      { numRuns: 100 },
+    );
   });
 });

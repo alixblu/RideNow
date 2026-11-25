@@ -49,6 +49,12 @@ public class DriverService {
 
     @Transactional(readOnly = true)
     public PageResponse<DriverResponse> listDrivers(int limit, int offset, DriverStatus statusOrNull) {
+        return listDrivers(limit, offset, statusOrNull, null);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<DriverResponse> listDrivers(
+            int limit, int offset, DriverStatus statusOrNull, UUID userIdOrNull) {
         // Clamp the page size to a sane range and keep offset non-negative so a
         // caller can never ask for an unbounded result or a negative window.
         int safeLimit = limit <= 0 ? 20 : Math.min(limit, 100);
@@ -56,7 +62,14 @@ public class DriverService {
 
         List<Driver> all;
         long total;
-        if (statusOrNull != null) {
+        if (userIdOrNull != null) {
+            // user_id is unique: at most one driver, optionally narrowed by status.
+            all = driverRepository.findByUserId(userIdOrNull)
+                    .filter(d -> statusOrNull == null || d.getStatus() == statusOrNull)
+                    .map(List::of)
+                    .orElseGet(List::of);
+            total = all.size();
+        } else if (statusOrNull != null) {
             all = driverRepository.findByStatusOrderByCreatedAtDesc(statusOrNull);
             total = driverRepository.countByStatus(statusOrNull);
         } else {

@@ -37,7 +37,8 @@ class UserControllerTest {
     private UserResponse sampleUser() {
         Instant now = Instant.now();
         return new UserResponse(UUID.randomUUID(), "sub-1", "a@ridenow.test", null,
-                "Full Name", null, UserStatus.ACTIVE, now, now);
+                "Full Name", null, UserStatus.ACTIVE,
+                cloudnative.microservices.ridenow.entity.AccountType.RIDER, now, now);
     }
 
     @Test

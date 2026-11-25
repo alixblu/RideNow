@@ -128,6 +128,12 @@ public class Trip {
         this.updatedAt = now;
     }
 
+    /** Records the optional human-readable addresses the rider chose for this trip. */
+    public void setAddresses(String pickupAddress, String destinationAddress) {
+        this.pickupAddress = pickupAddress;
+        this.destinationAddress = destinationAddress;
+    }
+
     /**
      * Assigns a driver to this trip. THE signature business rule:
      * a trip may only be accepted while it is still SEARCHING. If a driver already

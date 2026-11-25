@@ -26,7 +26,7 @@ const CLIENTS: Record<DomainKey, DomainClientMode> = {
 };
 
 function configWith(apiBaseUrl: string | null): AppConfig {
-  return { apiBaseUrl, clients: CLIENTS, osrmUrl: null };
+  return { apiBaseUrl, clients: CLIENTS, osrmUrl: null, geocoderUrl: null, simSpeedKmh: 30 };
 }
 
 // Documented path prefixes that resolve to a real service origin in fallback mode.

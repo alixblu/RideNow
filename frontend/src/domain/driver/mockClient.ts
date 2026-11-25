@@ -162,6 +162,7 @@ export function createDriverMockClient(): DriverServiceClientExt {
         .filter((driver) =>
           params.status === undefined ? true : driver.status === params.status,
         )
+        .filter((driver) => params.userId === undefined || driver.userId === params.userId)
         // Most recently created first.
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 

@@ -92,7 +92,7 @@ kubectl get svc kubernetes    # confirms you're connected
 
 ---
 
-## Phase 2 - Build and push images (guide 03)
+## Phase 2 - Build and push images
 
 ECR repos exist (stack 03) but are empty. Build and push before deploying any
 service manifest, or pods will `ImagePullBackOff`.
@@ -113,11 +113,17 @@ for SVC in user-service driver-service trip-service payment-service \
 done
 ```
 
-Verify each repo has the `v1.0.0` tag (guide 03 shows the `describe-images` check).
+Verify each repo has the `v1.0.0` tag:
+
+```bash
+for SVC in user-service driver-service trip-service payment-service matching-service notification-worker realtime-gateway; do
+  echo -n "$SVC: "; aws ecr describe-images --repository-name ridenow/$SVC --image-ids imageTag=v1.0.0 --query 'imageDetails[0].imageTags' --output text
+done
+```
 
 ---
 
-## Phase 3 - Make the cluster usable (guide 05 Part B)
+## Phase 3 - Make the cluster usable
 
 Fargate has no nodes. CoreDNS pods stay `Pending` ("no nodes available") in two
 cases, and both are fixed by recreating them once the `kube-system` Fargate profile
@@ -141,102 +147,280 @@ kubectl rollout restart deployment coredns -n kube-system
 kubectl rollout status  deployment coredns -n kube-system
 ```
 
-Also enable the OIDC identity provider in IAM if the console didn't
-(guide 05 Part D) — the IRSA roles from stack 07 trust it.
+Stack 07 registers the cluster's OIDC provider in IAM (the IRSA roles trust it), so
+there is nothing to enable here. To confirm it exists:
+
+```bash
+ISSUER_ID=$(aws eks describe-cluster --name ridenow-prod --region ap-southeast-1 \
+  --query 'cluster.identity.oidc.issuer' --output text | sed 's|.*/||')
+aws iam list-open-id-connect-providers --output text | grep "$ISSUER_ID" \
+  && echo "OIDC provider present" || echo "missing: re-run ./iac/scripts/deploy.sh prod --apply"
+```
+
+If it is missing, stack 07 was deployed before the cluster existed, which leaves it
+empty. Re-run `./iac/scripts/deploy.sh prod --apply`. Do not create the provider by
+hand or with `eksctl`: a provider created outside the stack makes stack 07 fail with
+`EntityAlreadyExists`.
 
 ---
 
-## Phase 4 - In-cluster add-ons (guide 06 steps 1-2)
+## Phase 4 - In-cluster add-ons (Helm)
 
-These use the IRSA roles stack 07 created. Order matters.
+Needs the IRSA roles from stack 07. Order matters.
 
-1. **AWS Load Balancer Controller** (Helm) — guide 06 step 1b. Provisions the
-   ALB for the Ingress in Phase 6. Then give its role permissions (stack 07 creates
-   the role with no policy, because the policy is versioned with the controller):
-   `./iac/scripts/alb-controller-policy.sh prod`. Without it the Ingress never gets
-   an address and the controller logs `AccessDenied ... DescribeLoadBalancers`.
-2. **External Secrets Operator** (Helm) — guide 06 step 2 B2. Install it with
-   `--set webhook.port=9443`: the chart's default webhook port, 10250, is the port
-   the Fargate kubelet already uses on every pod, so the API server reaches the
-   kubelet instead and every `ExternalSecret` apply fails with
-   `x509: certificate is valid for fargate-ip-...`.
-3. **KMS grant** so ESO can decrypt the RDS-managed secrets — guide 06 step 2 B1.
-   (Without it ESO fails with `Access to KMS is not allowed`.)
-
-Each has exact commands in `06-eks-deploy.md`. The IRSA role ARNs come from:
+Paste this helper once per terminal. Phases 4 to 6 use it.
 
 ```bash
-aws cloudformation list-exports --region ap-southeast-1 \
-  --query "Exports[?starts_with(Name,'ridenow-prod-eks-')].{Name:Name,Value:Value}" \
-  --output table --no-cli-pager
+export AWS_DEFAULT_REGION=ap-southeast-1 AWS_PAGER=""
+exp() { aws cloudformation list-exports --query "Exports[?Name=='ridenow-prod-$1'].Value" --output text; }
+```
+
+### 4.1 AWS Load Balancer Controller
+
+```bash
+helm repo add eks https://aws.github.io/eks-charts && helm repo update
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=ridenow-prod \
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$(exp eks-AlbControllerRoleArn)" \
+  --set region=ap-southeast-1 \
+  --set vpcId=$(exp network-VpcId)
+
+# attach the controller's IAM policy (without it the Ingress gets no address)
+./iac/scripts/alb-controller-policy.sh prod
+
+kubectl get deploy -n kube-system aws-load-balancer-controller   # expect 1/1
+```
+
+### 4.2 External Secrets Operator
+
+```bash
+ESO_ROLE_ARN=$(exp eks-ExternalSecretsRoleArn)
+
+# let ESO decrypt the RDS secrets (skip if the grant already exists)
+aws kms create-grant \
+  --key-id $(aws kms describe-key --key-id alias/ridenow-prod-rds --query KeyMetadata.Arn --output text) \
+  --grantee-principal "$ESO_ROLE_ARN" \
+  --operations Decrypt DescribeKey \
+  --name eso-decrypt-grant
+
+helm repo add external-secrets https://charts.external-secrets.io && helm repo update
+
+# webhook.port=9443 is required on Fargate (the default 10250 clashes with the kubelet)
+helm install external-secrets external-secrets/external-secrets \
+  -n external-secrets --create-namespace \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$ESO_ROLE_ARN \
+  --set webhook.port=9443 \
+  --wait
+
+kubectl get pods -n external-secrets     # expect 3 pods Running
+kubectl get crd | grep external-secrets.io
 ```
 
 ---
 
-## Phase 5 - Namespace, security groups, secrets (guide 06 steps 2-2.5)
+## Phase 5 - Namespace, security groups, log router, secrets
 
-1. **Namespace:** `kubectl apply -f iac/k8s/00-namespace.yaml`.
-2. **Per-pod security groups + `SecurityGroupPolicy`** — guide 06 step 2.5. Apply
-   these **before** the service pods start so each pod gets its service SG at
-   schedule time (a pod started earlier keeps the default cluster SG until
-   recreated).
-3. **Fargate log-router ConfigMap** (`aws-observability` namespace) — guide 06a
-   Part 1.2. Apply before service pods so their logs ship to CloudWatch.
-4. **ExternalSecret manifests:** substitute the RDS secret ARNs and region into
-   `iac/k8s/10-external-secrets.yaml` and apply — guide 06 step 2 B3. Confirm all
-   six reach `SecretSynced` (step B4).
+Run all four before the service pods start.
+
+### 5.1 Namespace
+
+```bash
+kubectl apply -f iac/k8s/00-namespace.yaml
+```
+
+### 5.2 Per-pod security groups
+
+Each service gets its own SG, allowed only to its own database. Safe to re-run.
+
+```bash
+VPC_ID=$(exp network-VpcId)
+DB_SG=$(exp network-DbSecurityGroupId)
+CLUSTER_SG=$(exp eks-ClusterSecurityGroupId)   # keep it on every pod: DNS and Redis need it
+: > /tmp/sgp.yaml
+
+for SVC in user driver trip payment matching notification; do
+  NAME=ridenow-prod-${SVC}-service-sg
+  SG_ID=$(aws ec2 describe-security-groups \
+    --filters Name=group-name,Values=$NAME Name=vpc-id,Values=$VPC_ID \
+    --query 'SecurityGroups[0].GroupId' --output text)
+  if [ "$SG_ID" = "None" ]; then
+    SG_ID=$(aws ec2 create-security-group --group-name $NAME \
+      --description "${SVC}-service pods" --vpc-id $VPC_ID \
+      --query GroupId --output text)
+  fi
+  aws ec2 authorize-security-group-ingress --group-id $DB_SG \
+    --protocol tcp --port 5432 --source-group $SG_ID 2>/dev/null || true
+  APP=${SVC}-service; [ $SVC = notification ] && APP=notification-worker
+  cat >> /tmp/sgp.yaml <<EOF
+---
+apiVersion: vpcresources.k8s.aws/v1beta1
+kind: SecurityGroupPolicy
+metadata:
+  name: ${APP}-sgp
+  namespace: ridenow
+spec:
+  podSelector:
+    matchLabels:
+      app: ${APP}
+  securityGroups:
+    groupIds:
+      - ${SG_ID}
+      - ${CLUSTER_SG}
+EOF
+  echo "$APP -> $SG_ID"
+done
+
+kubectl apply -f /tmp/sgp.yaml
+kubectl rollout restart deploy -n ridenow     # pods started earlier keep the old SG until restarted
+kubectl get securitygrouppolicy -n ridenow     # expect 6
+```
+
+### 5.3 Fargate log router
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws-observability
+  labels:
+    aws-observability: enabled
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-logging
+  namespace: aws-observability
+data:
+  flb_log_cw: "true"
+  output.conf: |
+    [OUTPUT]
+        Name cloudwatch_logs
+        Match kube.*
+        region ap-southeast-1
+        log_group_name /aws/eks/ridenow/fargate
+        log_stream_prefix fargate-
+        auto_create_group true
+EOF
+```
+
+### 5.4 Database secrets (ExternalSecrets)
+
+```bash
+sed -e "s|<REGION>|ap-southeast-1|g" \
+    -e "s|<ENV>|prod|g" \
+    -e "s|<USER_SECRET_ARN>|$(exp data-UserDbSecretArn)|g" \
+    -e "s|<DRIVER_SECRET_ARN>|$(exp data-DriverDbSecretArn)|g" \
+    -e "s|<TRIP_SECRET_ARN>|$(exp data-TripDbSecretArn)|g" \
+    -e "s|<PAYMENT_SECRET_ARN>|$(exp data-PaymentDbSecretArn)|g" \
+    -e "s|<MATCHING_SECRET_ARN>|$(exp data-MatchingDbSecretArn)|g" \
+    -e "s|<NOTIFICATION_SECRET_ARN>|$(exp data-NotificationDbSecretArn)|g" \
+    iac/k8s/10-external-secrets.yaml | kubectl apply -f -
+
+kubectl get externalsecret -n ridenow    # expect 6 rows: SecretSynced, READY True
+```
+
+If a row shows `SecretSyncedError`, read the reason:
+
+```bash
+kubectl logs -n external-secrets deploy/external-secrets --tail=50 | grep -i "error\|denied"
+```
 
 ---
 
-## Phase 6 - Deploy the services and expose them (guide 06 steps 3-5)
+## Phase 6 - Deploy the services and expose them
 
-1. **Service manifests** (20-26): substitute `<ACCOUNT_ID>`, `<REGION>`,
-   `<IMAGE_TAG>`, `<ENV>` (`prod`), and the `<..._DB_ENDPOINT>` values, then
-   apply. Guide 06 step 3 has the `sed` one-liners and the endpoint lookups.
-   - **IRSA roles** (`<TRIP_SERVICE_ROLE_ARN>`, `<PAYMENT_SERVICE_ROLE_ARN>`,
-     `<MATCHING_SERVICE_ROLE_ARN>`, `<NOTIFICATION_WORKER_ROLE_ARN>`) are the
-     `ridenow-prod-eks-*RoleArn` exports from stack 07.
-   - **Queue URLs** (`<MATCHING_QUEUE_URL>`, `<PAYMENT_QUEUE_URL>`,
-     `<NOTIFICATIONS_QUEUE_URL>`) are the `ridenow-prod-messaging-*QueueUrl`
-     exports from stack 05.
-   - **`<REDIS_ENDPOINT>`** (driver, matching, notification-worker, realtime-gateway) is
-     the `ridenow-prod-messaging-RedisPrimaryEndpoint` export.
-   - **`<APP_ORIGIN>`** (realtime-gateway) is the browser origin of the app,
-     e.g. `https://app.example.com`. Do not use `*` in the cloud.
-   - Deploy **payment-service before trip-service**. Trip creation authorizes
-     the fare synchronously and fails (503) while payment-service is down.
+### 6.1 Services
 
-   ```bash
-   aws cloudformation list-exports --region ap-southeast-1 \
-     --query "Exports[?starts_with(Name,'ridenow-prod-messaging-') || ends_with(Name,'RoleArn')].{Name:Name,Value:Value}" \
-     --output table --no-cli-pager
-   ```
-2. **Ingress** (30): `kubectl apply -f iac/k8s/30-ingress.yaml`. The ALB
-   controller provisions the internet-facing ALB. It routes the four APIs, the
-   notification inbox `/api/notifications` (notification-worker), and the SSE
-   stream `/live` (realtime-gateway).
-3. **Verify end to end:**
-   ```bash
-   ADDR=$(kubectl get ingress ridenow -n ridenow \
-     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-   curl -s "http://$ADDR/api/drivers"
-   ```
-   A JSON response = backend running on EKS Fargate. **Done.**
+Set the values that are not in CloudFormation. `APP_ORIGIN` is the browser
+origin of the app (never `*`).
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+IMAGE_TAG=v1.0.0
+APP_ORIGIN=https://app.example.com
+```
+
+Fill in every placeholder and apply. Payment goes first, because trip-service
+calls it when a trip is created.
+
+```bash
+deploy() {
+  sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
+      -e "s|<REGION>|ap-southeast-1|g" \
+      -e "s|<ENV>|prod|g" \
+      -e "s|<IMAGE_TAG>|$IMAGE_TAG|g" \
+      -e "s|<APP_ORIGIN>|$APP_ORIGIN|g" \
+      -e "s|<REDIS_ENDPOINT>|$(exp messaging-RedisPrimaryEndpoint)|g" \
+      -e "s|<USER_DB_ENDPOINT>|$(exp data-UserDbEndpoint)|g" \
+      -e "s|<DRIVER_DB_ENDPOINT>|$(exp data-DriverDbEndpoint)|g" \
+      -e "s|<TRIP_DB_ENDPOINT>|$(exp data-TripDbEndpoint)|g" \
+      -e "s|<PAYMENT_DB_ENDPOINT>|$(exp data-PaymentDbEndpoint)|g" \
+      -e "s|<MATCHING_DB_ENDPOINT>|$(exp data-MatchingDbEndpoint)|g" \
+      -e "s|<NOTIFICATION_DB_ENDPOINT>|$(exp data-NotificationDbEndpoint)|g" \
+      -e "s|<MATCHING_QUEUE_URL>|$(exp messaging-MatchingQueueUrl)|g" \
+      -e "s|<PAYMENT_QUEUE_URL>|$(exp messaging-PaymentQueueUrl)|g" \
+      -e "s|<NOTIFICATIONS_QUEUE_URL>|$(exp messaging-NotificationQueueUrl)|g" \
+      -e "s|<TRIP_SERVICE_ROLE_ARN>|$(exp eks-TripServiceRoleArn)|g" \
+      -e "s|<PAYMENT_SERVICE_ROLE_ARN>|$(exp eks-PaymentServiceRoleArn)|g" \
+      -e "s|<MATCHING_SERVICE_ROLE_ARN>|$(exp eks-MatchingServiceRoleArn)|g" \
+      -e "s|<NOTIFICATION_WORKER_ROLE_ARN>|$(exp eks-NotificationWorkerRoleArn)|g" \
+      iac/k8s/$1.yaml | kubectl apply -f -
+}
+
+deploy 23-payment-service
+deploy 20-user-service
+deploy 21-driver-service
+deploy 22-trip-service
+deploy 24-matching-service
+deploy 25-notification-worker
+deploy 26-realtime-gateway
+
+kubectl get pods -n ridenow -w     # wait until every pod is Running and 1/1 Ready (Ctrl+C to stop)
+```
+
+A pod stuck at `0/1` usually means a wrong DB endpoint, secret, security group or
+Redis endpoint. Check with `kubectl describe pod <name> -n ridenow`.
+
+### 6.2 Ingress
+
+```bash
+kubectl apply -f iac/k8s/30-ingress.yaml
+kubectl get ingress -n ridenow -w     # wait for an ADDRESS (Ctrl+C to stop)
+```
+
+### 6.3 Verify
+
+```bash
+ADDR=$(kubectl get ingress ridenow -n ridenow \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo $ADDR
+curl -s "http://$ADDR/api/drivers"
+```
+
+A JSON response means the backend is running on EKS Fargate. A `503` means the
+ALB has no healthy target. Check `kubectl get pods -n ridenow` and wait for every
+pod to be `Ready`.
 
 ---
 
-## Phase 7 - Wire the async + Valkey features (guides 07, 08)
+## Phase 7 - Valkey and SQS/SNS wiring
 
-Stack 05 already created the Valkey cache, the SQS queue/DLQ, and the SNS topic. These
-guides set the per-pod env + IRSA so matching-service and notification-worker use
-them:
+Nothing more to run. Phase 6 already put the Valkey endpoint, queue URLs and IRSA
+role ARNs into the manifests. Confirm the consumers are connected:
 
-- `07-elasticache-redis.md` — point driver/matching at the Valkey endpoint. Deploy driver-service first (it writes the location stream), then matching-service (it reads it).
-- `08-sqs-sns.md` — topic/queue/subscription env + the worker's IRSA role.
+```bash
+kubectl logs -n ridenow deploy/matching-service --tail=20
+kubectl logs -n ridenow deploy/notification-worker --tail=20
+```
 
 ---
 
-## Phase 8 - Observability (guide 06a)
+## Phase 8 - Observability
 
 Fargate-appropriate: the **AMP agentless scraper** (pod metrics) and the **Fargate
 log router** (pod logs), plus control-plane logs. No DaemonSet agents. Full setup,
@@ -260,6 +444,33 @@ observability (06a)                     # Phase 8
 
 ---
 
+## Redeploy after the cluster is recreated
+
+Use this when `kubectl` says `no such host`, or the ALB returns `503`. The new
+cluster is empty, so you redeploy what runs inside it.
+
+```bash
+# 1. Point kubectl at the new cluster
+aws eks update-kubeconfig --name ridenow-prod --region ap-southeast-1
+
+# 2. Check it is empty (expect "No resources found")
+kubectl get pods,ingress -n ridenow
+```
+
+3. Repeat **Phase 3 to Phase 7**. Skip Phase 2 (images are still in ECR).
+
+```bash
+# 4. Wait until every pod is Running and Ready
+kubectl get pods -n ridenow
+
+# 5. Get the ALB hostname
+kubectl get ingress ridenow -n ridenow \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+```
+
+6. If the hostname changed, update `A=` in `09-manual-walkthrough.md`.
+
+---
 ## Teardown
 
 Two scripts, in this order. The in-cluster cleanup **must** run first — the ALB

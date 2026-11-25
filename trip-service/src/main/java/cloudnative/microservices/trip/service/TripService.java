@@ -74,6 +74,7 @@ public class TripService {
                 tripId, request.passengerId(), request.rideType(),
                 request.pickupLat(), request.pickupLng(),
                 request.destinationLat(), request.destinationLng(), estimatedFare, Instant.now());
+        trip.setAddresses(request.pickupAddress(), request.destinationAddress());
         try {
             return toResponse(tripRecorder.recordRequested(trip));
         } catch (RuntimeException e) {

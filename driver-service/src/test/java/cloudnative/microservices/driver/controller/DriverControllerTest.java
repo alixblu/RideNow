@@ -42,7 +42,7 @@ class DriverControllerTest {
     @Test
     void listReturnsPageJson() throws Exception {
         PageResponse<DriverResponse> page = new PageResponse<>(List.of(driverResponse()), 1L, 20, 0);
-        when(driverService.listDrivers(20, 0, null)).thenReturn(page);
+        when(driverService.listDrivers(20, 0, null, null)).thenReturn(page);
 
         mockMvc.perform(get("/api/drivers"))
                 .andExpect(status().isOk())
@@ -54,13 +54,13 @@ class DriverControllerTest {
 
     @Test
     void statusParamIsPassedToService() throws Exception {
-        when(driverService.listDrivers(eq(20), eq(0), any()))
+        when(driverService.listDrivers(eq(20), eq(0), any(), any()))
                 .thenReturn(new PageResponse<>(List.of(), 0L, 20, 0));
 
         mockMvc.perform(get("/api/drivers").param("status", "ACTIVE"))
                 .andExpect(status().isOk());
 
-        verify(driverService).listDrivers(20, 0, DriverStatus.ACTIVE);
+        verify(driverService).listDrivers(20, 0, DriverStatus.ACTIVE, null);
     }
 
     @Test

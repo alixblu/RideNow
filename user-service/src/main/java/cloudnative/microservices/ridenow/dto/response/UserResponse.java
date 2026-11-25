@@ -1,5 +1,6 @@
 package cloudnative.microservices.ridenow.dto.response;
 
+import cloudnative.microservices.ridenow.entity.AccountType;
 import cloudnative.microservices.ridenow.entity.UserStatus;
 import java.time.Instant;
 import java.util.UUID;
@@ -12,6 +13,7 @@ public record UserResponse(
         String fullName,
         String avatarUrl,
         UserStatus status,
+        AccountType accountType,
         Instant createdAt,
         Instant updatedAt
 ) {

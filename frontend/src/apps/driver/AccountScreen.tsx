@@ -1,23 +1,26 @@
 /**
- * AccountScreen — the Driver_App's Account destination (Req 5.8, 3.7, 3.9).
+ * AccountScreen — the Driver_App's Account destination (Req 9.7).
  *
- * Shows the driver's profile, Driver_Rating, vehicles, and the sign-out control.
+ * Shows the driver's name, email, license number, vehicles, and the sign-out control.
+ * Name and email come from user-service; the license number from the driver profile.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Star } from "lucide-react";
 import { appConfig } from "../../config/appConfig";
 import { resolveDriverClient } from "../../domain/driver";
-import type { DriverRating, DriverServiceClientExt } from "../../domain/driver/contract";
+import type { DriverServiceClient } from "../../domain/driver/contract";
+import { resolveUserClient } from "../../domain/user";
+import type { UserResponse, UserServiceClient } from "../../domain/user";
 import type { VehicleResponse } from "../../domain/vehicle/contract";
 import { SIGN_IN_PATH } from "../../identity/guard";
-import { mockProfiles } from "../../identity/mockProfiles";
 import { useCurrentIdentity } from "../../identity/useCurrentIdentity";
 import { Avatar, Button, Card, EmptyState, ErrorState, Skeleton } from "../../shared/ui";
+import { useDriver } from "./DriverContext";
 
 interface AccountScreenProps {
-  client?: DriverServiceClientExt;
+  client?: DriverServiceClient;
+  userClient?: Pick<UserServiceClient, "getUser">;
 }
 
 function vehicleTitle(v: VehicleResponse): string {
@@ -25,25 +28,25 @@ function vehicleTitle(v: VehicleResponse): string {
   return name === "" ? v.plateNumber : name;
 }
 
-export function AccountScreen({ client }: AccountScreenProps) {
+export function AccountScreen({ client, userClient }: AccountScreenProps) {
   const driverClient = useMemo(() => client ?? resolveDriverClient(appConfig), [client]);
+  const users = useMemo(() => userClient ?? resolveUserClient(appConfig), [userClient]);
   const { identity, signOut } = useCurrentIdentity();
   const navigate = useNavigate();
-  const driverId = identity?.role === "driver" ? identity.id : "";
-  const profile = mockProfiles.driver.find((p) => p.userId === driverId);
-  const name = profile?.name ?? "Driver";
+  const driver = useDriver();
+  const accountId = identity?.id ?? driver.userId;
 
-  const ratingQuery = useQuery<DriverRating, Error>({
-    queryKey: ["driver-rating", driverId],
-    queryFn: () => driverClient.getDriverRating(driverId),
-    enabled: driverId !== "",
+  const userQuery = useQuery<UserResponse, Error>({
+    queryKey: ["account-user", accountId],
+    queryFn: () => users.getUser(accountId),
     retry: false,
   });
   const vehiclesQuery = useQuery<VehicleResponse[], Error>({
-    queryKey: ["vehicles", driverId],
-    queryFn: () => driverClient.listVehicles(driverId),
-    enabled: driverId !== "",
+    queryKey: ["vehicles", driver.id],
+    queryFn: () => driverClient.listVehicles(driver.id),
   });
+
+  const name = userQuery.data?.fullName ?? "Driver";
 
   const handleSignOut = () => {
     signOut();
@@ -56,25 +59,22 @@ export function AccountScreen({ client }: AccountScreenProps) {
       <Card className="flex items-center gap-4 p-4">
         <Avatar name={name} size="lg" />
         <div className="min-w-0">
-          <p className="truncate text-lg font-semibold">{name}</p>
-          <p className="text-sm text-content-muted">Driver</p>
-          {ratingQuery.isPending && driverId !== "" ? (
-            <Skeleton className="mt-1 h-5 w-24" />
-          ) : ratingQuery.data ? (
-            <p className="mt-1 flex items-center gap-1 text-sm" aria-label="Driver rating">
-              <Star className="h-4 w-4 fill-current text-warning" aria-hidden="true" />
-              <span className="font-semibold">{ratingQuery.data.average.toFixed(1)}</span>
-              <span className="text-content-muted">({ratingQuery.data.ratedTrips} trips)</span>
-            </p>
+          {userQuery.isPending ? (
+            <Skeleton className="h-6 w-32" />
           ) : (
-            <p className="mt-1 text-sm text-content-muted">No rating yet</p>
+            <p className="truncate text-lg font-semibold">{name}</p>
           )}
+          {userQuery.data ? (
+            <p className="truncate text-sm text-content-muted">{userQuery.data.email}</p>
+          ) : null}
+          <p className="text-sm text-content-muted">
+            License <span className="font-medium text-content">{driver.licenseNumber}</span>
+          </p>
         </div>
       </Card>
-
       <section aria-label="Vehicles" className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">Vehicles</h2>
-        {vehiclesQuery.isPending && driverId !== "" ? (
+        {vehiclesQuery.isPending ? (
           <Skeleton className="h-16 w-full" />
         ) : vehiclesQuery.isError ? (
           <ErrorState error={vehiclesQuery.error} onRetry={() => void vehiclesQuery.refetch()} />
@@ -101,7 +101,6 @@ export function AccountScreen({ client }: AccountScreenProps) {
           </ul>
         )}
       </section>
-
       <Button variant="secondary" size="lg" block onClick={handleSignOut}>
         Sign out
       </Button>

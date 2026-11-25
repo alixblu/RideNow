@@ -59,6 +59,9 @@ export function createDriverLiveClient(): DriverServiceClientExt {
       if (params.status !== undefined) {
         query.set("status", params.status);
       }
+      if (params.userId !== undefined) {
+        query.set("userId", params.userId);
+      }
       const qs = query.toString();
       return httpRequest<Page<DriverResponse>>(
         `/api/drivers${qs.length > 0 ? `?${qs}` : ""}`,

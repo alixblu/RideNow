@@ -55,6 +55,7 @@
         <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sqs</artifactId><scope>test</scope></dependency>
         <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sts</artifactId></dependency>
         <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>net.jqwik</groupId><artifactId>jqwik</artifactId><version>1.9.3</version><scope>test</scope></dependency>
     </dependencies>
     <build>
         <plugins>
