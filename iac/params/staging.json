@@ -34,5 +34,11 @@
     "Environment": "staging",
     "EnableAddons": "true",
     "OidcProviderId": ""
+  },
+  "08-frontend": {
+    "Environment": "staging",
+    "AlbDnsName": "",
+    "GithubRepo": "alixblu/RideNow",
+    "GithubOidcProviderArn": ""
   }
 }

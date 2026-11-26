@@ -42,7 +42,7 @@ export function MapCanvas({
   onStreamEnded,
   onStreamState,
   sheetHeight = 0,
-  className = "absolute inset-0",
+  className = "absolute inset-0 isolate",
   children,
 }: MapCanvasProps) {
   if (pickup && destination) {

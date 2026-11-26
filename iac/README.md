@@ -25,6 +25,11 @@ same footprint as reviewable, repeatable templates.
 | 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache for Valkey (Redis protocol; logical IDs keep the `Redis` name) | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Valkey private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
 | 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
+| 8 | `stacks/08-frontend.yaml` | Private S3 bucket, CloudFront distribution (static site, plus `/api/*` and `/live*` forwarded to the ALB), SPA rewrite function, GitHub Actions deploy role | Origin Access Control, TLS-only bucket policy, role trusts only `repo:alixblu/RideNow` in the matching GitHub Environment |
+
+Stack 08 is **not** run by `deploy.sh`. It needs the ALB hostname, which exists only after the
+services and Ingress are deployed. Deploy it with `scripts/deploy-frontend.sh <env> [--apply]`
+and publish the site with `scripts/publish-frontend.sh <env>`. See `../guides/aws/10-frontend-hosting.md`.
 
 Kubernetes workload manifests (Deployment / Service / Ingress / HPA) live in `k8s/`.
 
@@ -252,6 +257,9 @@ iac/
     05-messaging.yaml      # SNS/SQS/Valkey
     06-eks-cluster.yaml    # control plane + Fargate profiles (no node group)
     07-eks-addons.yaml     # gated: ALB controller / external-secrets IRSA
+    08-frontend.yaml       # S3 + CloudFront + GitHub deploy role (deployed by deploy-frontend.sh)
+  bootstrap/
+    github-oidc.yaml       # GitHub OIDC provider, once per AWS account
   params/
     dev.json  staging.json  prod.json   # same prod shape; differ by name + CIDR
   k8s/
@@ -262,6 +270,8 @@ iac/
     deploy-and-test.sh     # whole runbook in one command: stacks, in-cluster setup, services, Ingress, API test
     alb-controller-policy.sh # attaches the versioned ALB controller IAM policy to stack 07's role (after the Helm install)
     cleanup-cluster.sh     # in-cluster + hand-created resources; run before teardown
-    teardown.sh            # 07 -> 01, dry-run by default
+    deploy-frontend.sh     # stack 08 (needs the ALB), dry-run by default
+    publish-frontend.sh    # build the SPA, sync to S3, invalidate index.html
+    teardown.sh            # 08 -> 01, dry-run by default (empties the frontend bucket first)
   README.md
 ```

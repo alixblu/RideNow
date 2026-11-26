@@ -1,0 +1,72 @@
+name: frontend-deploy
+
+# Push to main (frontend changes) deploys dev. Prod is started by hand and waits
+# for the reviewers set on the "prod" GitHub Environment.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "iac/scripts/publish-frontend.sh"
+      - ".github/workflows/frontend-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  id-token: write # request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  TARGET_ENV: ${{ inputs.environment || 'dev' }}
+
+# One deploy per environment at a time. Queue instead of cancelling, so a
+# running upload is never cut off halfway.
+concurrency:
+  group: frontend-deploy-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The environment gives prod its approval gate, and it is the "sub" claim the
+    # IAM role trusts (repo:alixblu/RideNow:environment:<env>).
+    environment: ${{ inputs.environment || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        working-directory: frontend
+        run: pnpm test
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Builds with VITE_API_BASE_URL set to the CloudFront URL, syncs to S3 and
+      # invalidates index.html. Same script as a manual publish.
+      - name: Build and publish
+        env:
+          SKIP_INSTALL: "1"
+        run: bash iac/scripts/publish-frontend.sh "${TARGET_ENV}"

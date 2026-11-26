@@ -1,6 +1,6 @@
 # 01 - IAM
 
-Stack `ridenow-<env>-01-iam` from `iac/stacks/01-iam.yaml`. No dependencies.
+Stack `ridenow-<env>-01-iam` from `iac/stacks/01-iam.yaml`. Depends on: none.
 
 ## What it creates
 
@@ -14,9 +14,13 @@ Stack `ridenow-<env>-01-iam` from `iac/stacks/01-iam.yaml`. No dependencies.
 Each messaging policy names the exact topic or queue its service uses, so for example the
 notification worker cannot read the payment queue.
 
-## Configure
+## Deploy
 
-The only parameter is `Environment`.
+Dependencies: none. This stack can be deployed right after `00-prerequisites.md`.
+
+### Configure
+
+The only parameter is `Environment`. Show its value for the current environment.
 
 ```bash
 params 01-iam
@@ -24,7 +28,9 @@ params 01-iam
 
 Expected: `Environment=prod`.
 
-## Deploy
+### Run
+
+Create or update the stack.
 
 ```bash
 cfn_deploy 01-iam
@@ -32,15 +38,39 @@ cfn_deploy 01-iam
 
 Expected last line: `Successfully created/updated stack - ridenow-prod-01-iam`.
 
-## Verify
-
-Stack status:
+Check the stack status.
 
 ```bash
 stack_status 01-iam
 ```
 
-Expected: `CREATE_COMPLETE`.
+Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a re-run).
+
+### If it fails
+
+List the newest failed events for this stack.
+
+```bash
+stack_failures 01-iam
+```
+
+`AccessDenied` on `iam:CreateRole` means your user lacks IAM permissions. `AlreadyExists` means a
+role with that name was made by hand (for example by the console guide `../aws/01-iam.md`).
+Remove the hand-made role in the IAM console or CLI, or pick another `Environment`.
+
+## Post-Deploy
+
+No post-deploy configuration is needed for this stack.
+
+## Verify
+
+Check the stack status again.
+
+```bash
+stack_status 01-iam
+```
+
+Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE`).
 
 The two roles exist:
 
@@ -98,21 +128,10 @@ Expected: SQS actions and one `...:ridenow-prod-notifications` ARN. No `*` resou
 Seven exports for later stacks:
 
 ```bash
-aws cloudformation list-exports \
-  --query "Exports[?starts_with(Name,'ridenow-$ENV-iam-')].Name" --output text | tr '\t' '\n' | sort
+stack_outputs 01-iam
 ```
 
-Expected: `AppAccessPolicyArn`, `ClusterRoleArn`, `FargatePodExecutionRoleArn` and the four messaging
-policy ARNs, all prefixed `ridenow-prod-iam-`.
+Expected: seven rows: `AppAccessPolicyArn`, `ClusterRoleArn`, `FargatePodExecutionRoleArn` and the four messaging
+policy ARNs. Each is exported as `ridenow-prod-iam-<OutputKey>`, so `exp iam-ClusterRoleArn` returns the cluster role ARN.
 
-## If it fails
-
-```bash
-stack_failures 01-iam
-```
-
-`AccessDenied` on `iam:CreateRole` means your user lacks IAM permissions. `AlreadyExists` means a
-role with that name was made by hand (for example by the console guide `../aws/01-iam.md`).
-Delete the hand-made role or pick another `Environment`.
-
-Next: `02-vpc.md`.
+Next: `02-network.md`.

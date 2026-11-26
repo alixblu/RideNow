@@ -44,3 +44,4 @@ localstack
 .scratch/
 
 .tmp/
+*guides/aws

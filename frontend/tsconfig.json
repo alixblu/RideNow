@@ -25,5 +25,5 @@
     /* Types */
     "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"]
   },
-  "include": ["src", "vite.config.ts", "vitest.setup.ts"]
+  "include": ["src", "vite.config.ts", "proxy.ts", "proxy.test.ts", "vitest.setup.ts"]
 }

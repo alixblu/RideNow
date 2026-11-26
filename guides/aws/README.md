@@ -75,6 +75,7 @@ parallel once the network exists.
 | 07 | `07-elasticache-redis.md` | ElastiCache for Valkey (live state, GEO, cache, pub/sub, location stream, tracking keys) | matching-service, notification-worker, realtime-gateway |
 | 08 | `08-sqs-sns.md` | SNS topic, three filtered SQS queues + DLQs; wire the consumers | matching-service, payment-service, notification-worker |
 | 09 | `09-manual-walkthrough.md` | Nothing; run one ride by hand and watch SNS, SQS, Redis and the live SSE tab | no (verification) |
+| 10 | `10-frontend-hosting.md` | S3 + CloudFront for the React app, GitHub Actions CI/CD over OIDC | frontend |
 
 Guides 01-06 get you a running backend on EKS Fargate. Guides 07-08 provision the
 Redis and async messaging that matching-service, payment-service,

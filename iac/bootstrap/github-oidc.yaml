@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions OIDC identity provider. One per AWS account, shared by every
+  environment. Deploy it once (see guides/aws/10-frontend-hosting.md), then pass
+  its ARN to stack 08-frontend as GithubOidcProviderArn.
+
+  If the account already has a provider for token.actions.githubusercontent.com,
+  do NOT deploy this template. Reuse the existing ARN instead:
+    aws iam list-open-id-connect-providers
+
+Resources:
+  GithubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+Outputs:
+  GithubOidcProviderArn:
+    Description: Pass this to 08-frontend as GithubOidcProviderArn.
+    Value: !Ref GithubOidcProvider

@@ -94,7 +94,7 @@ export function TripDetailScreen() {
         <>
           <div className="relative h-48 overflow-hidden rounded-2xl">
             <MapCanvas
-              className="absolute inset-0"
+              className="absolute inset-0 isolate"
               pickup={{ lat: loaded.pickupLat, lng: loaded.pickupLng }}
               destination={{ lat: loaded.destinationLat, lng: loaded.destinationLng }}
             />

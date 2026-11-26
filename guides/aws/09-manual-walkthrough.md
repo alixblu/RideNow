@@ -323,6 +323,42 @@ curl -s "$A/api/trips?limit=1"
 - `GET /api/payments?tripId=` returns one payment with a `status` field. This is
   how `scripts/api-test.ps1` reads it.
 
+## Test accounts for the real frontend
+
+RDS keeps only BCrypt hashes in `users.password_hash`, so passwords cannot be
+exported. Seed accounts with a known password instead. The script registers 3
+riders and 3 drivers through `POST /api/auth/register`. Each driver also gets a
+profile, a vehicle, ONLINE status and a location.
+
+```powershell
+# prod (run from the repo root)
+./scripts/seed-test-accounts.ps1 -BaseUrl http://k8s-ridenow-ridenow-ba80a25bbf-2045011000.ap-southeast-1.elb.amazonaws.com
+# local stack
+./scripts/seed-test-accounts.ps1
+```
+
+The script prints the accounts and writes them to `.tmp/test-accounts.csv`
+(plaintext, gitignored). Defaults: `rider1..3@ridenow.test`,
+`driver1..3@ridenow.test`, password `Test@12345`. Options: `-Password`, `-Count`.
+Re-running is safe: existing accounts are reused and nothing is deleted.
+
+Frontend `frontend/.env`:
+
+| Target | Settings |
+|---|---|
+| Local | `VITE_API_BASE_URL=http://localhost:5173` and `VITE_PROXY_TARGET=` (empty) |
+| Prod | `VITE_API_BASE_URL=http://localhost:5173` and `VITE_PROXY_TARGET=<ALB URL>` |
+
+The services send no CORS headers, so the browser always talks to the Vite dev
+server, which forwards to the target. Restart `pnpm dev` after changing `.env`.
+
+Two-profile test: open one browser profile and sign in as `rider1@ridenow.test`,
+and another as `driver1@ridenow.test`. The rider requests a trip near
+10.7769, 106.7009. The driver accepts the offer, then arrives, starts and
+completes the trip. The rider's screen follows the driver live.
+
+---
+
 ## Clean up
 
 ```bash

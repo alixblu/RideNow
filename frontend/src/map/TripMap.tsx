@@ -80,8 +80,8 @@ export function TripMap({
 }: TripMapProps) {
   const center: [number, number] = [(pickup.lat + destination.lat) / 2, (pickup.lng + destination.lng) / 2];
   const wrapperClass = fullBleed
-    ? (className ?? "absolute inset-0")
-    : (className ?? "h-64 overflow-hidden rounded-2xl");
+    ? (className ?? "absolute inset-0 isolate")
+    : (className ?? "h-64 overflow-hidden rounded-2xl isolate");
   return (
     <div className={wrapperClass} data-testid="trip-map">
       <MapContainer

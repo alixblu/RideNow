@@ -127,11 +127,11 @@ done
 # ------------------------------------------------------------- 7. params
 head_ 7 "params files cover every stack"
 for f in "${PARAMS}"/*.json; do
-  for layer in 01-iam 02-network 03-ecr 04-data 05-messaging 06-eks-cluster 07-eks-addons; do
+  for layer in 01-iam 02-network 03-ecr 04-data 05-messaging 06-eks-cluster 07-eks-addons 08-frontend; do
     grep -q "\"${layer}\"" "${f}" || fail "$(basename "${f}") has no \"${layer}\" block"
   done
 done
-[[ ${FAILS} -eq 0 ]] && ok "all params files list all 7 stacks"
+[[ ${FAILS} -eq 0 ]] && ok "all params files list all 8 stacks"
 
 # ------------------------------------------------------------- 8. stale links
 head_ 8 "no links to the renamed guides"

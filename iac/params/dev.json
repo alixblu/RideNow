@@ -34,5 +34,11 @@
     "Environment": "dev",
     "EnableAddons": "true",
     "OidcProviderId": ""
+  },
+  "08-frontend": {
+    "Environment": "dev",
+    "AlbDnsName": "",
+    "GithubRepo": "alixblu/RideNow",
+    "GithubOidcProviderArn": ""
   }
 }

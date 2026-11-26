@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RideNow frontend layer (08). A private S3 bucket holds the built SPA. One
+  CloudFront distribution serves it over HTTPS and also forwards /api/* and
+  /live* to the existing ALB, so the browser sees a single origin. The backend
+  sends no CORS headers and the ALB is HTTP-only, so this single origin is what
+  makes the hosted frontend work.
+
+  The ALB is created by the AWS Load Balancer Controller from iac/k8s/30-ingress.yaml,
+  not by CloudFormation, so its DNS name comes in as the AlbDnsName parameter.
+  scripts/deploy-frontend.sh resolves it. This stack is deployed separately from
+  deploy.sh because the ALB does not exist until the services are deployed.
+
+  An optional IAM role lets GitHub Actions publish the site through OIDC (no
+  stored keys). It is created only when GithubOidcProviderArn is set.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Used in resource names, export names and tags.
+
+  AlbDnsName:
+    Type: String
+    AllowedPattern: "[A-Za-z0-9.-]+"
+    ConstraintDescription: Must be the ALB DNS name, with no scheme or path.
+    Description: DNS name of the internet-facing ALB that fronts the backend services.
+
+  GithubRepo:
+    Type: String
+    Default: alixblu/RideNow
+    Description: GitHub repository (owner/name) allowed to assume the deploy role.
+
+  GithubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      ARN of the account's token.actions.githubusercontent.com OIDC provider
+      (see iac/bootstrap/github-oidc.yaml). Leave blank to skip the deploy role.
+
+Conditions:
+  CreateDeployRole: !Not [!Equals [!Ref GithubOidcProviderArn, ""]]
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ridenow-${Environment}-frontend-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt SiteBucket.Arn
+              - !Sub ${SiteBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # ------------------------------------------------------------ CloudFront
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ridenow-${Environment}-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Single-page-app routing. Runs on the default (S3) behavior only, so API and
+  # SSE responses from the ALB are never rewritten. A path whose last segment has
+  # no file extension (for example /trips/42) is served as /index.html.
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub ridenow-${Environment}-spa-rewrite
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Rewrite extensionless paths to /index.html for the SPA router
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var lastSegment = request.uri.split('/').pop();
+          if (lastSegment.indexOf('.') === -1) {
+            request.uri = '/index.html';
+          }
+          return request;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub RideNow ${Environment} frontend
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: backend
+            DomainName: !Ref AlbDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed policy: CachingOptimized. Objects carry their own
+          # Cache-Control (index.html no-cache, assets immutable).
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: backend
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: false
+            # Managed policies: CachingDisabled, and AllViewerExceptHostHeader
+            # (forwards Authorization, query strings and cookies to the ALB).
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          # Server-sent events from realtime-gateway. No caching and no
+          # compression, so events reach the browser as they are written.
+          - PathPattern: /live*
+            TargetOriginId: backend
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ------------------------------------------------------- GitHub Actions role
+  DeployRole:
+    Type: AWS::IAM::Role
+    Condition: CreateDeployRole
+    Properties:
+      RoleName: !Sub ridenow-${Environment}-frontend-deploy
+      Description: Assumed by GitHub Actions (OIDC) to publish the RideNow frontend.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GithubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # Only jobs that run in this GitHub Environment of this repo.
+                token.actions.githubusercontent.com:sub: !Sub repo:${GithubRepo}:environment:${Environment}
+      Policies:
+        - PolicyName: publish-frontend
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SiteBucket.Arn
+              - Sid: WriteObjects
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub ${SiteBucket.Arn}/*
+              - Sid: Invalidate
+                Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+              - Sid: ReadStackOutputs
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ridenow-${Environment}-08-frontend/*
+
+Outputs:
+  BucketName:
+    Description: S3 bucket that holds the built site.
+    Value: !Ref SiteBucket
+    Export:
+      Name: !Sub ridenow-${Environment}-frontend-BucketName
+
+  DistributionId:
+    Description: CloudFront distribution id (for invalidations).
+    Value: !Ref Distribution
+    Export:
+      Name: !Sub ridenow-${Environment}-frontend-DistributionId
+
+  DistributionDomain:
+    Description: CloudFront domain name. The site URL is https://<this value>.
+    Value: !GetAtt Distribution.DomainName
+    Export:
+      Name: !Sub ridenow-${Environment}-frontend-DistributionDomain
+
+  DeployRoleArn:
+    Condition: CreateDeployRole
+    Description: Role for GitHub Actions. Set it as AWS_DEPLOY_ROLE_ARN on the GitHub Environment.
+    Value: !GetAtt DeployRole.Arn
+    Export:
+      Name: !Sub ridenow-${Environment}-frontend-DeployRoleArn
