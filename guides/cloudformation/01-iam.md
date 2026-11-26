@@ -1,137 +1,301 @@
 # 01 - IAM
 
-Stack `ridenow-<env>-01-iam` from `iac/stacks/01-iam.yaml`. Depends on: none.
+Creates the two EKS roles and five customer managed policies of `iac/stacks/01-iam.yaml` in the IAM console. Region does not matter for IAM.
+
+Account id: console top-right menu, copy **Account ID** (12 digits). Use it wherever a policy shows `<ACCOUNT_ID>`. It is also `ACCOUNT_ID` in the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
 
 ## What it creates
 
-| Resource | Name | Used by |
-|----------|------|---------|
-| EKS cluster role | `ridenow-<env>-eks-cluster-role` | stack 06 (control plane) |
-| Fargate pod execution role | `ridenow-<env>-eks-fargate-pod-execution-role` | stack 06 (pulls images, ships logs) |
-| Managed policy | `ridenow-<env>-app-access` | applications |
-| Messaging policies | `ridenow-<env>-{trip-service,payment-service,matching-service,notification-worker}-messaging` | stack 07 attaches each to its service role |
+| Template logical ID | AWS resource type | Name |
+|---------------------|-------------------|------|
+| `ClusterRole` | IAM role | `ridenow-prod-eks-cluster-role` |
+| `FargatePodExecutionRole` | IAM role | `ridenow-prod-eks-fargate-pod-execution-role` |
+| `AppAccessPolicy` | IAM customer managed policy | `ridenow-prod-app-access` |
+| `TripServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-trip-service-messaging` |
+| `PaymentServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-payment-service-messaging` |
+| `MatchingServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-matching-service-messaging` |
+| `NotificationWorkerMessagingPolicy` | IAM customer managed policy | `ridenow-prod-notification-worker-messaging` |
 
-Each messaging policy names the exact topic or queue its service uses, so for example the
-notification worker cannot read the payment queue.
+## Depends on
 
-## Deploy
+Nothing. Start after Phase 0 of [00-deploy-runbook.md](00-deploy-runbook.md). The seven resources can be created in any order.
 
-Dependencies: none. This stack can be deployed right after `00-prerequisites.md`.
+## Create the resources
 
-### Configure
+### 1. Role `ridenow-prod-eks-cluster-role` (`ClusterRole`)
 
-The only parameter is `Environment`. Show its value for the current environment.
+**Start and trust policy**
 
-```bash
-params 01-iam
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Custom trust policy`.
+3. Delete the default JSON in **Custom trust policy**.
+4. Paste the JSON below.
+5. Choose **Next**.
+
+**Permissions**
+
+6. Search for `AmazonEKSClusterPolicy` and tick it.
+7. Search for `AmazonEKSComputePolicy` and tick it.
+8. Search for `AmazonEKSBlockStoragePolicyV2` and tick it.
+9. Search for `AmazonEKSLoadBalancingPolicy` and tick it.
+10. Search for `AmazonEKSNetworkingPolicy` and tick it.
+11. Choose **Next**.
+
+**Name and create**
+
+12. Set **Role name** to `ridenow-prod-eks-cluster-role`.
+13. Leave **Description** at the default.
+14. Choose **Create role**.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "eks.amazonaws.com" },
+      "Action": ["sts:AssumeRole", "sts:TagSession"]
+    }
+  ]
+}
 ```
 
-Expected: `Environment=prod`.
+### 2. Role `ridenow-prod-eks-fargate-pod-execution-role` (`FargatePodExecutionRole`)
 
-### Run
+**Start and trust policy**
 
-Create or update the stack.
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Custom trust policy`.
+3. Delete the default JSON in **Custom trust policy**.
+4. Paste the JSON below.
+5. Choose **Next**.
 
-```bash
-cfn_deploy 01-iam
+**Permissions**
+
+6. Search for `AmazonEKSFargatePodExecutionRolePolicy` and tick it.
+7. Choose **Next**.
+
+**Name and create**
+
+8. Set **Role name** to `ridenow-prod-eks-fargate-pod-execution-role`.
+9. Leave **Description** at the default.
+10. Choose **Create role**.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "eks-fargate-pods.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
 ```
 
-Expected last line: `Successfully created/updated stack - ridenow-prod-01-iam`.
+### 3. Policy `ridenow-prod-app-access` (`AppAccessPolicy`)
 
-Check the stack status.
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Replace each `<ACCOUNT_ID>` with your account id.
+6. Leave the `*` region parts unchanged.
+7. Choose **Next**.
+8. Set **Policy name** to `ridenow-prod-app-access`.
+9. Set **Description** to `Scoped runtime access for RideNow pods via IRSA: pull images, read DB secrets, and (where present) use the environment's queues and event bus.`
+10. Choose **Create policy**.
 
-```bash
-stack_status 01-iam
+The description cannot be edited later, so type it exactly.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrAuthToken",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrPullRideNow",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "arn:aws:ecr:*:<ACCOUNT_ID>:repository/ridenow/*"
+    },
+    {
+      "Sid": "ReadRideNowSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:<ACCOUNT_ID>:secret:ridenow-prod-*"
+    }
+  ]
+}
 ```
 
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a re-run).
+### 4. Policy `ridenow-prod-trip-service-messaging` (`TripServiceMessagingPolicy`)
 
-### If it fails
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Replace each `<ACCOUNT_ID>` with your account id.
+6. Choose **Next**.
+7. Set **Policy name** to `ridenow-prod-trip-service-messaging`.
+8. Set **Description** to `trip-service publishes trip events to the RideNow topic.`
+9. Choose **Create policy**.
 
-List the newest failed events for this stack.
-
-```bash
-stack_failures 01-iam
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublishToRideNowTopic",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events"
+    }
+  ]
+}
 ```
 
-`AccessDenied` on `iam:CreateRole` means your user lacks IAM permissions. `AlreadyExists` means a
-role with that name was made by hand (for example by the console guide `../aws/01-iam.md`).
-Remove the hand-made role in the IAM console or CLI, or pick another `Environment`.
+### 5. Policy `ridenow-prod-payment-service-messaging` (`PaymentServiceMessagingPolicy`)
+
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Replace each `<ACCOUNT_ID>` with your account id.
+6. Choose **Next**.
+7. Set **Policy name** to `ridenow-prod-payment-service-messaging`.
+8. Set **Description** to `payment-service publishes payment events and consumes the payment queue.`
+9. Choose **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublishToRideNowTopic",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events"
+    },
+    {
+      "Sid": "ConsumePaymentQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-payment"
+    }
+  ]
+}
+```
+
+### 6. Policy `ridenow-prod-matching-service-messaging` (`MatchingServiceMessagingPolicy`)
+
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Replace each `<ACCOUNT_ID>` with your account id.
+6. Choose **Next**.
+7. Set **Policy name** to `ridenow-prod-matching-service-messaging`.
+8. Set **Description** to `matching-service publishes match events and consumes the matching queue.`
+9. Choose **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublishToRideNowTopic",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events"
+    },
+    {
+      "Sid": "ConsumeMatchingQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-matching"
+    }
+  ]
+}
+```
+
+### 7. Policy `ridenow-prod-notification-worker-messaging` (`NotificationWorkerMessagingPolicy`)
+
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Replace each `<ACCOUNT_ID>` with your account id.
+6. Choose **Next**.
+7. Set **Policy name** to `ridenow-prod-notification-worker-messaging`.
+8. Set **Description** to `notification-worker consumes the notifications queue.`
+9. Choose **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConsumeNotificationsQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-notifications"
+    }
+  ]
+}
+```
+
+## Values to record
+
+Nothing to copy now: later guides pick these by name in the console. To read an ARN, open the role or policy in IAM and copy **ARN** at the top.
+
+| Output_Equivalent (Template output) | Resource it comes from | ARN form | Consumed by |
+|-------|------------------------|----------|-------------|
+| `ClusterRoleArn` (`CLUSTER_ROLE_ARN`) | role `ridenow-prod-eks-cluster-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` | `06-eks-cluster.md`: **Cluster service role** |
+| `FargatePodExecutionRoleArn` (`FARGATE_POD_ROLE_ARN`) | role `ridenow-prod-eks-fargate-pod-execution-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role` | `06-eks-cluster.md`: **Pod execution role** |
+| `AppAccessPolicyArn` | policy `ridenow-prod-app-access` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-app-access` | No guide attaches it |
+| `TripServiceMessagingPolicyArn` | policy `ridenow-prod-trip-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-trip-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-trip-service` |
+| `PaymentServiceMessagingPolicyArn` | policy `ridenow-prod-payment-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-payment-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-payment-service` |
+| `MatchingServiceMessagingPolicyArn` | policy `ridenow-prod-matching-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-matching-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-matching-service` |
+| `NotificationWorkerMessagingPolicyArn` | policy `ridenow-prod-notification-worker-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-notification-worker-messaging` | `07-eks-addons.md`: role `ridenow-prod-notification-worker` |
 
 ## Post-Deploy
 
-No post-deploy configuration is needed for this stack.
+No Post-Deploy step is needed for this guide.
 
 ## Verify
 
-Check the stack status again.
-
-```bash
-stack_status 01-iam
-```
-
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE`).
-
-The two roles exist:
-
-```bash
-aws iam get-role --role-name ridenow-$ENV-eks-cluster-role \
-  --query 'Role.[RoleName,Arn]' --output text
-aws iam get-role --role-name ridenow-$ENV-eks-fargate-pod-execution-role \
-  --query 'Role.[RoleName,Arn]' --output text
-```
-
-Expected: one line each, with an `arn:aws:iam::<account>:role/...` ARN.
-
-The cluster role trusts EKS and the pod execution role trusts Fargate:
-
-```bash
-aws iam get-role --role-name ridenow-$ENV-eks-cluster-role \
-  --query 'Role.AssumeRolePolicyDocument.Statement[0].Principal.Service' --output text
-aws iam get-role --role-name ridenow-$ENV-eks-fargate-pod-execution-role \
-  --query 'Role.AssumeRolePolicyDocument.Statement[0].Principal.Service' --output text
-```
-
-Expected: `eks.amazonaws.com`, then `eks-fargate-pods.amazonaws.com`.
-
-AWS managed policies are attached to those roles:
-
-```bash
-aws iam list-attached-role-policies --role-name ridenow-$ENV-eks-cluster-role \
-  --query 'AttachedPolicies[].PolicyName' --output text
-aws iam list-attached-role-policies --role-name ridenow-$ENV-eks-fargate-pod-execution-role \
-  --query 'AttachedPolicies[].PolicyName' --output text
-```
-
-Expected: five policies for the cluster role (`AmazonEKSClusterPolicy`, `AmazonEKSComputePolicy`, `AmazonEKSBlockStoragePolicyV2`, `AmazonEKSLoadBalancingPolicy`, `AmazonEKSNetworkingPolicy`), then `AmazonEKSFargatePodExecutionRolePolicy`.
-
-The five customer-managed policies exist:
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then:
 
 ```bash
 aws iam list-policies --scope Local \
   --query "Policies[?starts_with(PolicyName,'ridenow-$ENV-')].PolicyName" --output text | tr '\t' '\n'
+echo "$CLUSTER_ROLE_ARN"
+echo "$FARGATE_POD_ROLE_ARN"
 ```
 
-Expected: `ridenow-prod-app-access` and the four `...-messaging` policies.
+Expected: five policy names (`ridenow-prod-app-access` and the four `-messaging` policies), then `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` and `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role`. A missing line means that resource was not created or is misspelled.
 
-A messaging policy is scoped to one resource (example: the notification worker):
-
-```bash
-ARN=$(exp iam-NotificationWorkerMessagingPolicyArn)
-VER=$(aws iam get-policy --policy-arn $ARN --query Policy.DefaultVersionId --output text)
-aws iam get-policy-version --policy-arn $ARN --version-id $VER \
-  --query 'PolicyVersion.Document.Statement[].[Action,Resource]' --output json
-```
-
-Expected: SQS actions and one `...:ridenow-prod-notifications` ARN. No `*` resource.
-
-Seven exports for later stacks:
-
-```bash
-stack_outputs 01-iam
-```
-
-Expected: seven rows: `AppAccessPolicyArn`, `ClusterRoleArn`, `FargatePodExecutionRoleArn` and the four messaging
-policy ARNs. Each is exported as `ridenow-prod-iam-<OutputKey>`, so `exp iam-ClusterRoleArn` returns the cluster role ARN.
-
-Next: `02-network.md`.
+Next: [02-network.md](02-network.md).

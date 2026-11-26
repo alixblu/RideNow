@@ -1,273 +1,530 @@
-# 07 - EKS add-ons (OIDC provider, IRSA roles, application services)
+# 07 - EKS add-ons (pod network access, OIDC provider, IRSA roles, application services)
 
-Stack `ridenow-<env>-07-eks-addons` from `iac/stacks/07-eks-addons.yaml`.
-Depends on: `01-iam` (imports the four `*MessagingPolicyArn` exports), `02-network` (imports `DbSecurityGroupId`), `05-messaging` (imports `RedisSecurityGroupId`, only when `EnableRedisAccess=true`) and `06-eks-cluster` (imports `ClusterSecurityGroupId`; the cluster's OIDC issuer id is read live, see Deploy).
+You create two security group inbound rules, the cluster OIDC provider and six IRSA roles in the AWS Console, then deploy the seven services with `kubectl`. Reference: `iac/stacks/07-eks-addons.yaml` (read only). Region `ap-southeast-1`, environment `prod`.
 
 ## What it creates
 
-- An IAM OIDC identity provider for the EKS cluster, so Kubernetes service accounts can assume IAM roles (IRSA).
-- Six IRSA roles. Each trusts only its own service account:
-  - `ridenow-<env>-alb-controller` for `kube-system/aws-load-balancer-controller`.
-  - `ridenow-<env>-external-secrets` for `external-secrets/external-secrets`. It can read the RDS-managed secrets in Secrets Manager.
-  - `ridenow-<env>-trip-service`, `ridenow-<env>-payment-service`, `ridenow-<env>-matching-service` and `ridenow-<env>-notification-worker` for the same-named service accounts in the `ridenow` namespace. Each carries only its own messaging policy from `01-iam`.
-- Two security group ingress rules that let the Fargate pods (cluster security group) reach PostgreSQL on port 5432 (database security group) and Redis on port 6379 (Redis security group). Without them every pod times out and crash-loops.
+| Template logical ID | AWS resource type | Resolved name |
+|---|---|---|
+| `DbIngressFromFargatePods` | EC2 security group inbound rule | on `ridenow-prod-db-sg`, TCP 5432 |
+| `RedisIngressFromFargatePods` | EC2 security group inbound rule | on `ridenow-prod-redis-sg`, TCP 6379 |
+| `OidcProvider` | IAM OIDC identity provider | `https://oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>` |
+| `AlbControllerRole` | IAM role | `ridenow-prod-alb-controller` |
+| `ExternalSecretsRole` | IAM role | `ridenow-prod-external-secrets` |
+| `TripServiceRole` | IAM role | `ridenow-prod-trip-service` |
+| `PaymentServiceRole` | IAM role | `ridenow-prod-payment-service` |
+| `MatchingServiceRole` | IAM role | `ridenow-prod-matching-service` |
+| `NotificationWorkerRole` | IAM role | `ridenow-prod-notification-worker` |
 
-`user-service`, `driver-service` and `realtime-gateway` need no AWS API access, so they have no role.
+`OidcProviderId` is empty in `iac/params/prod.json` because the cluster does not exist when the file is written. `OIDC_ID` is the last path segment of the cluster OIDC issuer URL, set by the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
 
-All resources are created only when `EnableAddons=true` and `OidcProviderId` is not blank.
+## Depends on
 
-## Deploy
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first. No variable may print `MISSING`.
 
-Dependencies: `01-iam`, `02-network`, `05-messaging` and `06-eks-cluster` must be `CREATE_COMPLETE` or `UPDATE_COMPLETE`.
+| Import in the Template | Earlier Resource and Fixed_Name | Guide | Where you select it | Discovery_Block variable |
+|---|---|---|---|---|
+| `network-DbSecurityGroupId` | security group `ridenow-prod-db-sg` | `02-network.md` | EC2 > Security Groups | `DB_SG_ID` |
+| `messaging-RedisSecurityGroupId` | security group `ridenow-prod-redis-sg` | `05-messaging.md` | EC2 > Security Groups | `REDIS_SG_ID` |
+| `eks-ClusterSecurityGroupId` | cluster security group of EKS cluster `ridenow-prod` (`eks-cluster-sg-ridenow-prod-<number>`) | `06-eks-cluster.md` | EC2 > Security Groups | `EKS_CLUSTER_SG_ID` |
+| `iam-TripServiceMessagingPolicyArn` | managed policy `ridenow-prod-trip-service-messaging` | `01-iam.md` | IAM > Policies | none |
+| `iam-PaymentServiceMessagingPolicyArn` | managed policy `ridenow-prod-payment-service-messaging` | `01-iam.md` | IAM > Policies | none |
+| `iam-MatchingServiceMessagingPolicyArn` | managed policy `ridenow-prod-matching-service-messaging` | `01-iam.md` | IAM > Policies | none |
+| `iam-NotificationWorkerMessagingPolicyArn` | managed policy `ridenow-prod-notification-worker-messaging` | `01-iam.md` | IAM > Policies | none |
+| cluster OIDC issuer (read live) | EKS cluster `ridenow-prod` | `06-eks-cluster.md` | EKS > Clusters > `ridenow-prod` > Overview | `OIDC_ISSUER_URL`, `OIDC_ID` |
 
-### Configure
+## Create the resources
 
-Show the parameters this stack will receive from `iac/params/$ENV.json`:
+Create in this order. The roles need the OIDC provider.
+
+### 1. Inbound rule: PostgreSQL from the Fargate pods (`DbIngressFromFargatePods`)
+
+1. Go to **EC2 -> Security Groups**.
+2. Search for `ridenow-prod-db-sg` and select it (`DB_SG_ID`).
+3. Open the **Inbound rules** tab and choose **Edit inbound rules -> Add rule**.
+4. Set **Type** to `PostgreSQL` (this fills **Protocol** `TCP` and **Port range** `5432`).
+5. Set **Source** to `Custom`.
+6. In the search box paste `EKS_CLUSTER_SG_ID` (`sg-...`) and pick the group `eks-cluster-sg-ridenow-prod-<number>`.
+7. Set **Description** to `PostgreSQL 5432 from the EKS cluster security group (Fargate pods)`.
+8. Choose **Save rules**.
+
+Expected: the group has two rules on 5432, the one from `02-network.md` and this one. No tags.
+
+### 2. Inbound rule: Redis from the Fargate pods (`RedisIngressFromFargatePods`)
+
+1. Go to **EC2 -> Security Groups**.
+2. Search for `ridenow-prod-redis-sg` and select it (`REDIS_SG_ID`).
+3. Open the **Inbound rules** tab and choose **Edit inbound rules -> Add rule**.
+4. Set **Type** to `Custom TCP`.
+5. Set **Port range** to `6379`.
+6. Set **Source** to `Custom`.
+7. Paste `EKS_CLUSTER_SG_ID` and pick `eks-cluster-sg-ridenow-prod-<number>`.
+8. Set **Description** to `Redis 6379 from the EKS cluster security group (Fargate pods)`.
+9. Choose **Save rules**.
+
+Expected: the group has two rules on 6379. No tags.
+
+### 3. OIDC identity provider (`OidcProvider`)
 
 ```bash
-params 07-eks-addons
+echo "$OIDC_ISSUER_URL"
 ```
 
-Expected for `prod`: `Environment=prod`, `EnableAddons=true`. `OidcProviderId` is not in the file because the cluster must exist before its value does. If you deployed `05-messaging` without Redis, also pass `EnableRedisAccess=false` in the Run step.
+Expected: `https://oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>` (32 hex characters). Empty means the cluster does not exist (`06-eks-cluster.md`).
 
-### Run
+1. Go to **IAM -> Identity providers -> Add provider**.
+2. Set **Provider type** to `OpenID Connect`.
+3. Paste the URL printed above into **Provider URL**.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Get thumbprint**. The console fills `9e99a48a9960b14926bb7f3b02e22da2b0ab7280`, which is the value the Template uses.
+6. Choose **Add provider**.
 
-Look up the cluster's OIDC issuer id. It is the last path segment of the issuer URL. This is the same lookup `iac/scripts/deploy.sh` does for this layer, and it is why the command below differs from a plain `cfn_deploy 07-eks-addons`.
+Expected: the provider is listed with that URL. No tags.
+
+### 4. Six IRSA roles
+
+Every role trust policy contains two placeholders. Replace them before you paste a policy:
+
+- `<ACCOUNT_ID>`: the value of the Discovery_Block variable `ACCOUNT_ID` (12 digits).
+- `<OIDC_ID>`: the value of the Discovery_Block variable `OIDC_ID` (32 hex characters).
+
+Print both values in the shell where you ran the Discovery_Block:
 
 ```bash
-OIDC_ID=$(aws eks describe-cluster --name ridenow-$ENV \
-  --query 'cluster.identity.oidc.issuer' --output text | sed 's|.*/||')
-echo $OIDC_ID
+echo "ACCOUNT_ID=$ACCOUNT_ID"
+echo "OIDC_ID=$OIDC_ID"
 ```
 
-Expected: a 32-character uppercase hexadecimal id such as `EXAMPLED539D4633E53DE1B716D3041E`. If it prints nothing or `None`, `06-eks-cluster` is not deployed yet.
+Expected: both lines show a value. Create the roles one at a time, in the order below.
 
-Deploy the stack with the id as an override. Without it the stack is created empty.
+#### 4.1 Role `ridenow-prod-alb-controller`
 
-```bash
-cfn_deploy 07-eks-addons OidcProviderId=$OIDC_ID
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-alb-controller` |
+| Service account | `kube-system:aws-load-balancer-controller` |
+| Permissions | none at creation |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, tick no policy, then choose **Next**.
+7. Set **Role name** to `ridenow-prod-alb-controller`.
+8. Leave **Description** blank.
+9. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-alb-controller` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
 ```
 
-Expected last line: `Successfully created/updated stack - ridenow-prod-07-eks-addons`.
+Expected: role `ridenow-prod-alb-controller` exists. Trust relationships shows the OIDC provider as principal and `kube-system:aws-load-balancer-controller` in the condition.
 
-Check the stack status:
+#### 4.2 Role `ridenow-prod-external-secrets`
 
-```bash
-stack_status 07-eks-addons
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-external-secrets` |
+| Service account | `external-secrets:external-secrets` |
+| Permissions | inline policy `read-ridenow-secrets` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, tick no policy, then choose **Next**.
+7. Set **Role name** to `ridenow-prod-external-secrets`.
+8. Leave **Description** blank.
+9. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-external-secrets` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the trust policy JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+**Add the inline policy**
+
+1. Open the **Permissions** tab.
+2. Choose **Add permissions -> Create inline policy**.
+3. Choose the **JSON** tab.
+4. Delete the whole document.
+5. Paste the inline policy JSON below, with `<ACCOUNT_ID>` replaced.
+6. Choose **Next**.
+7. Set **Policy name** to `read-ridenow-secrets`.
+8. Choose **Create policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:external-secrets:external-secrets",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
 ```
 
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a redeploy).
+Inline policy `read-ridenow-secrets`:
 
-### If it fails
-
-Show the newest failed events and their reasons:
-
-```bash
-stack_failures 07-eks-addons
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:<ACCOUNT_ID>:secret:ridenow-prod-*",
+        "arn:aws:secretsmanager:*:<ACCOUNT_ID>:secret:rds!db-*"
+      ]
+    }
+  ]
+}
 ```
 
-`No export named ...eks-ClusterSecurityGroupId` or `...iam-...PolicyArn`: deploy `06-eks-cluster.md` or `01-iam.md` first. `No export named ...messaging-RedisSecurityGroupId`: deploy `05-messaging.md`, or redeploy this stack with `EnableRedisAccess=false` if you run without Redis. A stack in `ROLLBACK_COMPLETE` must be deleted before it can be deployed again (see `README.md`).
+Expected: role `ridenow-prod-external-secrets` exists. Trust relationships shows the OIDC provider as principal and `external-secrets:external-secrets` in the condition.
+
+#### 4.3 Role `ridenow-prod-trip-service`
+
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-trip-service` |
+| Service account | `ridenow:trip-service` |
+| Permissions | managed policy `ridenow-prod-trip-service-messaging` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, set the filter to `Customer managed`.
+7. Search for `ridenow-prod-trip-service-messaging`.
+8. Tick the checkbox of that policy, then choose **Next**.
+9. Set **Role name** to `ridenow-prod-trip-service`.
+10. Leave **Description** blank.
+11. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-trip-service` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:ridenow:trip-service",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Expected: role `ridenow-prod-trip-service` exists. Trust relationships shows the OIDC provider as principal and `ridenow:trip-service` in the condition.
+
+#### 4.4 Role `ridenow-prod-payment-service`
+
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-payment-service` |
+| Service account | `ridenow:payment-service` |
+| Permissions | managed policy `ridenow-prod-payment-service-messaging` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, set the filter to `Customer managed`.
+7. Search for `ridenow-prod-payment-service-messaging`.
+8. Tick the checkbox of that policy, then choose **Next**.
+9. Set **Role name** to `ridenow-prod-payment-service`.
+10. Leave **Description** blank.
+11. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-payment-service` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:ridenow:payment-service",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Expected: role `ridenow-prod-payment-service` exists. Trust relationships shows the OIDC provider as principal and `ridenow:payment-service` in the condition.
+
+#### 4.5 Role `ridenow-prod-matching-service`
+
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-matching-service` |
+| Service account | `ridenow:matching-service` |
+| Permissions | managed policy `ridenow-prod-matching-service-messaging` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, set the filter to `Customer managed`.
+7. Search for `ridenow-prod-matching-service-messaging`.
+8. Tick the checkbox of that policy, then choose **Next**.
+9. Set **Role name** to `ridenow-prod-matching-service`.
+10. Leave **Description** blank.
+11. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-matching-service` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:ridenow:matching-service",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Expected: role `ridenow-prod-matching-service` exists. Trust relationships shows the OIDC provider as principal and `ridenow:matching-service` in the condition.
+
+#### 4.6 Role `ridenow-prod-notification-worker`
+
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-notification-worker` |
+| Service account | `ridenow:notification-worker` |
+| Permissions | managed policy `ridenow-prod-notification-worker-messaging` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, set the filter to `Customer managed`.
+7. Search for `ridenow-prod-notification-worker-messaging`.
+8. Tick the checkbox of that policy, then choose **Next**.
+9. Set **Role name** to `ridenow-prod-notification-worker`.
+10. Leave **Description** blank.
+11. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-notification-worker` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:ridenow:notification-worker",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Expected: role `ridenow-prod-notification-worker` exists. Trust relationships shows the OIDC provider as principal and `ridenow:notification-worker` in the condition.
+
+`user-service`, `driver-service` and `realtime-gateway` have no role.
+
+## Values to record
+
+Re-run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) after creating the roles. It reads the ARNs by role name.
+
+| Output_Equivalent (Template export) | Where it comes from | Variable | Used by |
+|---|---|---|---|
+| `AlbControllerRoleArn` | IAM > Roles > `ridenow-prod-alb-controller` > ARN | `ALB_CONTROLLER_ROLE_ARN` | `00-deploy-runbook.md` Phase 4.1 |
+| `ExternalSecretsRoleArn` | IAM > Roles > `ridenow-prod-external-secrets` > ARN | `EXTERNAL_SECRETS_ROLE_ARN` | `00-deploy-runbook.md` Phase 4.2 |
+| `TripServiceRoleArn` | IAM > Roles > `ridenow-prod-trip-service` > ARN | `TRIP_SERVICE_ROLE_ARN` | `iac/k8s/22-trip-service.yaml` |
+| `PaymentServiceRoleArn` | IAM > Roles > `ridenow-prod-payment-service` > ARN | `PAYMENT_SERVICE_ROLE_ARN` | `iac/k8s/23-payment-service.yaml` |
+| `MatchingServiceRoleArn` | IAM > Roles > `ridenow-prod-matching-service` > ARN | `MATCHING_SERVICE_ROLE_ARN` | `iac/k8s/24-matching-service.yaml` |
+| `NotificationWorkerRoleArn` | IAM > Roles > `ridenow-prod-notification-worker` > ARN | `NOTIFICATION_WORKER_ROLE_ARN` | `iac/k8s/25-notification-worker.yaml` |
 
 ## Post-Deploy
 
-### IRSA roles
+Run from the repository root in the shell where you ran the Discovery_Block. Prerequisites: images for `$IMAGE_TAG` in ECR (`03-ecr.md`); kubeconfig, `ridenow` namespace and database secrets (`06-eks-cluster.md`); ALB controller and External Secrets installed (`00-deploy-runbook.md` Phase 4.1 and 4.2).
 
-Confirm the cluster OIDC provider is registered in IAM. This lists the provider created by this stack.
-
-```bash
-aws iam list-open-id-connect-providers \
-  --query "OpenIDConnectProviderList[?contains(Arn, '$OIDC_ID')].Arn" --output text
-```
-
-Expected: one ARN ending in `oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
-
-Confirm each role trusts its own service account. This prints the role name and the `sub` condition from its trust policy.
+`APP_ORIGIN` is the browser origin allowed to call the API (never `*`). It defaults to the CloudFront domain. If `08-frontend.md` is not done yet, `export APP_ORIGIN=https://app.example.com` first and re-apply later.
 
 ```bash
-for ROLE in alb-controller external-secrets trip-service payment-service matching-service notification-worker; do
-  aws iam get-role --role-name ridenow-$ENV-$ROLE \
-    --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals' --output json \
-    | jq -r --arg r "$ROLE" 'to_entries[] | select(.key | endswith(":sub")) | "\($r)  \(.value)"'
+APP_ORIGIN="${APP_ORIGIN:-${CLOUDFRONT_DOMAIN:+https://$CLOUDFRONT_DOMAIN}}"
+SUBST=(
+  -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g"
+  -e "s|<REGION>|$AWS_REGION|g"
+  -e "s|<ENV>|$ENV|g"
+  -e "s|<IMAGE_TAG>|$IMAGE_TAG|g"
+  -e "s|<APP_ORIGIN>|$APP_ORIGIN|g"
+  -e "s|<REDIS_ENDPOINT>|$REDIS_ENDPOINT|g"
+  -e "s|<USER_DB_ENDPOINT>|$USER_DB_ENDPOINT|g"
+  -e "s|<DRIVER_DB_ENDPOINT>|$DRIVER_DB_ENDPOINT|g"
+  -e "s|<TRIP_DB_ENDPOINT>|$TRIP_DB_ENDPOINT|g"
+  -e "s|<PAYMENT_DB_ENDPOINT>|$PAYMENT_DB_ENDPOINT|g"
+  -e "s|<MATCHING_DB_ENDPOINT>|$MATCHING_DB_ENDPOINT|g"
+  -e "s|<NOTIFICATION_DB_ENDPOINT>|$NOTIFICATION_DB_ENDPOINT|g"
+  -e "s|<MATCHING_QUEUE_URL>|$MATCHING_QUEUE_URL|g"
+  -e "s|<PAYMENT_QUEUE_URL>|$PAYMENT_QUEUE_URL|g"
+  -e "s|<NOTIFICATIONS_QUEUE_URL>|$NOTIFICATIONS_QUEUE_URL|g"
+  -e "s|<TRIP_SERVICE_ROLE_ARN>|$TRIP_SERVICE_ROLE_ARN|g"
+  -e "s|<PAYMENT_SERVICE_ROLE_ARN>|$PAYMENT_SERVICE_ROLE_ARN|g"
+  -e "s|<MATCHING_SERVICE_ROLE_ARN>|$MATCHING_SERVICE_ROLE_ARN|g"
+  -e "s|<NOTIFICATION_WORKER_ROLE_ARN>|$NOTIFICATION_WORKER_ROLE_ARN|g"
+)
+for V in ACCOUNT_ID AWS_REGION ENV IMAGE_TAG APP_ORIGIN REDIS_ENDPOINT USER_DB_ENDPOINT DRIVER_DB_ENDPOINT \
+         TRIP_DB_ENDPOINT PAYMENT_DB_ENDPOINT MATCHING_DB_ENDPOINT NOTIFICATION_DB_ENDPOINT \
+         MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL TRIP_SERVICE_ROLE_ARN \
+         PAYMENT_SERVICE_ROLE_ARN MATCHING_SERVICE_ROLE_ARN NOTIFICATION_WORKER_ROLE_ARN; do
+  [ -n "${!V}" ] || echo "EMPTY: $V"
 done
 ```
 
-Expected: six lines, one per role:
+Expected: no `EMPTY:` line. If one appears, create that resource, re-run the Discovery_Block and this block.
 
-```text
-alb-controller  system:serviceaccount:kube-system:aws-load-balancer-controller
-external-secrets  system:serviceaccount:external-secrets:external-secrets
-trip-service  system:serviceaccount:ridenow:trip-service
-payment-service  system:serviceaccount:ridenow:payment-service
-matching-service  system:serviceaccount:ridenow:matching-service
-notification-worker  system:serviceaccount:ridenow:notification-worker
-```
-
-Confirm the four application role ARNs are exported. `k8s_apply` reads them to fill the service account annotations in the next subsections.
+Deploy in this order (payment before trip, driver before matching). Fargate starts a node per pod, so each rollout can take several minutes.
 
 ```bash
-stack_outputs 07-eks-addons
+for F in 23-payment-service 20-user-service 21-driver-service 22-trip-service \
+         24-matching-service 25-notification-worker 26-realtime-gateway; do
+  sed "${SUBST[@]}" iac/k8s/$F.yaml | kubectl apply -f -
+  kubectl rollout status deployment/${F#*-} -n ridenow --timeout=900s
+done
 ```
 
-Expected: six rows: `TripServiceRoleArn`, `PaymentServiceRoleArn`, `MatchingServiceRoleArn`, `NotificationWorkerRoleArn`, `AlbControllerRoleArn`, `ExternalSecretsRoleArn`.
-
-### Application services
-
-Deploy the seven services in the order below. Payment goes before trip because trip authorizes payments synchronously. Driver goes before matching because driver writes the location stream that matching reads. This is the order of `MANIFESTS` in `iac/scripts/deploy-and-test.sh`.
-
-Before you start, these must already be done:
-
-- The images for `$IMAGE_TAG` are pushed to ECR (`03-ecr.md`).
-- The `ridenow` namespace and the database secrets exist (`06-eks-cluster.md`: Namespace creation and Database secrets).
-- `kubectl` points at the cluster (`06-eks-cluster.md`: kubectl and kubeconfig setup).
-
-Run every command from the repository root, because `k8s_apply` reads `iac/k8s/<name>.yaml` by relative path. `k8s_apply` fills each `<PLACEHOLDER>` in the manifest from `env.sh` and from the stack exports, then runs `kubectl apply`. One difference from `deploy-and-test.sh`: that script renders all seven manifests, stops if any placeholder is left, and applies them in one pass before waiting. Here each service is applied and awaited on its own, so a failure is easy to attribute to one service.
-
-Each `rollout status` waits until the new pods pass their readiness probe. Fargate has to start a node for every pod, so allow several minutes per service.
-
-### payment-service
-
-Apply the payment-service manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 23-payment-service
-kubectl rollout status deployment/payment-service -n ridenow --timeout=900s
-```
-
-Expected: the apply prints `deployment.apps/payment-service ...`, `service/payment-service ...` and `serviceaccount/payment-service ...` (`created` or `configured`), and the last line is `deployment "payment-service" successfully rolled out`.
-
-### user-service
-
-Apply the user-service manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 20-user-service
-kubectl rollout status deployment/user-service -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "user-service" successfully rolled out`.
-
-### driver-service
-
-Apply the driver-service manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 21-driver-service
-kubectl rollout status deployment/driver-service -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "driver-service" successfully rolled out`.
-
-### trip-service
-
-Apply the trip-service manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 22-trip-service
-kubectl rollout status deployment/trip-service -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "trip-service" successfully rolled out`.
-
-### matching-service
-
-Apply the matching-service manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 24-matching-service
-kubectl rollout status deployment/matching-service -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "matching-service" successfully rolled out`.
-
-### notification-worker
-
-Apply the notification-worker manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 25-notification-worker
-kubectl rollout status deployment/notification-worker -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "notification-worker" successfully rolled out`. This service runs one replica.
-
-### realtime-gateway
-
-Apply the realtime-gateway manifest and wait until its rollout finishes:
-
-```bash
-k8s_apply 26-realtime-gateway
-kubectl rollout status deployment/realtime-gateway -n ridenow --timeout=900s
-```
-
-Expected: last line `deployment "realtime-gateway" successfully rolled out`.
-
-If a rollout times out or a pod is not Ready, inspect it:
-
-```bash
-kubectl get pods -n ridenow
-kubectl describe pod -n ridenow -l app=<service>
-kubectl logs -n ridenow deployment/<service> --tail=50
-```
-
-`ImagePullBackOff` means the tag `$IMAGE_TAG` is not in ECR (see `03-ecr.md`). `CreateContainerConfigError` on a secret usually means the ExternalSecrets did not sync (`kubectl get externalsecret -n ridenow`). A pod stuck in `Pending` for more than a few minutes means no Fargate profile matches the namespace (see `06-eks-cluster.md`). Timeouts to PostgreSQL or Redis in the logs mean the ingress rules from this stack or the per-pod `SecurityGroupPolicy` from `06-eks-cluster.md` are missing.
+Expected: seven `deployment "<service>" successfully rolled out` lines. If a rollout fails, run `kubectl describe pod -n ridenow -l app=<service>` and `kubectl logs -n ridenow deployment/<service> --tail=50`. Timeouts to PostgreSQL or Redis mean the inbound rules from steps 1 and 2 or the `SecurityGroupPolicy` from `06-eks-cluster.md` are missing.
 
 ## Verify
 
-List the pods in the namespace:
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first.
 
 ```bash
-kubectl get pods -n ridenow
-kubectl get pods -n ridenow --no-headers | awk '$3=="Running" && $2 ~ /^([0-9]+)\/\1$/' | wc -l
-```
-
-Expected: 13 pods, all with `READY` `1/1` and `STATUS` `Running`: two each for `user-service`, `driver-service`, `trip-service`, `payment-service`, `matching-service` and `realtime-gateway`, and one for `notification-worker`. The count on the last line is `13`.
-
-List the deployments:
-
-```bash
-kubectl get deployments -n ridenow
-```
-
-Expected: seven deployments. `READY` is `2/2` for six of them and `1/1` for `notification-worker`.
-
-Check that no deployment is waiting on replicas:
-
-```bash
-kubectl get deployments -n ridenow \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.status.availableReplicas}{"/"}{.spec.replicas}{"\n"}{end}'
-```
-
-Expected: seven lines where the two numbers are equal, for example `trip-service  2/2`.
-
-Check the stack status once more:
-
-```bash
-stack_status 07-eks-addons
-```
-
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a redeploy).
-
-## Final check
-
-Run this once the whole deployment is finished. It only reads. The API check goes here, not in `06-eks-cluster.md`, because it returns `200` only after the services deployed in this guide are running.
-
-Check the API through the ALB. This is the smoke test from `06-eks-cluster.md`:
-
-```bash
-HOST=$(kubectl get ingress ridenow -n ridenow -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo "ALB host: $HOST"
-BASE="http://$HOST"
-code=000
-for _ in $(seq 1 60); do
-  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$BASE/api/users?limit=1" || true)
-  [[ "$code" == "200" ]] && break
-  sleep 10
+aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[?contains(Arn, '$OIDC_ID')].Arn" --output text
+aws ec2 describe-security-groups --group-ids "$DB_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`5432\`].UserIdGroupPairs[].GroupId" --output text
+aws ec2 describe-security-groups --group-ids "$REDIS_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`6379\`].UserIdGroupPairs[].GroupId" --output text
+echo "cluster SG: $EKS_CLUSTER_SG_ID"
+for ROLE in alb-controller external-secrets trip-service payment-service matching-service notification-worker; do
+  aws iam get-role --role-name ridenow-$ENV-$ROLE --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals' --output json \
+    | jq -r --arg r "$ROLE" 'to_entries[] | select(.key | endswith(":sub")) | "\($r)  \(.value)"'
 done
-echo "last status: $code"
+kubectl get pods -n ridenow
 ```
 
-Expected: `ALB host: k8s-ridenow-ridenow-<id>.ap-southeast-1.elb.amazonaws.com`, then `last status: 200`. An empty host means the ingress has no address yet (see `06-eks-cluster.md`, ALB ingress).
+Expected: one provider ARN ending in `/id/<OIDC_ID>`. Both group lines contain the `cluster SG:` value. Six role lines, each with its `system:serviceaccount:<namespace>:<service account>` from the table in step 4. 13 pods `1/1 Running` (two each for `user-service`, `driver-service`, `trip-service`, `payment-service`, `matching-service`, `realtime-gateway`; one `notification-worker`).
 
-If every check in the guides matches, the deployment is complete.
-
-Next: this is the last step. Return to `README.md` for the index.
+Next: continue with `08-frontend.md` once the Ingress has an ALB address.

@@ -20,8 +20,8 @@
 set -euo pipefail
 
 ENV="${1:-}"
-if [[ ! "${ENV}" =~ ^(dev|staging|prod)$ ]]; then
-  echo "Usage: $0 <dev|staging|prod>" >&2
+if [[ "${ENV}" != "prod" ]]; then
+  echo "Usage: $0 <prod>" >&2
   exit 1
 fi
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"

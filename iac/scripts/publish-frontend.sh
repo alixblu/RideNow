@@ -24,8 +24,8 @@ set -euo pipefail
 export AWS_PAGER=""
 
 ENV="${1:-}"
-if [[ -z "${ENV}" || ! "${ENV}" =~ ^(dev|staging|prod)$ ]]; then
-  echo "Usage: $0 <dev|staging|prod>" >&2
+if [[ "${ENV}" != "prod" ]]; then
+  echo "Usage: $0 <prod>" >&2
   exit 1
 fi
 

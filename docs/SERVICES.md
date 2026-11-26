@@ -209,10 +209,10 @@ ridenow/
     stacks/                 # CloudFormation 01 iam, 02 network, 03 ecr, 04 data,
                             #   05 messaging, 06 eks-cluster, 07 eks-addons
     k8s/                    # namespace, external-secrets, one manifest per service, ingress
-    params/                 # dev / staging / prod
+    params/                 # prod
     scripts/                # deploy.sh, teardown.sh, cleanup-cluster.sh
   docs/                     # ARCHITECTURE, KNOWLEDGE, SERVICES, proposal, DBML, stage guides
-  guides/aws/               # console-first AWS guides (+ guides/scripts/push-to-ecr.sh)
+  guides/cloudformation/    # CLI step-by-step AWS guides (+ guides/scripts/push-to-ecr.sh)
   frontend/                 # SPA
 ```
 

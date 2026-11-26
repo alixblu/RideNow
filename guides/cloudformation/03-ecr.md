@@ -1,81 +1,288 @@
 # 03 - ECR (container registry)
 
-Stack `ridenow-<env>-03-ecr` from `iac/stacks/03-ecr.yaml`. Depends on: none.
+Create seven private ECR repositories by hand (source: `iac/stacks/03-ecr.yaml`, `iac/params/prod.json`; nothing is deployed). Values: `MaxImageCount` = `50`, `UntaggedExpireDays` = `14`.
 
 ## What it creates
 
-Seven repositories: `ridenow/user-service`, `ridenow/driver-service`, `ridenow/trip-service`,
-`ridenow/payment-service`, `ridenow/matching-service`, `ridenow/notification-worker`,
-`ridenow/realtime-gateway`. Each has scan-on-push, KMS encryption, immutable tags and a lifecycle policy.
+| Template logical ID | AWS resource type | Repository name (Resolved_Value) |
+|---|---|---|
+| `UserServiceRepo` | `AWS::ECR::Repository` | `ridenow/user-service` |
+| `DriverServiceRepo` | `AWS::ECR::Repository` | `ridenow/driver-service` |
+| `TripServiceRepo` | `AWS::ECR::Repository` | `ridenow/trip-service` |
+| `PaymentServiceRepo` | `AWS::ECR::Repository` | `ridenow/payment-service` |
+| `MatchingServiceRepo` | `AWS::ECR::Repository` | `ridenow/matching-service` |
+| `NotificationWorkerRepo` | `AWS::ECR::Repository` | `ridenow/notification-worker` |
+| `RealtimeGatewayRepo` | `AWS::ECR::Repository` | `ridenow/realtime-gateway` |
 
-Repository names do **not** include the environment. Two environments in one account and region share
-one set of repositories, so deploy this stack for only one of them.
+## Depends on
 
-The repositories start **empty**. The Post-Deploy section builds and pushes the images.
+None.
 
-## Deploy
+## Create the resources
 
-### Configure
+Region: Asia Pacific (Singapore) ap-southeast-1. Each repository below has its own complete block. Do them one after another.
+Note: if the create page has no Scan on push option, turn it on after creating: ECR -> Private registry -> Settings -> Scanning configuration -> Basic scanning, Scan on push for filter `ridenow/*`.
 
-Show the values this stack will use for the current environment:
+### 1. ridenow/user-service (`UserServiceRepo`)
 
-```bash
-params 03-ecr
-```
+**Create the repository**
 
-Expected: `Environment=prod`, `MaxImageCount=50`, `UntaggedExpireDays=14`.
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/user-service` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
 
-`MaxImageCount` is how many tagged images each repository keeps. `UntaggedExpireDays` is how long untagged
-images stay. To change them for one run, pass overrides to `cfn_deploy` (this is the only place they are set):
+**Lifecycle rule 1**
 
-```bash
-cfn_deploy 03-ecr MaxImageCount=20 UntaggedExpireDays=7
-```
+9. Open `ridenow/user-service`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
 
-### Run
+**Lifecycle rule 2**
 
-Create or update the stack from `iac/stacks/03-ecr.yaml`:
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
 
-```bash
-cfn_deploy 03-ecr
-```
+### 2. ridenow/driver-service (`DriverServiceRepo`)
 
-Check the stack status:
+**Create the repository**
 
-```bash
-stack_status 03-ecr
-```
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/driver-service` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
 
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a re-run).
+**Lifecycle rule 1**
 
-### If it fails
+9. Open `ridenow/driver-service`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
 
-Print the newest failure reasons:
+**Lifecycle rule 2**
 
-```bash
-stack_failures 03-ecr
-```
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
 
-`already exists`: another stack (for example one for a different environment) owns the repositories.
-Reuse its repositories and skip this stack, or remove that stack outside this guide and deploy again.
+### 3. ridenow/trip-service (`TripServiceRepo`)
+
+**Create the repository**
+
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/trip-service` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
+
+**Lifecycle rule 1**
+
+9. Open `ridenow/trip-service`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
+
+**Lifecycle rule 2**
+
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
+
+### 4. ridenow/payment-service (`PaymentServiceRepo`)
+
+**Create the repository**
+
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/payment-service` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
+
+**Lifecycle rule 1**
+
+9. Open `ridenow/payment-service`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
+
+**Lifecycle rule 2**
+
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
+
+### 5. ridenow/matching-service (`MatchingServiceRepo`)
+
+**Create the repository**
+
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/matching-service` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
+
+**Lifecycle rule 1**
+
+9. Open `ridenow/matching-service`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
+
+**Lifecycle rule 2**
+
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
+
+### 6. ridenow/notification-worker (`NotificationWorkerRepo`)
+
+**Create the repository**
+
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/notification-worker` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
+
+**Lifecycle rule 1**
+
+9. Open `ridenow/notification-worker`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
+
+**Lifecycle rule 2**
+
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
+
+### 7. ridenow/realtime-gateway (`RealtimeGatewayRepo`)
+
+**Create the repository**
+
+1. Go to **ECR -> Private registry -> Repositories -> Create repository**.
+2. Set **Visibility settings** to `Private`.
+3. In **Repository name**, type `ridenow/realtime-gateway` (type the slash as part of the name).
+4. Set **Image tag mutability** to `Immutable`.
+5. Tick **Customize encryption settings (KMS)** under **Encryption settings**.
+6. Set **Encryption key** to `AWS managed key (aws/ecr)`.
+7. Under **Image scan settings**, set **Scan on push** to `Enabled`.
+8. Choose **Create repository**.
+
+**Lifecycle rule 1**
+
+9. Open `ridenow/realtime-gateway`, then choose **Lifecycle Policy** in the left menu.
+10. Choose **Create rule**.
+11. Set **Rule priority** to `1`.
+12. Set **Rule description** to `Expire untagged images`.
+13. Set **Image status** to `Untagged`.
+14. Under **Match criteria**, set **Since image pushed** with **Days** `14`.
+15. Set **Rule action** to `expire`.
+16. Choose **Save**.
+
+**Lifecycle rule 2**
+
+17. Choose **Create rule** again.
+18. Set **Rule priority** to `2`.
+19. Set **Rule description** to `Keep only the most recent tagged images`.
+20. Set **Image status** to `Any`.
+21. Under **Match criteria**, set **Image count more than** with **Count** `50`.
+22. Set **Rule action** to `expire`.
+23. Choose **Save**.
+
+## Values to record
+
+Each value is the repository URI: ECR -> Private registry -> Repositories -> URI column. Form: `<account-id>.dkr.ecr.<region>.amazonaws.com/<repository name>`. Account and Region come from the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
+
+| Output_Equivalent | Resource | Value | Consumed by |
+|---|---|---|---|
+| `UserServiceRepoUri` | `UserServiceRepo` | `<account-id>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/user-service` | Post-Deploy below; image references in `iac/k8s/` (see `00-deploy-runbook.md`, service deploy phase) |
+| `DriverServiceRepoUri` | `DriverServiceRepo` | `.../ridenow/driver-service` | same |
+| `TripServiceRepoUri` | `TripServiceRepo` | `.../ridenow/trip-service` | same |
+| `PaymentServiceRepoUri` | `PaymentServiceRepo` | `.../ridenow/payment-service` | same |
+| `MatchingServiceRepoUri` | `MatchingServiceRepo` | `.../ridenow/matching-service` | same |
+| `NotificationWorkerRepoUri` | `NotificationWorkerRepo` | `.../ridenow/notification-worker` | same |
+| `RealtimeGatewayRepoUri` | `RealtimeGatewayRepo` | `.../ridenow/realtime-gateway` | same |
 
 ## Post-Deploy
 
-### Build and push images
-
-Log Docker in to ECR. The token lasts about 12 hours. `ACCOUNT_ID`, `AWS_DEFAULT_REGION` and `IMAGE_TAG`
-come from `env.sh` (`IMAGE_TAG` defaults to `v1.0.0`):
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first. It sets `ACCOUNT_ID`, `AWS_DEFAULT_REGION` and `IMAGE_TAG` (default `v1.0.0`).
 
 ```bash
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
   | docker login --username AWS --password-stdin "$REGISTRY"
-```
-
-Build each of the seven service images and push it in one step. Run this from the repository root, where
-each service directory holds its `Dockerfile`:
-
-```bash
 for SVC in user-service driver-service trip-service payment-service \
            matching-service notification-worker realtime-gateway; do
   docker buildx build --platform linux/amd64 \
@@ -84,69 +291,24 @@ for SVC in user-service driver-service trip-service payment-service \
 done
 ```
 
-Expected: seven successful builds, each ending with `pushing manifest ... done`.
-
-This differs from `guides/scripts/push-to-ecr.sh`, which runs `docker build`, `docker tag` and `docker push`
-with no platform flag. EKS Fargate runs `linux/amd64`, so an image built on an Arm machine (for example
-Apple Silicon) would fail to start. `--platform linux/amd64` forces the right architecture, and `--push`
-sends the image straight to ECR without keeping a local copy.
-
-Tags are immutable (`ImageTagMutability: IMMUTABLE`). Pushing a tag that already exists fails with
-`tag invalid`. To publish new code, set a new tag first, for example `export IMAGE_TAG=v1.0.1`, and run the
-loop again. Use the same `IMAGE_TAG` in later guides, because `k8s_apply` writes it into the manifests.
+Expected: `Login Succeeded`, then seven pushes. Tags are immutable: to push again, use a new `IMAGE_TAG`.
 
 ## Verify
 
-Seven repositories, scan on push, KMS encryption:
-
 ```bash
 aws ecr describe-repositories \
-  --query "repositories[?starts_with(repositoryName,'ridenow/')].[repositoryName,imageScanningConfiguration.scanOnPush,encryptionConfiguration.encryptionType]" \
+  --query "repositories[?starts_with(repositoryName,'ridenow/')].[repositoryName,imageScanningConfiguration.scanOnPush,encryptionConfiguration.encryptionType,imageTagMutability]" \
   --output table
 ```
 
-Expected: seven rows, each `True` and `KMS`.
-
-Lifecycle policy on one repository:
+Expected: seven rows, each `True`, `KMS`, `IMMUTABLE`. Otherwise recreate the empty repository (encryption is fixed at creation).
 
 ```bash
 aws ecr get-lifecycle-policy --repository-name ridenow/user-service \
-  --query lifecyclePolicyText --output text | jq '.rules[] | {rulePriority, description}'
+  --query lifecyclePolicyText --output text | jq '.rules[] | {rulePriority, countNumber: .selection.countNumber}'
 ```
 
-Expected: two rules, one for untagged images and one for the tagged-image count.
-
-The pushed image exists in every repository. `deploy-and-test.sh` runs the same check before it deploys
-any service:
-
-```bash
-for SVC in user-service driver-service trip-service payment-service \
-           matching-service notification-worker realtime-gateway; do
-  aws ecr describe-images --repository-name "ridenow/$SVC" \
-    --image-ids "imageTag=$IMAGE_TAG" \
-    --query 'imageDetails[0].[imageTags[0],imagePushedAt]' --output text \
-    || echo "MISSING: ridenow/$SVC:$IMAGE_TAG"
-done
-```
-
-Expected: seven lines, each the tag (for example `v1.0.0`) and a push timestamp, and no `MISSING` line.
-
-The repository URIs later guides use:
-
-```bash
-stack_outputs 03-ecr
-```
-
-Expected: seven rows `<Service>RepoUri` with values like `<account>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/user-service`.
-
-## Final check
-
-Run this once the whole deployment is finished. It only reads. The image tag check in all seven repositories is already in Verify above, so only the stack status is repeated here.
-
-```bash
-stack_status 03-ecr
-```
-
-Expected: `CREATE_COMPLETE` or `UPDATE_COMPLETE`.
+Expected: priority 1 with `14`, priority 2 with `50`.
 
 Next: `04-data.md`.
+

@@ -29,11 +29,11 @@ ENV="${1:-}"
 APPLY=0
 
 usage() {
-  echo "Usage: $0 <dev|staging|prod> [--apply]" >&2
+  echo "Usage: $0 <prod> [--apply]" >&2
   exit 1
 }
 
-if [[ -z "${ENV}" || ! "${ENV}" =~ ^(dev|staging|prod)$ ]]; then
+if [[ "${ENV}" != "prod" ]]; then
   usage
 fi
 shift

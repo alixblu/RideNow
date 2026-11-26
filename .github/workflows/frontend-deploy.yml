@@ -1,7 +1,8 @@
 name: frontend-deploy
 
-# Push to main (frontend changes) deploys dev. Prod is started by hand and waits
-# for the reviewers set on the "prod" GitHub Environment.
+# prod is the only environment. Push to main (frontend changes) and a manual
+# workflow_dispatch both deploy prod, and both wait for the reviewers set on the
+# "prod" GitHub Environment.
 on:
   push:
     branches: [main]
@@ -14,8 +15,8 @@ on:
       environment:
         description: Environment to deploy
         type: choice
-        options: [dev, prod]
-        default: dev
+        options: [prod]
+        default: prod
 
 permissions:
   id-token: write # request the OIDC token
@@ -23,12 +24,12 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
-  TARGET_ENV: ${{ inputs.environment || 'dev' }}
+  TARGET_ENV: ${{ inputs.environment || 'prod' }}
 
 # One deploy per environment at a time. Queue instead of cancelling, so a
 # running upload is never cut off halfway.
 concurrency:
-  group: frontend-deploy-${{ inputs.environment || 'dev' }}
+  group: frontend-deploy-${{ inputs.environment || 'prod' }}
   cancel-in-progress: false
 
 jobs:
@@ -36,8 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The environment gives prod its approval gate, and it is the "sub" claim the
-    # IAM role trusts (repo:alixblu/RideNow:environment:<env>).
-    environment: ${{ inputs.environment || 'dev' }}
+    # IAM role trusts (repo:alixblu/RideNow:environment:prod).
+    environment: ${{ inputs.environment || 'prod' }}
     steps:
       - uses: actions/checkout@v4
 

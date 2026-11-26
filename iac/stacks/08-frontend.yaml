@@ -17,7 +17,7 @@ Description: >
 Parameters:
   Environment:
     Type: String
-    AllowedValues: [dev, staging, prod]
+    AllowedValues: [prod]
     Description: Used in resource names, export names and tags.
 
   AlbDnsName:

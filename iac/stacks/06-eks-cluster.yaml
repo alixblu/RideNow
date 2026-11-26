@@ -9,7 +9,7 @@ Description: >
 Parameters:
   Environment:
     Type: String
-    AllowedValues: [dev, staging, prod]
+    AllowedValues: [prod]
 
   KubernetesVersion:
     Type: String

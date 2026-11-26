@@ -5,15 +5,14 @@ Description: >
   (SERVICES array) and the EKS image references in k8s/. Scan-on-push, KMS
   encryption, and a lifecycle policy that prunes old/untagged images.
 
-  NOTE: ECR repositories are account/region-global, not per-environment. This
-  stack is deployed ONCE (e.g. with the dev run); all environments pull the same
-  images. The Environment parameter only tags the stack and names the exports so
-  other stacks can import consistently.
+  NOTE: ECR repositories are account/region-global. The Environment parameter
+  only tags the stack and names the exports so other stacks can import
+  consistently.
 
 Parameters:
   Environment:
     Type: String
-    AllowedValues: [dev, staging, prod]
+    AllowedValues: [prod]
     Description: Used in export names and tags. ECR repos themselves are shared.
 
   MaxImageCount:

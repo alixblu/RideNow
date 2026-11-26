@@ -125,11 +125,12 @@ not publish the database ports, so these fail unless such a database is running.
 
 Two routes, same footprint:
 
-- **Console, click-by-click** (backend -> EKS): start at
-  [`guides/aws/README.md`](guides/aws/README.md) - IAM -> VPC -> ECR ->
-  RDS/Secrets -> EKS -> deploy, with ElastiCache and SNS/SQS as later ops.
-- **Infrastructure as Code** (CloudFormation + k8s manifests):
-  [`iac/README.md`](iac/README.md).
+- **CLI, step by step** (CloudFormation, one command at a time): start at
+  [`guides/cloudformation/README.md`](guides/cloudformation/README.md) - IAM -> VPC ->
+  ECR -> data -> messaging -> EKS -> add-ons, then the S3/CloudFront frontend in
+  [`guides/cloudformation/08-frontend.md`](guides/cloudformation/08-frontend.md).
+- **Infrastructure as Code** (CloudFormation templates, deploy scripts and k8s
+  manifests): [`iac/README.md`](iac/README.md).
 
 Kubernetes manifests for all six services live in [`iac/k8s/`](iac/k8s/).
 

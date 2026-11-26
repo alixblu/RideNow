@@ -1,163 +1,320 @@
 # 05 - Messaging and cache (SNS, SQS, Valkey)
 
-Stack `ridenow-<env>-05-messaging` from `iac/stacks/05-messaging.yaml`.
-Depends on: `02-network` (imports `PrivateSubnetIds`, `VpcId`, `NodeSecurityGroupId`).
+You create one SNS topic, three SQS queues with their dead-letter queues, three subscriptions and a Valkey replication group by hand in the AWS Console, following `iac/stacks/05-messaging.yaml`. Region `ap-southeast-1`, parameters from `iac/params/prod.json` layer `05-messaging` (`EnableMessaging=true`, `EnableRedis=true`, `RedisNodeType=cache.t4g.small`; `MaxReceiveCount` is not in the file, so the Template default `5` applies).
 
 ## What it creates
 
-- One SNS topic, `ridenow-<env>-events`. Every service publishes domain events to it.
-- Three SQS work queues, each with its own dead-letter queue (DLQ, 14-day retention) and SQS-managed encryption:
-  - `ridenow-<env>-matching` receives only `trip.requested` (consumer: matching-service).
-  - `ridenow-<env>-payment` receives only `trip.completed` and `trip.cancelled` (consumer: payment-service).
-  - `ridenow-<env>-notifications` receives every event, with no filter (consumer: notification-worker).
-- One SNS subscription per queue with raw message delivery, so the SQS body is the event JSON. Filters match the top-level `type` field of the body.
-- One queue policy per queue that lets only this topic (matched by `aws:SourceArn`) send messages.
-- An ElastiCache for Valkey replication group `ridenow-<env>-redis` (Redis protocol, 2 nodes, Multi-AZ with automatic failover, encryption at rest and TLS in transit). It holds driver GEO and live state, the location Pub/Sub channel, and the driver-locations stream.
-- A Redis security group that allows port 6379 only from the cluster security group (`NodeSecurityGroupId`), plus a subnet group on the private subnets.
+| Template logical ID | AWS resource type | Resolved name |
+|---|---|---|
+| `TripEventTopic` | SNS topic | `ridenow-prod-events` |
+| `NotificationDlq` | SQS queue | `ridenow-prod-notifications-dlq` |
+| `NotificationQueue` | SQS queue | `ridenow-prod-notifications` |
+| `MatchingDlq` | SQS queue | `ridenow-prod-matching-dlq` |
+| `MatchingQueue` | SQS queue | `ridenow-prod-matching` |
+| `PaymentDlq` | SQS queue | `ridenow-prod-payment-dlq` |
+| `PaymentQueue` | SQS queue | `ridenow-prod-payment` |
+| `MatchingSubscription` | SNS subscription | topic `ridenow-prod-events` to `ridenow-prod-matching` |
+| `PaymentSubscription` | SNS subscription | topic `ridenow-prod-events` to `ridenow-prod-payment` |
+| `NotificationSubscription` | SNS subscription | topic `ridenow-prod-events` to `ridenow-prod-notifications` |
+| `MatchingQueuePolicy` | SQS queue policy | on `ridenow-prod-matching` |
+| `PaymentQueuePolicy` | SQS queue policy | on `ridenow-prod-payment` |
+| `NotificationQueuePolicy` | SQS queue policy | on `ridenow-prod-notifications` |
+| `RedisSubnetGroup` | ElastiCache subnet group | `ridenow-prod-redis-subnets` |
+| `RedisSecurityGroup` | EC2 security group | `ridenow-prod-redis-sg` |
+| `RedisReplicationGroup` | ElastiCache replication group | `ridenow-prod-redis` |
 
-The topic and queues are created only when `EnableMessaging=true`. The cache is created only when `EnableRedis=true`.
+## Depends on
 
-## Deploy
+From `02-network.md`. Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first and check these values are not `MISSING`:
 
-### Configure
+| Value | Template import | Resource it comes from | Used for |
+|---|---|---|---|
+| `PRIVATE_SUBNET_IDS` | `network-PrivateSubnetIds` | subnets `ridenow-prod-private-1`, `ridenow-prod-private-2` | Redis subnet group |
+| `VPC_ID` | `network-VpcId` | VPC `ridenow-prod-vpc` | Redis security group |
+| `NODE_SG_ID` | `network-NodeSecurityGroupId` | security group `ridenow-prod-cluster-sg` | source of the port 6379 rule |
 
-Show the parameters this stack will receive from `iac/params/$ENV.json`:
+## Create the resources
 
-```bash
-params 05-messaging
+Follow the steps in order. `<ACCOUNT_ID>` is your 12-digit account ID (top-right menu in the console).
+
+### 1. SNS topic (`TripEventTopic`)
+
+1. Go to **Amazon SNS -> Topics -> Create topic**.
+2. Set **Type** to `Standard`.
+3. Set **Name** to `ridenow-prod-events`.
+4. Leave **Encryption** disabled (the `aws/sns` key blocks delivery to SQS).
+5. Leave **Access policy** at the default.
+6. Choose **Create topic**.
+7. Copy the topic ARN: `arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events`.
+
+### 2. Dead-letter queues (`NotificationDlq`, `MatchingDlq`, `PaymentDlq`)
+
+Repeat this list three times, with the names `ridenow-prod-notifications-dlq`, `ridenow-prod-matching-dlq` and `ridenow-prod-payment-dlq`.
+
+1. Go to **Amazon SQS -> Queues -> Create queue**.
+2. Set **Type** to `Standard`.
+3. Set **Name** to one of the three DLQ names.
+
+   **Configuration**
+
+4. Set **Visibility timeout** to `30` **Seconds** (the default).
+5. Set **Message retention period** to `14` **Days**.
+
+   **Encryption**
+
+6. Set **Server-side encryption** to `Enabled`.
+7. Set **Encryption key type** to `Amazon SQS key (SSE-SQS)`.
+
+   **Policies**
+
+8. Leave **Access policy** at `Basic` (the default).
+9. Set **Dead-letter queue** to `Disabled`.
+10. Choose **Create queue**.
+
+### 3. Work queues and access policies (`NotificationQueue`, `MatchingQueue`, `PaymentQueue`, and their queue policies)
+
+Repeat this list three times, with these queue and DLQ pairs:
+
+| Queue name | Dead-letter queue |
+|---|---|
+| `ridenow-prod-matching` | `ridenow-prod-matching-dlq` |
+| `ridenow-prod-payment` | `ridenow-prod-payment-dlq` |
+| `ridenow-prod-notifications` | `ridenow-prod-notifications-dlq` |
+
+1. Go to **Amazon SQS -> Queues -> Create queue**.
+2. Set **Type** to `Standard`.
+3. Set **Name** to the queue name from the table.
+
+   **Configuration**
+
+4. Set **Visibility timeout** to `1` **Minutes** (60 seconds).
+5. Set **Message retention period** to `4` **Days** (the default).
+
+   **Encryption**
+
+6. Set **Server-side encryption** to `Enabled`.
+7. Set **Encryption key type** to `Amazon SQS key (SSE-SQS)`.
+
+   **Access policy**
+
+8. Select **Advanced**.
+9. Replace the JSON with the policy below for this queue, and replace `<ACCOUNT_ID>`.
+
+   **Dead-letter queue**
+
+10. Set **Dead-letter queue** to `Enabled`.
+11. In **Choose queue**, pick the DLQ from the table.
+12. Set **Maximum receives** to `5`.
+13. Choose **Create queue**.
+
+Access policy for `ridenow-prod-matching`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowRideNowTopic",
+      "Effect": "Allow",
+      "Principal": { "Service": "sns.amazonaws.com" },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-matching",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+    }
+  ]
+}
 ```
 
-Expected for `prod`: `Environment=prod`, `EnableMessaging=true`, `EnableRedis=true`, `RedisNodeType=cache.t4g.small`.
+Access policy for `ridenow-prod-payment`:
 
-`MaxReceiveCount` (deliveries before a message moves to its DLQ, default `5`) is not set in the params file. To override it for one run, pass it to `cfn_deploy` (see Run below).
-
-### Run
-
-Deploy the stack with the shared helper. The Valkey replication group usually takes 10 to 15 minutes; the rest is fast.
-
-```bash
-cfn_deploy 05-messaging
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowRideNowTopic",
+      "Effect": "Allow",
+      "Principal": { "Service": "sns.amazonaws.com" },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-payment",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+    }
+  ]
+}
 ```
 
-Expected last line: `Successfully created/updated stack - ridenow-prod-05-messaging`.
+Access policy for `ridenow-prod-notifications`:
 
-To change `MaxReceiveCount` once instead:
-
-```bash
-cfn_deploy 05-messaging MaxReceiveCount=3
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowRideNowTopic",
+      "Effect": "Allow",
+      "Principal": { "Service": "sns.amazonaws.com" },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-notifications",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+    }
+  ]
+}
 ```
 
-Check the stack status:
+### 4. Subscriptions (`MatchingSubscription`, `PaymentSubscription`, `NotificationSubscription`)
 
-```bash
-stack_status 05-messaging
+**Matching subscription**
+
+1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
+2. Set **Protocol** to `Amazon SQS`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-matching`.
+4. Check **Enable raw message delivery**.
+5. Expand **Subscription filter policy** and turn it on.
+6. Set **Filter policy scope** to `Message body`.
+7. Paste the matching filter below into the JSON editor.
+8. Leave **Redrive policy (dead-letter queue)** off.
+9. Choose **Create subscription**.
+
+```json
+{
+  "type": ["trip.requested"]
+}
 ```
 
-Expected: `CREATE_COMPLETE` (or `UPDATE_COMPLETE` on a redeploy).
+**Payment subscription**
 
-### If it fails
+1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
+2. Set **Protocol** to `Amazon SQS`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-payment`.
+4. Check **Enable raw message delivery**.
+5. Expand **Subscription filter policy** and turn it on.
+6. Set **Filter policy scope** to `Message body`.
+7. Paste the payment filter below into the JSON editor.
+8. Leave **Redrive policy (dead-letter queue)** off.
+9. Choose **Create subscription**.
 
-Show the newest failed events and their reasons:
-
-```bash
-stack_failures 05-messaging
+```json
+{
+  "type": ["trip.completed", "trip.cancelled"]
+}
 ```
 
-`Export ... cannot be imported` or `No export named ...network-...`: deploy `02-network.md` first. A stack in `ROLLBACK_COMPLETE` must be deleted before it can be deployed again (see `README.md`).
+**Notification subscription**
+
+1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
+2. Set **Protocol** to `Amazon SQS`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-notifications`.
+4. Check **Enable raw message delivery**.
+5. Leave **Subscription filter policy** off (it receives every event).
+6. Leave **Redrive policy (dead-letter queue)** off.
+7. Choose **Create subscription**.
+
+Note: each subscription shows Status `Confirmed`. If it shows `Pending confirmation`, recheck the queue access policy from step 3.
+
+### 5. Redis subnet group (`RedisSubnetGroup`)
+
+1. Go to **Amazon ElastiCache -> Subnet groups -> Create subnet group**.
+2. Set **Name** to `ridenow-prod-redis-subnets`.
+3. Set **Description** to `ridenow-prod Redis private subnets`.
+4. Set **VPC ID** to `ridenow-prod-vpc`.
+5. Under **Selected subnets**, pick the Availability Zones first, then tick `ridenow-prod-private-1` and `ridenow-prod-private-2`.
+6. Choose **Create**.
+
+### 6. Redis security group (`RedisSecurityGroup`)
+
+1. Go to **EC2 -> Security Groups -> Create security group**.
+2. Set **Security group name** to `ridenow-prod-redis-sg`.
+3. Set **Description** to `ridenow-prod Redis (private)`.
+4. Set **VPC** to `ridenow-prod-vpc`.
+
+   **Inbound rules**
+
+5. Choose **Add rule**.
+6. Set **Type** to `Custom TCP`.
+7. Set **Port range** to `6379`.
+8. Set **Source** to `Custom`, then pick the security group `ridenow-prod-cluster-sg`.
+9. Set **Description** to `Redis 6379 from EKS nodes only`.
+
+   **Outbound rules**
+
+10. Leave the default (`All traffic`, `0.0.0.0/0`).
+
+    **Tags**
+
+11. Choose **Add new tag**, set **Key** to `Name` and **Value** to `ridenow-prod-redis-sg`. The Discovery_Block finds the group by this tag.
+12. Choose **Create security group**.
+
+### 7. Valkey replication group (`RedisReplicationGroup`)
+
+**Create**
+
+1. Go to **Amazon ElastiCache -> Valkey caches -> Create Valkey cache**.
+2. Set **Deployment option** to `Design your own cache`.
+3. Set **Creation method** to `Cluster cache`.
+4. Set **Cluster mode** to `Disabled`.
+
+   **Cluster settings**
+
+5. Set **Name** to `ridenow-prod-redis`.
+6. Set **Description** to `ridenow-prod driver GEO / live state`.
+7. Set **Engine version** to `8.0`.
+8. Set **Port** to `6379`.
+9. Set **Parameter group** to `default.valkey8`.
+10. Set **Node type** to `cache.t4g.small`.
+11. Set **Number of replicas** to `1`.
+12. Set **Multi-AZ** to `Enable`.
+13. Set **Auto-failover** to `Enable`.
+
+    **Connectivity**
+
+14. Set **Subnet group** to **Choose existing subnet group**, then pick `ridenow-prod-redis-subnets`.
+15. Set **Availability Zone placements** to `No preference`.
+
+    **Security**
+
+16. Set **Encryption at rest** to `Enable` (default key).
+17. Set **Encryption in transit** to `Enable`.
+18. Set **Access control** to `No access control`.
+19. Under **Selected security groups**, choose **Manage**.
+20. Tick `ridenow-prod-redis-sg` and remove `default`.
+
+    **Backup**
+
+21. Clear **Enable automatic backups**.
+22. Choose **Create**.
+23. Wait 10 to 15 minutes until **Status** is `Available`.
+## Values to record
+
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) again so these variables are set.
+
+| Output (Template) | Discovery_Block variable | How to see it in the console | Used by |
+|---|---|---|---|
+| `TripEventTopicArn` | `TRIP_EVENTS_TOPIC_ARN` | SNS > Topics > `ridenow-prod-events` > ARN | Runbook (service manifests set `RIDENOW_EVENTS_TOPIC_ARN` from it) |
+| `MatchingQueueUrl` | `MATCHING_QUEUE_URL` | SQS > `ridenow-prod-matching` > URL | Runbook (`<MATCHING_QUEUE_URL>` in `iac/k8s/24-matching-service.yaml`) |
+| `MatchingQueueArn` | `MATCHING_QUEUE_ARN` | SQS > `ridenow-prod-matching` > ARN | Runbook checks |
+| `PaymentQueueUrl` | `PAYMENT_QUEUE_URL` | SQS > `ridenow-prod-payment` > URL | Runbook (`<PAYMENT_QUEUE_URL>` in `iac/k8s/23-payment-service.yaml`) |
+| `PaymentQueueArn` | `PAYMENT_QUEUE_ARN` | SQS > `ridenow-prod-payment` > ARN | Runbook checks |
+| `NotificationQueueUrl` | `NOTIFICATIONS_QUEUE_URL` | SQS > `ridenow-prod-notifications` > URL | Runbook (`<NOTIFICATIONS_QUEUE_URL>` in `iac/k8s/25-notification-worker.yaml`) |
+| `NotificationQueueArn` | `NOTIFICATIONS_QUEUE_ARN` | SQS > `ridenow-prod-notifications` > ARN | Runbook checks |
+| `RedisPrimaryEndpoint` | `REDIS_ENDPOINT` | ElastiCache > `ridenow-prod-redis` > Primary endpoint (host only, no `:6379`) | Runbook (`<REDIS_ENDPOINT>` in the driver, matching, notification and realtime manifests) |
+| `RedisSecurityGroupId` | `REDIS_SG_ID` | EC2 > Security Groups > `ridenow-prod-redis-sg` | `07-eks-addons.md` (ingress rule from the EKS cluster security group) |
 
 ## Post-Deploy
 
-No post-deploy configuration is needed for this stack.
+No post-deploy configuration is needed. `07-eks-addons.md` opens `ridenow-prod-redis-sg` to the Fargate pods.
 
 ## Verify
 
-Load the exports used below:
+Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then:
 
 ```bash
-TOPIC_ARN=$(exp messaging-TripEventTopicArn); echo $TOPIC_ARN
-```
-
-Expected: `arn:aws:sns:ap-southeast-1:<account>:ridenow-prod-events`.
-
-List the stack outputs (topic, three queue URLs and ARNs, Redis endpoint, Redis security group):
-
-```bash
-stack_outputs 05-messaging
-```
-
-Expected: nine rows: `TripEventTopicArn`, `NotificationQueueUrl`, `NotificationQueueArn`, `MatchingQueueUrl`, `MatchingQueueArn`, `PaymentQueueUrl`, `PaymentQueueArn`, `RedisPrimaryEndpoint`, `RedisSecurityGroupId`.
-
-Check that three work queues and three DLQs exist:
-
-```bash
-aws sqs list-queues --queue-name-prefix ridenow-$ENV- \
-  --query 'QueueUrls' --output text | tr '\t' '\n' | sort
-```
-
-Expected: six URLs ending in `-matching`, `-matching-dlq`, `-notifications`, `-notifications-dlq`, `-payment`, `-payment-dlq`.
-
-Check each work queue's redrive policy points at its DLQ with the configured `maxReceiveCount`:
-
-```bash
-for Q in Matching Payment Notification; do
-  aws sqs get-queue-attributes --queue-url "$(exp messaging-${Q}QueueUrl)" \
-    --attribute-names RedrivePolicy --query 'Attributes.RedrivePolicy' --output text | jq -c .
+for V in TRIP_EVENTS_TOPIC_ARN MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL REDIS_ENDPOINT REDIS_SG_ID; do
+  echo "$V=${!V:-MISSING}"
 done
+aws sns list-subscriptions-by-topic --topic-arn "$TRIP_EVENTS_TOPIC_ARN" \
+  --query 'Subscriptions[].[Endpoint,SubscriptionArn]' --output text
 ```
 
-Expected: three lines, each with a `deadLetterTargetArn` ending in `-dlq` and `"maxReceiveCount":5` (or the value you set).
-
-Check the subscriptions and their filter policies:
-
-```bash
-for SUB in $(aws sns list-subscriptions-by-topic --topic-arn $TOPIC_ARN \
-    --query 'Subscriptions[].SubscriptionArn' --output text); do
-  aws sns get-subscription-attributes --subscription-arn $SUB \
-    --query 'Attributes.[Endpoint,RawMessageDelivery,FilterPolicy]' --output text
-done
-```
-
-Expected: three lines, all with `true` for raw delivery. The matching queue shows `{"type":["trip.requested"]}`, the payment queue shows `{"type":["trip.completed","trip.cancelled"]}`, and the notifications queue shows `None` (no filter).
-
-Check that the queue policy on one queue allows only this topic:
-
-```bash
-aws sqs get-queue-attributes --queue-url "$(exp messaging-MatchingQueueUrl)" \
-  --attribute-names Policy --query 'Attributes.Policy' --output text \
-  | jq '.Statement[0] | {Principal, Action, Condition}'
-```
-
-Expected: principal `sns.amazonaws.com`, action `sqs:SendMessage`, and `aws:SourceArn` equal to `$TOPIC_ARN`.
-
-Check the Valkey replication group:
-
-```bash
-aws elasticache describe-replication-groups --replication-group-id ridenow-$ENV-redis \
-  --query 'ReplicationGroups[0].[Status,Engine,TransitEncryptionEnabled,AtRestEncryptionEnabled,AutomaticFailover,MultiAZ]' \
-  --output text
-```
-
-Expected: `available  valkey  True  True  enabled  enabled`.
-
-Check the endpoint export and the port 6379 rule:
-
-```bash
-exp messaging-RedisPrimaryEndpoint
-aws ec2 describe-security-groups --group-ids "$(exp messaging-RedisSecurityGroupId)" \
-  --query 'SecurityGroups[0].IpPermissions[].[FromPort,ToPort,UserIdGroupPairs[0].GroupId]' --output text
-exp network-NodeSecurityGroupId
-```
-
-Expected: a host name like `master.ridenow-prod-redis.<id>.apse1.cache.amazonaws.com`, then `6379  6379  <sg-id>`, where that `<sg-id>` equals the last line (the cluster security group).
-
-## Final check
-
-Run this once the whole deployment is finished. It only reads.
-
-```bash
-stack_status 05-messaging
-```
-
-Expected: `CREATE_COMPLETE` or `UPDATE_COMPLETE`.
+Expected: six variables with a value (none `MISSING`) and three subscriptions with full ARNs (not `PendingConfirmation`). If one is missing, open the console page for that resource and check the name.
 
 Next: `06-eks-cluster.md`.

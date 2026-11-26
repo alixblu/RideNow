@@ -23,8 +23,8 @@ if [[ "${2:-}" == "--apply" ]]; then
   APPLY=1
 fi
 
-if [[ -z "${ENV}" || ! "${ENV}" =~ ^(dev|staging|prod)$ ]]; then
-  echo "Usage: $0 <dev|staging|prod> [--apply]" >&2
+if [[ "${ENV}" != "prod" ]]; then
+  echo "Usage: $0 <prod> [--apply]" >&2
   exit 1
 fi
 

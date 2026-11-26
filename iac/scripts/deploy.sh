@@ -37,11 +37,11 @@ APPLY=0
 PARALLEL=0
 
 usage() {
-  echo "Usage: $0 <dev|staging|prod> [--apply] [--parallel]" >&2
+  echo "Usage: $0 <prod> [--apply] [--parallel]" >&2
   exit 1
 }
 
-if [[ -z "${ENV}" || ! "${ENV}" =~ ^(dev|staging|prod)$ ]]; then
+if [[ "${ENV}" != "prod" ]]; then
   usage
 fi
 shift

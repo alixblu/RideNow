@@ -11,7 +11,7 @@ Description: >
 Parameters:
   Environment:
     Type: String
-    AllowedValues: [dev, staging, prod]
+    AllowedValues: [prod]
     Description: Deployment environment; used in export names and resource tags.
 
   VpcCidr:

@@ -1,9 +1,8 @@
 # RideNow - Infrastructure as Code (CloudFormation + EKS)
 
-Production-grade, **layered** CloudFormation for the RideNow backend. This is the
-"codify it" counterpart to the console-first AWS guides in `../guides/aws/`.
-The console guides teach each AWS resource by hand; this folder reproduces the
-same footprint as reviewable, repeatable templates.
+Production-grade, **layered** CloudFormation for the RideNow backend. The
+step-by-step CLI guides in `../guides/cloudformation/` walk through each stack by
+hand; this folder holds the reviewable, repeatable templates and scripts they use.
 
 > These templates provision the full architecture in `../docs/ARCHITECTURE.md`: a
 > 2-AZ VPC, one RDS instance per data-owning service (six), SNS/SQS/Valkey, and an
@@ -28,15 +27,15 @@ same footprint as reviewable, repeatable templates.
 | 8 | `stacks/08-frontend.yaml` | Private S3 bucket, CloudFront distribution (static site, plus `/api/*` and `/live*` forwarded to the ALB), SPA rewrite function, GitHub Actions deploy role | Origin Access Control, TLS-only bucket policy, role trusts only `repo:alixblu/RideNow` in the matching GitHub Environment |
 
 Stack 08 is **not** run by `deploy.sh`. It needs the ALB hostname, which exists only after the
-services and Ingress are deployed. Deploy it with `scripts/deploy-frontend.sh <env> [--apply]`
-and publish the site with `scripts/publish-frontend.sh <env>`. See `../guides/aws/10-frontend-hosting.md`.
+services and Ingress are deployed. Deploy it with `scripts/deploy-frontend.sh prod [--apply]`
+and publish the site with `scripts/publish-frontend.sh prod`. See `../guides/cloudformation/08-frontend.md`.
 
 Kubernetes workload manifests (Deployment / Service / Ingress / HPA) live in `k8s/`.
 
 ### What each Kubernetes manifest needs
 
 Each manifest has `<PLACEHOLDER>`s filled from stack exports (see
-`../guides/aws/06-eks-deploy.md`). `scripts/check-consistency.sh` checks that every
+`../guides/cloudformation/06-eks-cluster.md`). `scripts/check-consistency.sh` checks that every
 one has a source.
 
 | Manifest | Service | Database | Export-fed placeholders |
@@ -83,8 +82,8 @@ ridenow-prod-eks-ClusterName
 ridenow-prod-eks-OidcProviderArn
 ```
 
-`<env>` is one of `dev`, `staging`, `prod` and comes from the `Environment`
-parameter, so three environments coexist in one account/region without clashing.
+`<env>` is `prod`, the only environment, and comes from the `Environment`
+parameter.
 
 ### Dependency flow
 
@@ -103,28 +102,24 @@ parameter, so three environments coexist in one account/region without clashing.
 
 ## Environments
 
-Per-environment values live in `params/<env>.json` (CloudFormation parameter
-files). The **same templates** deploy every environment. Each environment has the
-same architecture (same stacks, same services); `dev` is sized down to cost less.
-The `Environment` name and the VPC CIDR also differ so multiple environments can
-coexist in one account/region.
+The `prod` values live in `params/prod.json` (a CloudFormation parameter file).
 
-| Knob | `dev` | `staging` / `prod` |
-|------|-------|--------------------|
-| AZ count / NAT gateways | 2 AZ, one NAT per AZ | same |
-| RDS instances | 6 (one per data-owning service) | same |
-| RDS instance class / storage | `db.t4g.micro`, 20 GiB | same |
-| RDS Multi-AZ | false | true |
-| RDS backup retention (days) | 1 | 30 |
-| RDS deletion protection | false (snapshot on delete) | false (snapshot on delete) |
-| Cache node type (`RedisNodeType`) | `cache.t4g.micro` | `cache.t4g.small` |
-| EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) | same |
-| Messaging (SNS/SQS) | on | on |
+| Knob | `prod` |
+|------|--------|
+| AZ count / NAT gateways | 2 AZ, one NAT per AZ |
+| RDS instances | 6 (one per data-owning service) |
+| RDS instance class / storage | `db.t4g.micro`, 20 GiB |
+| RDS Multi-AZ | true |
+| RDS backup retention (days) | 30 |
+| RDS deletion protection | false (snapshot on delete) |
+| Cache node type (`RedisNodeType`) | `cache.t4g.small` |
+| EKS compute | **Fargate** (serverless pods; no node group, no autoscaler) |
+| Messaging (SNS/SQS) | on |
 
-This matches the recorded RideNow config decision: **one image promoted unchanged
-across environments; the environment supplies the differences** (laptop defaults ->
-Compose `.env` -> ConfigMap/Secret/Secrets Manager). No `dev`/`prod` baked into any
-service image.
+This matches the recorded RideNow config decision: **one image promoted unchanged;
+the environment supplies the differences** (laptop defaults ->
+Compose `.env` -> ConfigMap/Secret/Secrets Manager). No environment name is baked
+into any service image.
 
 ---
 
@@ -171,7 +166,7 @@ warns and leaves it blank, which is harmless for the change-set preview.)
 
 > This provisions **infrastructure only**. The image build, the in-cluster Helm /
 > `kubectl` add-ons, and the service manifests are separate steps. Follow
-> `../guides/aws/00-deploy-runbook.md` for the full dependency-ordered sequence
+> `../guides/cloudformation/00-deploy-runbook.md` for the full dependency-ordered sequence
 > (stacks + images + add-ons + services).
 
 ## Teardown
@@ -261,7 +256,7 @@ iac/
   bootstrap/
     github-oidc.yaml       # GitHub OIDC provider, once per AWS account
   params/
-    dev.json  staging.json  prod.json   # same prod shape; differ by name + CIDR
+    prod.json
   k8s/
     <per-service Deployment/Service/Ingress/HPA manifests>
   scripts/
