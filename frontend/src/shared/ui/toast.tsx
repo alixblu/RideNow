@@ -17,6 +17,7 @@ import {
 import type { ReactNode } from "react";
 import { CheckCircle2, X, AlertCircle, Info } from "lucide-react";
 import { cn } from "./cn";
+import { prefersReducedMotion } from "./motion";
 
 type ToastTone = "success" | "error" | "info";
 
@@ -39,9 +40,15 @@ const TONE_ICON = {
 } as const;
 
 const TONE_ACCENT: Record<ToastTone, string> = {
-  success: "text-success",
-  error: "text-danger",
-  info: "text-info",
+  success: "text-success-600",
+  error: "text-danger-600",
+  info: "text-info-600",
+};
+
+const TONE_SURFACE: Record<ToastTone, string> = {
+  success: "border-success-300 bg-success-50",
+  error: "border-danger-300 bg-danger-50",
+  info: "border-info-300 bg-info-50",
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -63,6 +70,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   const api = useMemo<ToastApi>(() => ({ toast }), [toast]);
+  const reduced = prefersReducedMotion();
 
   return (
     <ToastContext.Provider value={api}>
@@ -77,8 +85,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={item.id}
               className={cn(
-                "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-xl border border-border",
-                "bg-surface-raised px-4 py-3 shadow-pop animate-slide-up",
+                "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-xl border",
+                "px-4 py-3 shadow-pop",
+                TONE_SURFACE[item.tone],
+                !reduced && "animate-slide-up",
               )}
             >
               <Icon className={cn("mt-0.5 h-5 w-5 shrink-0", TONE_ACCENT[item.tone])} aria-hidden="true" />

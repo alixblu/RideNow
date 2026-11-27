@@ -33,7 +33,7 @@ export function Field({
 }: FieldProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
-      <div className="flex items-center gap-1 text-sm font-medium text-content">
+      <div className="flex items-center gap-1 text-label font-medium text-content">
         {/* The <label> text content is exactly `label` so getByLabelText(label)
             matches; the required marker sits outside the label as decoration. */}
         <label htmlFor={htmlFor}>{label}</label>

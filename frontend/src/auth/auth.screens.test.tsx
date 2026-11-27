@@ -160,7 +160,7 @@ describe("auth screens", () => {
           <App />
         </MemoryRouter>,
       );
-      expect(await screen.findByRole("button", { name: /sign out/i }, { timeout: 5000 })).toBeInTheDocument();
+      expect(await screen.findByRole("link", { name: /account/i }, { timeout: 5000 })).toBeInTheDocument();
       expect(screen.queryByText("Sign in to your account")).not.toBeInTheDocument();
     });
 

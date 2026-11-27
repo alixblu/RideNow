@@ -9,6 +9,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "./cn";
+import { prefersReducedMotion } from "./motion";
 
 export type SheetSnap = "peek" | "half" | "full";
 
@@ -57,7 +58,10 @@ export function BottomSheet({
       data-snap={current}
       className={cn(
         "absolute inset-x-0 bottom-0 z-10 flex flex-col overflow-hidden",
-        "rounded-t-3xl bg-surface shadow-sheet transition-[max-height] duration-200",
+        "rounded-t-3xl bg-surface shadow-sheet",
+        prefersReducedMotion()
+          ? "transition-none"
+          : "transition-[max-height] duration-base ease-standard",
         HEIGHT[current],
         className,
       )}

@@ -39,7 +39,7 @@ export function NotificationBell({ userId, intervalMs = 3000, client }: Notifica
       >
         <Bell className="h-5 w-5" aria-hidden="true" />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 min-w-[1.25rem] rounded-full bg-accent px-1 text-center text-xs font-medium text-white">
+          <span className="absolute -right-0.5 -top-0.5 min-w-[1.25rem] rounded-full bg-accent px-1 text-center text-xs font-medium text-accent-fg">
             {unreadCount}
           </span>
         )}

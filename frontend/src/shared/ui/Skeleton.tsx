@@ -18,7 +18,7 @@ export function Skeleton({ className }: SkeletonProps) {
       className={cn(
         "relative overflow-hidden rounded-xl bg-surface-raised",
         "before:absolute before:inset-0 before:-translate-x-full",
-        "before:animate-shimmer before:bg-gradient-to-r",
+        "before:animate-shimmer motion-reduce:before:animate-none before:bg-gradient-to-r",
         "before:from-transparent before:via-content/10 before:to-transparent",
         className,
       )}

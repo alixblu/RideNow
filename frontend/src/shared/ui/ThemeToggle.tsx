@@ -57,7 +57,11 @@ export function ThemeToggle() {
       title={isDark ? "Switch to light theme" : "Switch to dark theme"}
       className="px-2"
     >
-      {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+      {isDark ? (
+        <Sun className="h-5 w-5" aria-hidden="true" />
+      ) : (
+        <Moon className="h-5 w-5" aria-hidden="true" />
+      )}
     </Button>
   );
 }

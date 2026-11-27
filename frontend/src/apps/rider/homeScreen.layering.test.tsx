@@ -368,3 +368,49 @@ describe("Property 2: Booking controls stay reachable inside the sheet regardles
     );
   }, 120_000);
 });
+
+// ---------------------------------------------------------------------------
+// Property 10 (frontend-ui-enhancement): map layering contract survives the redesign
+// ---------------------------------------------------------------------------
+
+type RiderMapScreen = "HomeScreen" | "TripDetailScreen";
+const RIDER_MAP_SCREENS: readonly RiderMapScreen[] = ["HomeScreen", "TripDetailScreen"];
+
+describe("Property 10: Map layering contract survives the redesign", () => {
+  // Feature: frontend-ui-enhancement, Property 10: Map layering contract survives the redesign on every Screen that renders the map
+  // **Validates: Requirements 9.2, 9.3**
+  it("keeps `isolate` and data-testid=trip-map on the map wrapper, and z-10 on the Booking_Sheet holding the inputs", async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.constantFrom(...RIDER_MAP_SCREENS), async (screenName) => {
+        try {
+          localStorage.clear();
+          let container: HTMLElement | null = null;
+          if (screenName === "HomeScreen") {
+            container = renderHome().container;
+            await screen.findByLabelText("Pickup", {}, { timeout: 3000 });
+          } else {
+            await renderDetailState("active-trip");
+          }
+
+          const maps = screen.getAllByTestId("trip-map");
+          expect(maps).toHaveLength(1);
+          expect(maps[0]!.getAttribute("data-testid")).toBe("trip-map");
+          expect(maps[0]!.classList.contains("isolate")).toBe(true);
+
+          if (container) {
+            const sheet = container.querySelector("section");
+            expect(sheet).not.toBeNull();
+            expect(sheet!.contains(container.querySelector("#home-pickup"))).toBe(true);
+            expect(sheet!.contains(container.querySelector("#home-destination"))).toBe(true);
+            expect(sheet!.classList.contains("z-10")).toBe(true);
+          }
+        } finally {
+          cleanup();
+          vi.clearAllMocks();
+          listTrips.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 });
+        }
+      }),
+      { numRuns: RIDER_MAP_SCREENS.length * 5 },
+    );
+  }, 120_000);
+});

@@ -37,8 +37,18 @@ function pin(label: string, color: string) {
   });
 }
 
-const PICKUP_ICON = pin("Pickup", "#2563eb");
-const DESTINATION_ICON = pin("Destination", "#dc2626");
+/**
+ * Pin colors for the Leaflet divIcons, which are raw HTML and cannot use Tailwind classes.
+ * Kept in sync with the light-theme `--rn-accent` (0 122 77) and `--rn-danger` (200 40 40)
+ * tokens in src/index.css; update both together.
+ */
+export const PIN_COLORS = {
+  pickup: "#007a4d",
+  destination: "#c82828",
+} as const;
+
+const PICKUP_ICON = pin("Pickup", PIN_COLORS.pickup);
+const DESTINATION_ICON = pin("Destination", PIN_COLORS.destination);
 const CAR_ICON = L.divIcon({
   className: "",
   html: '<div class="rn-car" style="font-size:22px;line-height:22px;transition:opacity .3s">&#x1F697;</div>',

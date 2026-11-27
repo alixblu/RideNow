@@ -18,7 +18,7 @@ const css = readFileSync(resolve(__dirname, "../../index.css"), "utf8");
 function themeTokens(selector: RegExp): Record<string, [number, number, number]> {
   const block = css.match(selector)?.[1] ?? "";
   const out: Record<string, [number, number, number]> = {};
-  for (const m of block.matchAll(/--rn-([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+)\s*;/g)) {
+  for (const m of block.matchAll(/--rn-([a-z0-9-]+):\s*(\d+)\s+(\d+)\s+(\d+)\s*;/g)) {
     out[m[1]!] = [Number(m[2]), Number(m[3]), Number(m[4])];
   }
   return out;
@@ -55,6 +55,83 @@ describe("Design_System token contrast (Req 3.5)", () => {
 
     it(`${name}: accent-fg reaches 4.5:1 on accent`, () => {
       expect(contrast(t["accent-fg"]!, t["accent"]!)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
+
+/**
+ * Property 1: every text/background token pair meets WCAG AA contrast in both themes,
+ * every scale step is defined in both themes, and each semantic token equals a scale step.
+ * Small finite domain, checked exhaustively.
+ * **Validates: Requirements 1.1, 1.5, 2.3**
+ */
+describe("Property 1: token contrast and scale integrity", () => {
+  const themes = {
+    light: themeTokens(/:root,\s*:root\[data-theme="light"\]\s*\{([^}]*)\}/),
+    dark: themeTokens(/:root\[data-theme="dark"\]\s*\{([^}]*)\}/),
+  };
+
+  const statusSteps = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900];
+  const scaleSteps: Record<string, number[]> = {
+    brand: statusSteps,
+    neutral: [0, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950],
+    success: statusSteps,
+    warning: statusSteps,
+    danger: statusSteps,
+    info: statusSteps,
+  };
+
+  const semanticScale: Record<string, string> = {
+    accent: "brand",
+    "accent-hover": "brand",
+    bg: "neutral",
+    surface: "neutral",
+    "surface-raised": "neutral",
+    border: "neutral",
+    content: "neutral",
+    "content-muted": "neutral",
+    "content-subtle": "neutral",
+    "content-inverse": "neutral",
+    success: "success",
+    warning: "warning",
+    danger: "danger",
+    info: "info",
+  };
+
+  for (const [name, t] of Object.entries(themes)) {
+    it(`${name}: every content/surface pair and accent-fg on accent reach 4.5:1`, () => {
+      const pairs: Array<[string, string]> = [];
+      for (const text of ["content", "content-muted", "content-subtle"]) {
+        for (const bg of ["bg", "surface"]) pairs.push([text, bg]);
+      }
+      pairs.push(["accent-fg", "accent"]);
+      for (const [fg, bg] of pairs) {
+        expect(t[fg], fg).toBeDefined();
+        expect(t[bg], bg).toBeDefined();
+        expect(contrast(t[fg]!, t[bg]!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+
+    it(`${name}: every scale step is defined`, () => {
+      const missing: string[] = [];
+      for (const [scale, steps] of Object.entries(scaleSteps)) {
+        for (const step of steps) {
+          if (!t[`${scale}-${step}`]) missing.push(`--rn-${scale}-${step}`);
+        }
+      }
+      expect(missing).toEqual([]);
+    });
+
+    it(`${name}: each semantic token equals one step of its scale`, () => {
+      for (const [token, scale] of Object.entries(semanticScale)) {
+        const value = t[token];
+        expect(value, token).toBeDefined();
+        const matches = scaleSteps[scale]!.some((step) => {
+          const s = t[`${scale}-${step}`];
+          return s !== undefined && s.every((c, i) => c === value![i]);
+        });
+        expect(matches, `${token} should equal a ${scale} step`).toBe(true);
+      }
     });
   }
 });

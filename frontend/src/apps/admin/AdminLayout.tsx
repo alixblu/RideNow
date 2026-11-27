@@ -134,7 +134,7 @@ export function AdminLayout() {
         <div className="fixed inset-0 z-40 flex">
           <div
             data-testid="admin-drawer-backdrop"
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-scrim/40"
             onClick={() => setDrawerOpen(false)}
           />
           <div

@@ -15,7 +15,8 @@ export function PhoneColumn({ children, className }: PhoneColumnProps) {
     <div
       data-testid="phone-column"
       className={cn(
-        "relative mx-auto flex h-dvh w-full max-w-[480px] flex-col overflow-hidden",
+        "relative mx-auto flex h-dvh w-full max-w-[480px] flex-col overflow-hidden bg-bg text-content",
+        "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
         className,
       )}
     >

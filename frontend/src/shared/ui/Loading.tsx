@@ -19,7 +19,7 @@ export function Loading({ label = "Loading…" }: LoadingProps) {
       aria-live="polite"
       className="flex items-center gap-3 py-6 text-content-muted"
     >
-      <Loader2 className="h-5 w-5 animate-spin text-accent" aria-hidden="true" />
+      <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" />
       <span className="text-sm">{label}</span>
     </div>
   );

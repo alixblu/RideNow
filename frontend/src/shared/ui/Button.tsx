@@ -29,12 +29,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    "bg-accent text-accent-fg hover:bg-accent-hover disabled:bg-accent/50 disabled:text-accent-fg/70",
+    "bg-accent text-accent-fg shadow-card hover:bg-accent-hover disabled:bg-accent/50 disabled:text-accent-fg/70 disabled:shadow-none",
   secondary:
-    "bg-surface-raised text-content hover:bg-border disabled:opacity-50",
+    "bg-surface-raised text-content border border-border hover:bg-border hover:border-border-strong disabled:opacity-50",
   ghost:
     "bg-transparent text-content-muted hover:text-content hover:bg-surface-raised disabled:opacity-40",
-  danger: "bg-danger/10 text-danger hover:bg-danger/20 disabled:opacity-50",
+  danger:
+    "bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20 disabled:opacity-50",
 };
 
 const SIZES: Record<Size, string> = {
@@ -69,8 +70,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        "inline-flex items-center justify-center gap-2 font-semibold transition-colors",
-        "disabled:cursor-not-allowed select-none",
+        "inline-flex items-center justify-center gap-2 font-semibold",
+        "transition-transform duration-press ease-standard",
+        "active:scale-[0.98] active:brightness-95",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+        "disabled:cursor-not-allowed disabled:active:scale-100 disabled:active:brightness-100 select-none",
         VARIANTS[variant],
         SIZES[size],
         touch ? TOUCH_FORCED : TOUCH_CONTEXT,

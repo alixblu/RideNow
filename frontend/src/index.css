@@ -39,6 +39,75 @@
   --rn-warning: 161 98 7;
   --rn-danger: 200 40 40;
   --rn-info: 29 78 216;
+
+  /* Color scales (RGB triples). Semantic tokens above equal one step of these. */
+  --rn-brand-50: 236 253 245;
+  --rn-brand-100: 209 250 229;
+  --rn-brand-200: 167 243 208;
+  --rn-brand-300: 110 231 183;
+  --rn-brand-400: 52 211 153;
+  --rn-brand-500: 0 140 90;
+  --rn-brand-600: 0 122 77;
+  --rn-brand-700: 0 98 62;
+  --rn-brand-800: 0 78 50;
+  --rn-brand-900: 0 60 40;
+  --rn-neutral-0: 255 255 255;
+  --rn-neutral-50: 249 250 251;
+  --rn-neutral-100: 243 244 246;
+  --rn-neutral-200: 229 231 235;
+  --rn-neutral-300: 209 213 219;
+  --rn-neutral-400: 156 163 175;
+  --rn-neutral-500: 100 108 120;
+  --rn-neutral-600: 75 85 99;
+  --rn-neutral-700: 55 65 81;
+  --rn-neutral-800: 31 41 55;
+  --rn-neutral-900: 17 24 39;
+  --rn-neutral-950: 3 7 18;
+  --rn-success-50: 236 253 245;
+  --rn-success-100: 209 250 229;
+  --rn-success-200: 167 243 208;
+  --rn-success-300: 110 231 183;
+  --rn-success-400: 52 211 153;
+  --rn-success-500: 16 160 105;
+  --rn-success-600: 0 122 77;
+  --rn-success-700: 0 98 62;
+  --rn-success-800: 0 78 50;
+  --rn-success-900: 0 60 40;
+  --rn-warning-50: 255 251 235;
+  --rn-warning-100: 254 243 199;
+  --rn-warning-200: 253 230 138;
+  --rn-warning-300: 252 211 77;
+  --rn-warning-400: 245 180 60;
+  --rn-warning-500: 202 120 10;
+  --rn-warning-600: 161 98 7;
+  --rn-warning-700: 133 77 14;
+  --rn-warning-800: 113 63 18;
+  --rn-warning-900: 78 43 10;
+  --rn-danger-50: 254 242 242;
+  --rn-danger-100: 254 226 226;
+  --rn-danger-200: 254 202 202;
+  --rn-danger-300: 252 165 165;
+  --rn-danger-400: 248 113 113;
+  --rn-danger-500: 225 70 70;
+  --rn-danger-600: 200 40 40;
+  --rn-danger-700: 160 30 30;
+  --rn-danger-800: 127 29 29;
+  --rn-danger-900: 90 20 20;
+  --rn-info-50: 239 246 255;
+  --rn-info-100: 219 234 254;
+  --rn-info-200: 191 219 254;
+  --rn-info-300: 147 197 253;
+  --rn-info-400: 96 165 250;
+  --rn-info-500: 59 110 240;
+  --rn-info-600: 29 78 216;
+  --rn-info-700: 30 64 175;
+  --rn-info-800: 30 58 138;
+  --rn-info-900: 23 37 84;
+
+  --rn-surface-sunken: 243 244 246; /* neutral-100 */
+  --rn-border-strong: 209 213 219; /* neutral-300 */
+  --rn-accent-muted: 236 253 245; /* brand-50 */
+  --rn-scrim: 0 0 0;
 }
 
 :root[data-theme="dark"] {
@@ -64,6 +133,75 @@
   --rn-warning: 245 180 60;
   --rn-danger: 248 113 113;
   --rn-info: 125 170 255;
+
+  /* Color scales (RGB triples). Semantic tokens above equal one step of these. */
+  --rn-brand-50: 6 30 20;
+  --rn-brand-100: 10 50 35;
+  --rn-brand-200: 14 75 52;
+  --rn-brand-300: 120 232 188;
+  --rn-brand-400: 72 220 163;
+  --rn-brand-500: 46 204 143;
+  --rn-brand-600: 30 160 112;
+  --rn-brand-700: 20 120 84;
+  --rn-brand-800: 14 90 62;
+  --rn-brand-900: 8 60 40;
+  --rn-neutral-0: 23 23 23;
+  --rn-neutral-50: 10 10 10;
+  --rn-neutral-100: 38 38 38;
+  --rn-neutral-200: 64 64 64;
+  --rn-neutral-300: 82 82 82;
+  --rn-neutral-400: 115 115 115;
+  --rn-neutral-500: 140 140 140;
+  --rn-neutral-600: 163 163 163;
+  --rn-neutral-700: 190 190 190;
+  --rn-neutral-800: 220 220 220;
+  --rn-neutral-900: 245 245 245;
+  --rn-neutral-950: 250 250 250;
+  --rn-success-50: 4 32 22;
+  --rn-success-100: 6 52 36;
+  --rn-success-200: 10 80 56;
+  --rn-success-300: 110 231 183;
+  --rn-success-400: 52 211 153;
+  --rn-success-500: 16 160 105;
+  --rn-success-600: 0 122 77;
+  --rn-success-700: 0 98 62;
+  --rn-success-800: 0 78 50;
+  --rn-success-900: 0 60 40;
+  --rn-warning-50: 40 28 6;
+  --rn-warning-100: 66 44 8;
+  --rn-warning-200: 100 66 12;
+  --rn-warning-300: 252 211 77;
+  --rn-warning-400: 245 180 60;
+  --rn-warning-500: 202 120 10;
+  --rn-warning-600: 161 98 7;
+  --rn-warning-700: 133 77 14;
+  --rn-warning-800: 113 63 18;
+  --rn-warning-900: 78 43 10;
+  --rn-danger-50: 45 14 14;
+  --rn-danger-100: 70 20 20;
+  --rn-danger-200: 105 28 28;
+  --rn-danger-300: 252 165 165;
+  --rn-danger-400: 248 113 113;
+  --rn-danger-500: 225 70 70;
+  --rn-danger-600: 200 40 40;
+  --rn-danger-700: 160 30 30;
+  --rn-danger-800: 127 29 29;
+  --rn-danger-900: 90 20 20;
+  --rn-info-50: 14 24 48;
+  --rn-info-100: 20 36 72;
+  --rn-info-200: 28 52 102;
+  --rn-info-300: 170 200 255;
+  --rn-info-400: 125 170 255;
+  --rn-info-500: 96 150 250;
+  --rn-info-600: 59 110 240;
+  --rn-info-700: 29 78 216;
+  --rn-info-800: 30 64 175;
+  --rn-info-900: 30 58 138;
+
+  --rn-surface-sunken: 10 10 10; /* neutral-50 */
+  --rn-border-strong: 82 82 82; /* neutral-300 */
+  --rn-accent-muted: 10 50 35; /* brand-100 */
+  --rn-scrim: 0 0 0;
 }
 
 @layer base {
@@ -94,3 +232,15 @@
   }
 }
 
+/* Respect the user's reduced-motion preference: disable non-essential motion.
+   Spinners (animate-spin) stay because they convey loading state. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *:not(.animate-spin)::before,
+  *:not(.animate-spin)::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

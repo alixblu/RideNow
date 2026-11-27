@@ -22,3 +22,4 @@ export { ErrorState } from "./ErrorState";
 export { ThemeToggle } from "./ThemeToggle";
 export { ToastProvider, useToast } from "./toast";
 export { cn } from "./cn";
+export { MOTION_DURATION, MOTION_EASE, prefersReducedMotion, motionDuration } from "./motion";

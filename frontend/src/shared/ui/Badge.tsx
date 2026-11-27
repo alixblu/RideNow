@@ -2,25 +2,32 @@
  * Badge — a tinted pill for a status. Replaces StatusPill for new screens.
  *
  * `status` maps to a tone (success, warning, danger, neutral); unknown values are
- * neutral. Pass `tone` to force one. Text stays in the content color so it keeps
- * 4.5:1 contrast on the tinted background.
+ * neutral. Pass `tone` to force one (including `brand`). Each tone keeps 4.5:1
+ * text contrast on its background in both themes.
  */
 import { cn } from "./cn";
 
-export type BadgeTone = "success" | "warning" | "danger" | "neutral";
+export type BadgeTone = "neutral" | "brand" | "success" | "warning" | "danger";
 
+/**
+ * Background + text per tone, from the scale tokens. Light uses the 100 step with the
+ * 800 step text; dark uses the (dark) 100 step with the 300 step text. All pairs are
+ * at least 4.5:1 in both themes.
+ */
 const TONE_CLASS: Record<BadgeTone, string> = {
-  success: "bg-success/15",
-  warning: "bg-warning/15",
-  danger: "bg-danger/15",
-  neutral: "bg-surface-raised",
+  neutral: "bg-surface-raised text-content",
+  brand: "bg-accent-muted text-brand-700 dark:text-brand-300",
+  success: "bg-success-100 text-success-800 dark:text-success-300",
+  warning: "bg-warning-100 text-warning-800 dark:text-warning-300",
+  danger: "bg-danger-100 text-danger-800 dark:text-danger-300",
 };
 
 const DOT_CLASS: Record<BadgeTone, string> = {
+  neutral: "bg-content-subtle",
+  brand: "bg-accent",
   success: "bg-success",
   warning: "bg-warning",
   danger: "bg-danger",
-  neutral: "bg-content-subtle",
 };
 
 const STATUS_TONE: Record<string, BadgeTone> = {
@@ -66,7 +73,7 @@ export function Badge({ status, tone, children, className }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-content",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
         TONE_CLASS[resolved],
         className,
       )}

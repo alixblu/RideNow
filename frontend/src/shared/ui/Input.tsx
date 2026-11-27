@@ -11,7 +11,10 @@ import { cn } from "./cn";
 
 const FIELD_BASE =
   "w-full h-12 px-4 rounded-xl bg-surface-raised text-content placeholder:text-content-subtle " +
-  "border-2 border-transparent transition-colors focus:border-accent disabled:opacity-50";
+  "border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-accent " +
+  "focus:border-accent disabled:opacity-50";
+
+const INVALID = "border-danger focus:border-danger focus:ring-danger";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   invalid?: boolean;
@@ -25,7 +28,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     <input
       ref={ref}
       aria-invalid={invalid ? true : undefined}
-      className={cn(FIELD_BASE, invalid && "border-danger focus:border-danger", className)}
+      className={cn(FIELD_BASE, invalid && INVALID, className)}
       {...rest}
     />
   );
@@ -46,7 +49,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       className={cn(
         FIELD_BASE,
         "appearance-none cursor-pointer",
-        invalid && "border-danger focus:border-danger",
+        invalid && INVALID,
         className,
       )}
       {...rest}
