@@ -3,14 +3,14 @@
 # Validates: Requirements 6.5, 6.10
 # Property 2: Params lookup is idempotent (two calls, same args and file => same result).
 # Validates: Requirements 6.9
-# Extracts param() from the Discovery_Block in 00-deploy-runbook.md and checks it
+# Extracts param() from the Discovery_Block in guides/cloudformation/README.md and checks it
 # against randomly generated {layer:{key:value}} fixtures (>= 100 iterations).
 set -u
 
 ITERATIONS="${ITERATIONS:-150}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-RUNBOOK="$ROOT/guides/cloudformation/00-deploy-runbook.md"
+RUNBOOK="$ROOT/guides/cloudformation/README.md"
 
 command -v jq >/dev/null || { echo "jq is required"; exit 2; }
 

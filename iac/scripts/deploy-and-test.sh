@@ -2,7 +2,7 @@
 #
 # deploy-and-test.sh - deploy RideNow to an environment end to end, then run the API test.
 #
-# Runs the whole runbook (guides/cloudformation/00-deploy-runbook.md) in one go:
+# Runs the whole guide sequence (guides/cloudformation/01-iam.md to 08-frontend.md) in one go:
 #
 #   1. CloudFormation stacks 01 -> 07 (deploy.sh --apply --parallel; unchanged stacks are skipped)
 #   2. kubeconfig, and a check that every service image exists in ECR for --tag

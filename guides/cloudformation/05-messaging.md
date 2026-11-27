@@ -25,17 +25,24 @@ You create one SNS topic, three SQS queues with their dead-letter queues, three 
 
 ## Depends on
 
-From `02-network.md`. Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first and check these values are not `MISSING`:
+This guide needs five values. Look each one up once, before you start, using the console path in the last column.
 
-| Value | Template import | Resource it comes from | Used for |
+| Value | Template import | Created in | Where to find it in the console |
 |---|---|---|---|
-| `PRIVATE_SUBNET_IDS` | `network-PrivateSubnetIds` | subnets `ridenow-prod-private-1`, `ridenow-prod-private-2` | Redis subnet group |
-| `VPC_ID` | `network-VpcId` | VPC `ridenow-prod-vpc` | Redis security group |
-| `NODE_SG_ID` | `network-NodeSecurityGroupId` | security group `ridenow-prod-cluster-sg` | source of the port 6379 rule |
+| `ACCOUNT_ID` (12-digit account ID) | none | your AWS account | Click your account name in the top-right corner of the console. The 12-digit **Account ID** is in the menu. |
+| `REGION` (`ap-southeast-1`) | none | fixed by this workshop | The region selector in the top-right corner must read **Asia Pacific (Singapore) ap-southeast-1**. |
+| VPC id (`vpc-...`) | `network-VpcId` | `02-network.md`, step 1 | **VPC -> Your VPCs** -> row `ridenow-prod-vpc` -> **VPC ID**. |
+| Private subnets `ridenow-prod-private-1` and `ridenow-prod-private-2` | `network-PrivateSubnetIds` | `02-network.md`, step 3 | **VPC -> Subnets** -> rows `ridenow-prod-private-1` and `ridenow-prod-private-2` -> **Subnet ID** (`subnet-...`) and **Availability Zone**. |
+| Cluster security group id (`sg-...`) | `network-NodeSecurityGroupId` | `02-network.md`, step 7 | **VPC -> Security groups** -> row `ridenow-prod-cluster-sg` -> **Security group ID**. |
 
+How the values are used:
+
+- Wherever a step or a JSON policy shows `ACCOUNT_ID`, type your 12-digit account ID in its place. The region is already written as `ap-southeast-1`.
+- Step 5 uses the VPC and the two private subnets.
+- Step 6 uses the VPC and the cluster security group.
 ## Create the resources
 
-Follow the steps in order. `<ACCOUNT_ID>` is your 12-digit account ID (top-right menu in the console).
+Follow the steps in order.
 
 ### 1. SNS topic (`TripEventTopic`)
 
@@ -45,7 +52,7 @@ Follow the steps in order. `<ACCOUNT_ID>` is your 12-digit account ID (top-right
 4. Leave **Encryption** disabled (the `aws/sns` key blocks delivery to SQS).
 5. Leave **Access policy** at the default.
 6. Choose **Create topic**.
-7. Copy the topic ARN: `arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events`.
+7. Copy the topic ARN. It has the form `arn:aws:sns:ap-southeast-1:ACCOUNT_ID:ridenow-prod-events`.
 
 ### 2. Dead-letter queues (`NotificationDlq`, `MatchingDlq`, `PaymentDlq`)
 
@@ -98,7 +105,7 @@ Repeat this list three times, with these queue and DLQ pairs:
    **Access policy**
 
 8. Select **Advanced**.
-9. Replace the JSON with the policy below for this queue, and replace `<ACCOUNT_ID>`.
+9. Replace the JSON with the policy below for this queue, and replace `ACCOUNT_ID` with your account ID (see **Depends on**).
 
    **Dead-letter queue**
 
@@ -118,8 +125,8 @@ Access policy for `ridenow-prod-matching`:
       "Effect": "Allow",
       "Principal": { "Service": "sns.amazonaws.com" },
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-matching",
-      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+      "Resource": "arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-matching",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:ACCOUNT_ID:ridenow-prod-events" } }
     }
   ]
 }
@@ -136,8 +143,8 @@ Access policy for `ridenow-prod-payment`:
       "Effect": "Allow",
       "Principal": { "Service": "sns.amazonaws.com" },
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-payment",
-      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+      "Resource": "arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-payment",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:ACCOUNT_ID:ridenow-prod-events" } }
     }
   ]
 }
@@ -154,8 +161,8 @@ Access policy for `ridenow-prod-notifications`:
       "Effect": "Allow",
       "Principal": { "Service": "sns.amazonaws.com" },
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-notifications",
-      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-events" } }
+      "Resource": "arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-notifications",
+      "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:ap-southeast-1:ACCOUNT_ID:ridenow-prod-events" } }
     }
   ]
 }
@@ -167,7 +174,7 @@ Access policy for `ridenow-prod-notifications`:
 
 1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
 2. Set **Protocol** to `Amazon SQS`.
-3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-matching`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-matching`.
 4. Check **Enable raw message delivery**.
 5. Expand **Subscription filter policy** and turn it on.
 6. Set **Filter policy scope** to `Message body`.
@@ -185,7 +192,7 @@ Access policy for `ridenow-prod-notifications`:
 
 1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
 2. Set **Protocol** to `Amazon SQS`.
-3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-payment`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-payment`.
 4. Check **Enable raw message delivery**.
 5. Expand **Subscription filter policy** and turn it on.
 6. Set **Filter policy scope** to `Message body`.
@@ -203,7 +210,7 @@ Access policy for `ridenow-prod-notifications`:
 
 1. Go to **Amazon SNS -> Topics -> `ridenow-prod-events` -> Subscriptions** tab -> **Create subscription**.
 2. Set **Protocol** to `Amazon SQS`.
-3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:<ACCOUNT_ID>:ridenow-prod-notifications`.
+3. Set **Endpoint** to `arn:aws:sqs:ap-southeast-1:ACCOUNT_ID:ridenow-prod-notifications`.
 4. Check **Enable raw message delivery**.
 5. Leave **Subscription filter policy** off (it receives every event).
 6. Leave **Redrive policy (dead-letter queue)** off.
@@ -216,7 +223,7 @@ Note: each subscription shows Status `Confirmed`. If it shows `Pending confirmat
 1. Go to **Amazon ElastiCache -> Subnet groups -> Create subnet group**.
 2. Set **Name** to `ridenow-prod-redis-subnets`.
 3. Set **Description** to `ridenow-prod Redis private subnets`.
-4. Set **VPC ID** to `ridenow-prod-vpc`.
+4. Set **VPC ID** to `ridenow-prod-vpc` (the VPC id from **Depends on**).
 5. Under **Selected subnets**, pick the Availability Zones first, then tick `ridenow-prod-private-1` and `ridenow-prod-private-2`.
 6. Choose **Create**.
 
@@ -241,7 +248,7 @@ Note: each subscription shows Status `Confirmed`. If it shows `Pending confirmat
 
     **Tags**
 
-11. Choose **Add new tag**, set **Key** to `Name` and **Value** to `ridenow-prod-redis-sg`. The Discovery_Block finds the group by this tag.
+11. Choose **Add new tag**, set **Key** to `Name` and **Value** to `ridenow-prod-redis-sg`.
 12. Choose **Create security group**.
 
 ### 7. Valkey replication group (`RedisReplicationGroup`)
@@ -283,38 +290,45 @@ Note: each subscription shows Status `Confirmed`. If it shows `Pending confirmat
 21. Clear **Enable automatic backups**.
 22. Choose **Create**.
 23. Wait 10 to 15 minutes until **Status** is `Available`.
+
 ## Values to record
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) again so these variables are set.
+Note these values in a text file. Later guides ask for them.
 
-| Output (Template) | Discovery_Block variable | How to see it in the console | Used by |
+| Output (Template) | Value | Where to see it in the console | Used by |
 |---|---|---|---|
-| `TripEventTopicArn` | `TRIP_EVENTS_TOPIC_ARN` | SNS > Topics > `ridenow-prod-events` > ARN | Runbook (service manifests set `RIDENOW_EVENTS_TOPIC_ARN` from it) |
-| `MatchingQueueUrl` | `MATCHING_QUEUE_URL` | SQS > `ridenow-prod-matching` > URL | Runbook (`<MATCHING_QUEUE_URL>` in `iac/k8s/24-matching-service.yaml`) |
-| `MatchingQueueArn` | `MATCHING_QUEUE_ARN` | SQS > `ridenow-prod-matching` > ARN | Runbook checks |
-| `PaymentQueueUrl` | `PAYMENT_QUEUE_URL` | SQS > `ridenow-prod-payment` > URL | Runbook (`<PAYMENT_QUEUE_URL>` in `iac/k8s/23-payment-service.yaml`) |
-| `PaymentQueueArn` | `PAYMENT_QUEUE_ARN` | SQS > `ridenow-prod-payment` > ARN | Runbook checks |
-| `NotificationQueueUrl` | `NOTIFICATIONS_QUEUE_URL` | SQS > `ridenow-prod-notifications` > URL | Runbook (`<NOTIFICATIONS_QUEUE_URL>` in `iac/k8s/25-notification-worker.yaml`) |
-| `NotificationQueueArn` | `NOTIFICATIONS_QUEUE_ARN` | SQS > `ridenow-prod-notifications` > ARN | Runbook checks |
-| `RedisPrimaryEndpoint` | `REDIS_ENDPOINT` | ElastiCache > `ridenow-prod-redis` > Primary endpoint (host only, no `:6379`) | Runbook (`<REDIS_ENDPOINT>` in the driver, matching, notification and realtime manifests) |
-| `RedisSecurityGroupId` | `REDIS_SG_ID` | EC2 > Security Groups > `ridenow-prod-redis-sg` | `07-eks-addons.md` (ingress rule from the EKS cluster security group) |
-
+| `TripEventTopicArn` | topic ARN | **Amazon SNS -> Topics** -> `ridenow-prod-events` -> **ARN** | Service manifests (service manifests set `RIDENOW_EVENTS_TOPIC_ARN` from it) |
+| `MatchingQueueUrl` | queue URL | **Amazon SQS -> Queues** -> `ridenow-prod-matching` -> **URL** | Service manifests (`<MATCHING_QUEUE_URL>` in `iac/k8s/24-matching-service.yaml`) |
+| `MatchingQueueArn` | queue ARN | **Amazon SQS -> Queues** -> `ridenow-prod-matching` -> **ARN** | Connection checks |
+| `PaymentQueueUrl` | queue URL | **Amazon SQS -> Queues** -> `ridenow-prod-payment` -> **URL** | Service manifests (`<PAYMENT_QUEUE_URL>` in `iac/k8s/23-payment-service.yaml`) |
+| `PaymentQueueArn` | queue ARN | **Amazon SQS -> Queues** -> `ridenow-prod-payment` -> **ARN** | Connection checks |
+| `NotificationQueueUrl` | queue URL | **Amazon SQS -> Queues** -> `ridenow-prod-notifications` -> **URL** | Service manifests (`<NOTIFICATIONS_QUEUE_URL>` in `iac/k8s/25-notification-worker.yaml`) |
+| `NotificationQueueArn` | queue ARN | **Amazon SQS -> Queues** -> `ridenow-prod-notifications` -> **ARN** | Connection checks |
+| `RedisPrimaryEndpoint` | host name (no `:6379`) | **Amazon ElastiCache -> Valkey caches** -> `ridenow-prod-redis` -> **Primary endpoint** | Service manifests (`<REDIS_ENDPOINT>` in the driver, matching, notification and realtime manifests) |
+| `RedisSecurityGroupId` | security group id (`sg-...`) | **VPC -> Security groups** -> `ridenow-prod-redis-sg` -> **Security group ID** | `07-eks-addons.md` (ingress rule from the EKS cluster security group) |
 ## Post-Deploy
 
 No post-deploy configuration is needed. `07-eks-addons.md` opens `ridenow-prod-redis-sg` to the Fargate pods.
 
 ## Verify
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then:
+Set your account ID from the **Depends on** table, then run the commands. Every other name is written out in full.
 
 ```bash
-for V in TRIP_EVENTS_TOPIC_ARN MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL REDIS_ENDPOINT REDIS_SG_ID; do
-  echo "$V=${!V:-MISSING}"
-done
-aws sns list-subscriptions-by-topic --topic-arn "$TRIP_EVENTS_TOPIC_ARN" \
+ACCOUNT_ID=123456789012   # replace with your 12-digit account ID
+aws sns list-subscriptions-by-topic --region ap-southeast-1 \
+  --topic-arn "arn:aws:sns:ap-southeast-1:${ACCOUNT_ID}:ridenow-prod-events" \
   --query 'Subscriptions[].[Endpoint,SubscriptionArn]' --output text
+for Q in ridenow-prod-matching ridenow-prod-payment ridenow-prod-notifications; do
+  aws sqs get-queue-url --region ap-southeast-1 --queue-name "$Q" --query QueueUrl --output text
+done
+aws elasticache describe-replication-groups --region ap-southeast-1 \
+  --replication-group-id ridenow-prod-redis \
+  --query 'ReplicationGroups[0].[Status,NodeGroups[0].PrimaryEndpoint.Address]' --output text
+aws ec2 describe-security-groups --region ap-southeast-1 \
+  --filters "Name=group-name,Values=ridenow-prod-redis-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text
 ```
 
-Expected: six variables with a value (none `MISSING`) and three subscriptions with full ARNs (not `PendingConfirmation`). If one is missing, open the console page for that resource and check the name.
-
+Expected: three subscriptions with full ARNs (not `PendingConfirmation`), three queue URLs, `available` with a host name, and one `sg-...` id. If one is missing or `None`, open the console page for that resource and check the name.
 Next: `06-eks-cluster.md`.

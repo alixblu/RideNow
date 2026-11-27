@@ -45,3 +45,4 @@ localstack
 
 .tmp/
 *guides/aws
+/fcj-workshop-ridenow/

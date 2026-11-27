@@ -2,8 +2,6 @@
 
 Creates the two EKS roles and five customer managed policies of `iac/stacks/01-iam.yaml` in the IAM console. Region does not matter for IAM.
 
-Account id: console top-right menu, copy **Account ID** (12 digits). Use it wherever a policy shows `<ACCOUNT_ID>`. It is also `ACCOUNT_ID` in the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
-
 ## What it creates
 
 | Template logical ID | AWS resource type | Name |
@@ -18,7 +16,13 @@ Account id: console top-right menu, copy **Account ID** (12 digits). Use it wher
 
 ## Depends on
 
-Nothing. Start after Phase 0 of [00-deploy-runbook.md](00-deploy-runbook.md). The seven resources can be created in any order.
+Nothing. Start with the tools and identity listed in [README.md](README.md). The seven resources can be created in any order.
+
+Look up this value yourself before you start:
+
+| Value | Where to find it in the console |
+|-------|---------------------------------|
+| Account ID (12 digits), used wherever a policy shows `<ACCOUNT_ID>` | Top-right account menu in the console, copy **Account ID** |
 
 ## Create the resources
 
@@ -273,8 +277,8 @@ Nothing to copy now: later guides pick these by name in the console. To read an 
 
 | Output_Equivalent (Template output) | Resource it comes from | ARN form | Consumed by |
 |-------|------------------------|----------|-------------|
-| `ClusterRoleArn` (`CLUSTER_ROLE_ARN`) | role `ridenow-prod-eks-cluster-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` | `06-eks-cluster.md`: **Cluster service role** |
-| `FargatePodExecutionRoleArn` (`FARGATE_POD_ROLE_ARN`) | role `ridenow-prod-eks-fargate-pod-execution-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role` | `06-eks-cluster.md`: **Pod execution role** |
+| `ClusterRoleArn` | role `ridenow-prod-eks-cluster-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` | `06-eks-cluster.md`: **Cluster service role** |
+| `FargatePodExecutionRoleArn` | role `ridenow-prod-eks-fargate-pod-execution-role` | `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role` | `06-eks-cluster.md`: **Pod execution role** |
 | `AppAccessPolicyArn` | policy `ridenow-prod-app-access` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-app-access` | No guide attaches it |
 | `TripServiceMessagingPolicyArn` | policy `ridenow-prod-trip-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-trip-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-trip-service` |
 | `PaymentServiceMessagingPolicyArn` | policy `ridenow-prod-payment-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-payment-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-payment-service` |
@@ -287,13 +291,14 @@ No Post-Deploy step is needed for this guide.
 
 ## Verify
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then:
+Replace `<ACCOUNT_ID>` with the Account ID from the table in **Depends on**, then run:
 
 ```bash
+ACCOUNT_ID=<from table>
 aws iam list-policies --scope Local \
-  --query "Policies[?starts_with(PolicyName,'ridenow-$ENV-')].PolicyName" --output text | tr '\t' '\n'
-echo "$CLUSTER_ROLE_ARN"
-echo "$FARGATE_POD_ROLE_ARN"
+  --query "Policies[?starts_with(PolicyName,'ridenow-prod-')].PolicyName" --output text | tr '\t' '\n'
+aws iam get-role --role-name ridenow-prod-eks-cluster-role --query Role.Arn --output text
+aws iam get-role --role-name ridenow-prod-eks-fargate-pod-execution-role --query Role.Arn --output text
 ```
 
 Expected: five policy names (`ridenow-prod-app-access` and the four `-messaging` policies), then `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` and `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role`. A missing line means that resource was not created or is misspelled.

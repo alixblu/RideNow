@@ -12,7 +12,7 @@
 # Without it the Ingress never gets an address, and the controller logs
 # "AccessDenied ... elasticloadbalancing:DescribeLoadBalancers".
 #
-# Run after the controller is installed with Helm (runbook Phase 4).
+# Run after the controller is installed with Helm (guides/cloudformation/07-eks-addons.md).
 #
 # Usage:
 #   ./iac/scripts/alb-controller-policy.sh prod

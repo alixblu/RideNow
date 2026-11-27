@@ -1,4 +1,4 @@
-# 02 - VPC, NAT and security groups
+﻿# 02 - VPC, NAT and security groups
 
 Creates the prod VPC (`10.30.0.0/16`) with 2 public and 2 private subnets, an internet gateway, 2 NAT gateways and 2 security groups. Region: `ap-southeast-1`. Source: `iac/stacks/02-network.yaml`, `iac/params/prod.json`.
 ## What it creates
@@ -33,7 +33,12 @@ Creates the prod VPC (`10.30.0.0/16`) with 2 public and 2 private subnets, an in
 
 ## Depends on
 
-Nothing. The template has no `Fn::ImportValue` entries.
+No other guide has to be finished first. The template has no `Fn::ImportValue` entries. Check these two values before you start:
+
+| Value | Where to find it in the console |
+|---|---|
+| Region (`ap-southeast-1`) | Region selector at the top right of the console. Choose **Asia Pacific (Singapore)**. |
+| Account id (12 digits, only to confirm you are in the right account) | Account name at the top right of the console, shown under **Account ID**. |
 
 ## Create the resources
 
@@ -226,7 +231,7 @@ Create the group:
 5. Leave **Inbound rules** empty.
 6. Keep the default **Outbound rules** row: **Type** `All traffic`, **Protocol** `All`, **Port range** `All`, **Destination** `Anywhere-IPv4` `0.0.0.0/0`.
 7. Set that outbound row **Description** to `Allow all egress (NAT to internet, RDS, etc.)`.
-8. Under **Tags - optional**, choose **Add new tag**. Set **Key** to `Name` and **Value** to `ridenow-prod-cluster-sg`. The Discovery_Block finds the group by this tag, not by the group name.
+8. Under **Tags - optional**, choose **Add new tag**. Set **Key** to `Name` and **Value** to `ridenow-prod-cluster-sg`. This tag makes the group easy to find in the console list.
 9. Choose **Create security group**.
 
 Add the self-referencing rule:
@@ -256,18 +261,18 @@ Add the self-referencing rule:
 Add no CIDR inbound rule.
 ## Values to record
 
-The template exports six values. Without CloudFormation, the Reader finds each one from the console or from the Discovery_Block, which reads the resources by their `Name` tag.
+The template exports six values. Without CloudFormation, you read each one from the console.
 
-| Template output | Output_Equivalent | Discovery_Block variable | Used by |
-|---|---|---|---|
-| `VpcId` | VPC console, **Your VPCs**, `ridenow-prod-vpc`, **VPC ID** (`vpc-...`) | `VPC_ID` | `05-messaging.md` (Redis security group), Runbook phase 4.1 (load balancer controller `vpcId`), Runbook phase 5.2 (per-pod security groups) |
-| `VpcCidr` | `10.30.0.0/16` (the value you entered in step 1) | none (fixed value) | reference only |
-| `PublicSubnetIds` | Subnets `ridenow-prod-public-1` and `ridenow-prod-public-2`, **Subnet ID** column | `PUBLIC_SUBNET_IDS` | Runbook phase 6 (ALB created by the Ingress uses the public subnets by tag) |
-| `PrivateSubnetIds` | Subnets `ridenow-prod-private-1` and `ridenow-prod-private-2`, **Subnet ID** column | `PRIVATE_SUBNET_IDS` | `04-data.md` (DB subnet group), `05-messaging.md` (Redis subnet group), `06-eks-cluster.md` (cluster and the three Fargate profiles) |
-| `NodeSecurityGroupId` | Security group `ridenow-prod-cluster-sg`, **Security group ID** (`sg-...`) | `NODE_SG_ID` | `05-messaging.md` (Redis ingress source), `06-eks-cluster.md` (cluster security group) |
-| `DbSecurityGroupId` | Security group `ridenow-prod-db-sg`, **Security group ID** (`sg-...`) | `DB_SG_ID` | `04-data.md` (the six RDS instances), `07-eks-addons.md` (ingress rule from the EKS cluster security group), Runbook phase 5.2 |
+| Template output | Output_Equivalent | Used by |
+|---|---|---|
+| `VpcId` | VPC console, **Your VPCs**, `ridenow-prod-vpc`, **VPC ID** (`vpc-...`) | `05-messaging.md` (Redis security group), [06-eks-cluster.md](06-eks-cluster.md#3-aws-load-balancer-controller) (load balancer controller `vpcId`), the per-pod security groups |
+| `VpcCidr` | `10.30.0.0/16` (the value you entered in step 1) | reference only |
+| `PublicSubnetIds` | Subnets `ridenow-prod-public-1` and `ridenow-prod-public-2`, **Subnet ID** column | the ALB created by the Ingress (it uses the public subnets by tag) |
+| `PrivateSubnetIds` | Subnets `ridenow-prod-private-1` and `ridenow-prod-private-2`, **Subnet ID** column | `04-data.md` (DB subnet group), `05-messaging.md` (Redis subnet group), `06-eks-cluster.md` (cluster and the three Fargate profiles) |
+| `NodeSecurityGroupId` | Security group `ridenow-prod-cluster-sg`, **Security group ID** (`sg-...`) | `05-messaging.md` (Redis ingress source), `06-eks-cluster.md` (cluster security group) |
+| `DbSecurityGroupId` | Security group `ridenow-prod-db-sg`, **Security group ID** (`sg-...`) | `04-data.md` (the six RDS instances), `07-eks-addons.md` (ingress rule from the EKS cluster security group), the per-pod security groups |
 
-Keep these id values in a text file. They are all re-discoverable later by the Discovery_Block, so losing them costs nothing.
+Keep these id values in a text file. You can always read them again from the console.
 
 None of the `02-network` parameters in `prod.json` is empty, so nothing else needs to be looked up.
 
@@ -277,9 +282,12 @@ No Post-Deploy step is needed for this guide.
 
 ## Verify
 
-Load the variables with the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then run:
+Run in a terminal with the AWS CLI signed in to the same account. The first lines look the ids up by name. Alternatively, replace the `$(...)` parts with the `vpc-...` and `sg-...` ids you recorded in "Values to record".
 
 ```bash
+export AWS_DEFAULT_REGION=ap-southeast-1
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=ridenow-prod-vpc" --query 'Vpcs[0].VpcId' --output text)
+DB_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=ridenow-prod-db-sg" "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[0].GroupId' --output text)
 aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --query 'Vpcs[0].[CidrBlock,State]' --output text
 aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'length(Subnets)'
 aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" --query 'length(NatGateways)'

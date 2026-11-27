@@ -18,14 +18,14 @@ You create one KMS key, one DB subnet group and six encrypted PostgreSQL RDS ins
 
 ## Depends on
 
-Only [02-network.md](./02-network.md). Select these by name in the console:
+Only [02-network.md](./02-network.md). Finish that guide first. The forms below ask for these values; you pick each one by name from a list, so you only need the ids if you want to double-check.
 
-| Template import | Select in the console |
-|---|---|
-| `network-PrivateSubnetIds` | subnets `ridenow-prod-private-1`, `ridenow-prod-private-2` |
-| `network-DbSecurityGroupId` | security group `ridenow-prod-db-sg` (VPC `ridenow-prod-vpc`) |
-
-Variables used in Verify come from the [Discovery_Block](./00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
+| Value | Created in | Where to find it in the console |
+|---|---|---|
+| VPC `ridenow-prod-vpc` | [02-network.md](./02-network.md) | **VPC -> Your VPCs**, search `ridenow-prod-vpc`, copy **VPC ID** (`vpc-...`) |
+| Private subnet `ridenow-prod-private-1` | [02-network.md](./02-network.md) | **VPC -> Subnets**, search `ridenow-prod-private-1`, copy **Subnet ID** (`subnet-...`). Its **Availability Zone** is `ap-southeast-1a`. |
+| Private subnet `ridenow-prod-private-2` | [02-network.md](./02-network.md) | **VPC -> Subnets**, search `ridenow-prod-private-2`, copy **Subnet ID** (`subnet-...`). Its **Availability Zone** is `ap-southeast-1b`. |
+| DB security group `ridenow-prod-db-sg` | [02-network.md](./02-network.md) | **VPC -> Security groups**, search `ridenow-prod-db-sg`, copy **Security group ID** (`sg-...`). Check its **VPC ID** matches `ridenow-prod-vpc`. |
 
 ## Create the resources
 
@@ -501,22 +501,25 @@ Notes: leave everything not listed at its default. The template sets `DeletionPo
 
 ## Values to record
 
-The Discovery_Block already reads all twelve into shell variables. Record them only if you do not use it.
+Copy these twelve values once all six instances show `Available`. Open **RDS -> Databases**, select the instance, then:
 
-| Template output | Console field | Shell variable (Discovery_Block) | Consumed by |
+- Endpoint: **Connectivity & security** tab, **Endpoint** (`<identifier>.<random>.ap-southeast-1.rds.amazonaws.com`).
+- Secret ARN: **Configuration** tab, **Master Credentials ARN** (`arn:aws:secretsmanager:ap-southeast-1:<account-id>:secret:rds!db-...`).
+
+| Output_Equivalent | Value | Console location | Consumed by |
 |---|---|---|---|
-| `UserDbEndpoint` | RDS -> Databases -> `ridenow-prod-user-db` -> Connectivity & security -> Endpoint | `USER_DB_ENDPOINT` | `07-eks-addons.md` |
-| `UserDbSecretArn` | same instance -> Configuration -> Master credentials ARN | `USER_DB_SECRET_ARN` | `07-eks-addons.md` |
-| `DriverDbEndpoint` | `ridenow-prod-driver-db` -> Endpoint | `DRIVER_DB_ENDPOINT` | `07-eks-addons.md` |
-| `DriverDbSecretArn` | `ridenow-prod-driver-db` -> Master credentials ARN | `DRIVER_DB_SECRET_ARN` | `07-eks-addons.md` |
-| `TripDbEndpoint` | `ridenow-prod-trip-db` -> Endpoint | `TRIP_DB_ENDPOINT` | `07-eks-addons.md` |
-| `TripDbSecretArn` | `ridenow-prod-trip-db` -> Master credentials ARN | `TRIP_DB_SECRET_ARN` | `07-eks-addons.md` |
-| `PaymentDbEndpoint` | `ridenow-prod-payment-db` -> Endpoint | `PAYMENT_DB_ENDPOINT` | `07-eks-addons.md` |
-| `PaymentDbSecretArn` | `ridenow-prod-payment-db` -> Master credentials ARN | `PAYMENT_DB_SECRET_ARN` | `07-eks-addons.md` |
-| `MatchingDbEndpoint` | `ridenow-prod-matching-db` -> Endpoint | `MATCHING_DB_ENDPOINT` | `07-eks-addons.md` |
-| `MatchingDbSecretArn` | `ridenow-prod-matching-db` -> Master credentials ARN | `MATCHING_DB_SECRET_ARN` | `07-eks-addons.md` |
-| `NotificationDbEndpoint` | `ridenow-prod-notification-db` -> Endpoint | `NOTIFICATION_DB_ENDPOINT` | `07-eks-addons.md` |
-| `NotificationDbSecretArn` | `ridenow-prod-notification-db` -> Master credentials ARN | `NOTIFICATION_DB_SECRET_ARN` | `07-eks-addons.md` |
+| `UserDbEndpoint` | endpoint of `ridenow-prod-user-db` | RDS -> Databases -> `ridenow-prod-user-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `UserDbSecretArn` | master secret ARN of `ridenow-prod-user-db` | same instance -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
+| `DriverDbEndpoint` | endpoint of `ridenow-prod-driver-db` | `ridenow-prod-driver-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `DriverDbSecretArn` | master secret ARN of `ridenow-prod-driver-db` | `ridenow-prod-driver-db` -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
+| `TripDbEndpoint` | endpoint of `ridenow-prod-trip-db` | `ridenow-prod-trip-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `TripDbSecretArn` | master secret ARN of `ridenow-prod-trip-db` | `ridenow-prod-trip-db` -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
+| `PaymentDbEndpoint` | endpoint of `ridenow-prod-payment-db` | `ridenow-prod-payment-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `PaymentDbSecretArn` | master secret ARN of `ridenow-prod-payment-db` | `ridenow-prod-payment-db` -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
+| `MatchingDbEndpoint` | endpoint of `ridenow-prod-matching-db` | `ridenow-prod-matching-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `MatchingDbSecretArn` | master secret ARN of `ridenow-prod-matching-db` | `ridenow-prod-matching-db` -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
+| `NotificationDbEndpoint` | endpoint of `ridenow-prod-notification-db` | `ridenow-prod-notification-db` -> Connectivity & security -> Endpoint | `07-eks-addons.md` |
+| `NotificationDbSecretArn` | master secret ARN of `ridenow-prod-notification-db` | `ridenow-prod-notification-db` -> Configuration -> Master Credentials ARN | `07-eks-addons.md` |
 
 ## Post-Deploy
 
@@ -524,15 +527,24 @@ None. The inbound rule that lets the cluster reach the databases is created in `
 
 ## Verify
 
-Load the variables with the [Discovery_Block](./00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then run:
+Run these in a terminal with the AWS CLI signed in to the same account, Region `ap-southeast-1`. They use the literal names from this guide, so nothing needs to be set first.
 
 ```bash
-aws rds describe-db-instances \
+aws rds describe-db-instances --region ap-southeast-1 \
   --query "DBInstances[?starts_with(DBInstanceIdentifier,'ridenow-prod-')].[DBInstanceIdentifier,DBInstanceStatus,StorageEncrypted,MultiAZ,PubliclyAccessible,BackupRetentionPeriod]" \
   --output table
-aws kms get-key-rotation-status --key-id alias/ridenow-prod-rds --query KeyRotationEnabled --output text
+aws rds describe-db-subnet-groups --region ap-southeast-1 --db-subnet-group-name ridenow-prod-db-subnet-group \
+  --query "DBSubnetGroups[0].[DBSubnetGroupName,VpcId,Subnets[].SubnetIdentifier]" --output json
+aws kms get-key-rotation-status --region ap-southeast-1 --key-id alias/ridenow-prod-rds --query KeyRotationEnabled --output text
 ```
 
-Expected: six rows, each `available`, `True`, `True`, `False`, `30`; then `True`. If a row is missing or not `available`, open RDS -> Databases -> that instance -> Logs & events.
+To check one instance by name, for example the user database:
+
+```bash
+aws rds describe-db-instances --region ap-southeast-1 --db-instance-identifier ridenow-prod-user-db \
+  --query "DBInstances[0].[DBInstanceStatus,Endpoint.Address,MasterUserSecret.SecretArn,VpcSecurityGroups[].VpcSecurityGroupId]" --output json
+```
+
+Expected: six rows, each `available`, `True`, `True`, `False`, `30`; then the subnet group with the VPC id of `ridenow-prod-vpc` and the two private subnet ids from "Depends on"; then `True`. The single-instance check shows `available`, the endpoint, the secret ARN, and one `sg-...` equal to the `ridenow-prod-db-sg` id. If a row is missing or not `available`, open RDS -> Databases -> that instance -> Logs & events.
 
 Next: `05-messaging.md`.

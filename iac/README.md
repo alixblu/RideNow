@@ -166,7 +166,7 @@ warns and leaves it blank, which is harmless for the change-set preview.)
 
 > This provisions **infrastructure only**. The image build, the in-cluster Helm /
 > `kubectl` add-ons, and the service manifests are separate steps. Follow
-> `../guides/cloudformation/00-deploy-runbook.md` for the full dependency-ordered sequence
+> `../guides/cloudformation/README.md` for the full dependency-ordered sequence
 > (stacks + images + add-ons + services).
 
 ## Teardown
@@ -262,7 +262,7 @@ iac/
   scripts/
     check-consistency.sh   # static checks: stacks, manifests, params and guides agree (no AWS calls)
     deploy.sh              # 01 -> 07, dry-run by default; --parallel runs independent stacks together (auto-resolves OIDC for 07)
-    deploy-and-test.sh     # whole runbook in one command: stacks, in-cluster setup, services, Ingress, API test
+    deploy-and-test.sh     # whole guide sequence in one command: stacks, in-cluster setup, services, Ingress, API test
     alb-controller-policy.sh # attaches the versioned ALB controller IAM policy to stack 07's role (after the Helm install)
     cleanup-cluster.sh     # in-cluster + hand-created resources; run before teardown
     deploy-frontend.sh     # stack 08 (needs the ALB), dry-run by default

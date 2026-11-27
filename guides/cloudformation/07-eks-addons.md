@@ -1,4 +1,4 @@
-# 07 - EKS add-ons (pod network access, OIDC provider, IRSA roles, application services)
+﻿# 07 - EKS add-ons (pod network access, OIDC provider, IRSA roles, application services)
 
 You create two security group inbound rules, the cluster OIDC provider and six IRSA roles in the AWS Console, then deploy the seven services with `kubectl`. Reference: `iac/stacks/07-eks-addons.yaml` (read only). Region `ap-southeast-1`, environment `prod`.
 
@@ -16,22 +16,34 @@ You create two security group inbound rules, the cluster OIDC provider and six I
 | `MatchingServiceRole` | IAM role | `ridenow-prod-matching-service` |
 | `NotificationWorkerRole` | IAM role | `ridenow-prod-notification-worker` |
 
-`OidcProviderId` is empty in `iac/params/prod.json` because the cluster does not exist when the file is written. `OIDC_ID` is the last path segment of the cluster OIDC issuer URL, set by the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
+`OidcProviderId` is empty in `iac/params/prod.json` because the cluster does not exist when the file is written. `OIDC_ID` is the last path segment of the cluster OIDC issuer URL (see the `OIDC_ID` row under Depends on).
 
 ## Depends on
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first. No variable may print `MISSING`.
+Look up each value below in the console and keep it at hand. Use the value names in the first column in the steps and commands of this guide. Region is `ap-southeast-1`, so check the region selector at the top right first.
 
-| Import in the Template | Earlier Resource and Fixed_Name | Guide | Where you select it | Discovery_Block variable |
-|---|---|---|---|---|
-| `network-DbSecurityGroupId` | security group `ridenow-prod-db-sg` | `02-network.md` | EC2 > Security Groups | `DB_SG_ID` |
-| `messaging-RedisSecurityGroupId` | security group `ridenow-prod-redis-sg` | `05-messaging.md` | EC2 > Security Groups | `REDIS_SG_ID` |
-| `eks-ClusterSecurityGroupId` | cluster security group of EKS cluster `ridenow-prod` (`eks-cluster-sg-ridenow-prod-<number>`) | `06-eks-cluster.md` | EC2 > Security Groups | `EKS_CLUSTER_SG_ID` |
-| `iam-TripServiceMessagingPolicyArn` | managed policy `ridenow-prod-trip-service-messaging` | `01-iam.md` | IAM > Policies | none |
-| `iam-PaymentServiceMessagingPolicyArn` | managed policy `ridenow-prod-payment-service-messaging` | `01-iam.md` | IAM > Policies | none |
-| `iam-MatchingServiceMessagingPolicyArn` | managed policy `ridenow-prod-matching-service-messaging` | `01-iam.md` | IAM > Policies | none |
-| `iam-NotificationWorkerMessagingPolicyArn` | managed policy `ridenow-prod-notification-worker-messaging` | `01-iam.md` | IAM > Policies | none |
-| cluster OIDC issuer (read live) | EKS cluster `ridenow-prod` | `06-eks-cluster.md` | EKS > Clusters > `ridenow-prod` > Overview | `OIDC_ISSUER_URL`, `OIDC_ID` |
+| Value | Created in | Where to find it in the console |
+|---|---|---|
+| `ACCOUNT_ID` (12 digits) | your AWS account | Click your account name at the top right. Copy **Account ID**. |
+| `AWS_REGION` | fixed | `ap-southeast-1` |
+| `OIDC_ISSUER_URL` | `06-eks-cluster.md` | **EKS -> Clusters -> `ridenow-prod` -> Overview**. Copy **OpenID Connect provider URL**. |
+| `OIDC_ID` (32 hex characters) | `06-eks-cluster.md` | Same page. It is the text after `/id/` in `OIDC_ISSUER_URL`. |
+| `DB_SG_ID`, import `network-DbSecurityGroupId` | `02-network.md` | **EC2 -> Security Groups**. Search `ridenow-prod-db-sg`. Copy **Security group ID** (`sg-...`). |
+| `REDIS_SG_ID`, import `messaging-RedisSecurityGroupId` | `05-messaging.md` | **EC2 -> Security Groups**. Search `ridenow-prod-redis-sg`. Copy **Security group ID**. |
+| `EKS_CLUSTER_SG_ID`, import `eks-ClusterSecurityGroupId` | `06-eks-cluster.md` | **EKS -> Clusters -> `ridenow-prod` -> Networking**. Copy **Cluster security group** (`sg-...`, named `eks-cluster-sg-ridenow-prod-<number>`). |
+| Trip messaging policy, import `iam-TripServiceMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-trip-service-messaging`. Open it and copy the ARN. |
+| Payment messaging policy, import `iam-PaymentServiceMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-payment-service-messaging`. Open it and copy the ARN. |
+| Matching messaging policy, import `iam-MatchingServiceMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-matching-service-messaging`. Open it and copy the ARN. |
+| Notification messaging policy, import `iam-NotificationWorkerMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-notification-worker-messaging`. Open it and copy the ARN. |
+| `USER_DB_ENDPOINT`, `DRIVER_DB_ENDPOINT`, `TRIP_DB_ENDPOINT`, `PAYMENT_DB_ENDPOINT`, `MATCHING_DB_ENDPOINT`, `NOTIFICATION_DB_ENDPOINT` | `04-data.md` | **RDS -> Databases -> `ridenow-prod-<service>-db`** (`user`, `driver`, `trip`, `payment`, `matching`, `notification`) **-> Connectivity & security**. Copy **Endpoint** (host name only, no port). |
+| `REDIS_ENDPOINT` | `05-messaging.md` | **ElastiCache -> Valkey caches** (or **Redis OSS caches**) **-> `ridenow-prod-redis`**. Copy **Primary endpoint** (host name only, no `:6379`). |
+| `MATCHING_QUEUE_URL` | `05-messaging.md` | **SQS -> Queues -> `ridenow-prod-matching`**. Copy **URL**. |
+| `PAYMENT_QUEUE_URL` | `05-messaging.md` | **SQS -> Queues -> `ridenow-prod-payment`**. Copy **URL**. |
+| `NOTIFICATIONS_QUEUE_URL` | `05-messaging.md` | **SQS -> Queues -> `ridenow-prod-notifications`**. Copy **URL**. |
+| Events topic `ridenow-prod-events` | `05-messaging.md` | **SNS -> Topics -> `ridenow-prod-events`**. Check that it exists. The manifests build its ARN from `AWS_REGION` and `ACCOUNT_ID`, so you paste nothing. |
+| `IMAGE_TAG` | `03-ecr.md` | **ECR -> Private repositories -> `ridenow/user-service` -> Image tags**. Use the tag you pushed, for example `v1.0.0`. |
+| `APP_ORIGIN` | `08-frontend.md` | **CloudFront -> Distributions**. Copy **Distribution domain name** of `RideNow prod frontend` and prefix `https://`. If you have not created it yet, use `https://app.example.com` and re-apply later. |
+| `TRIP_SERVICE_ROLE_ARN`, `PAYMENT_SERVICE_ROLE_ARN`, `MATCHING_SERVICE_ROLE_ARN`, `NOTIFICATION_WORKER_ROLE_ARN` | this guide, step 4 | **IAM -> Roles -> `ridenow-prod-<service>`**. Copy **ARN**. Look these up after step 4. |
 
 ## Create the resources
 
@@ -66,15 +78,11 @@ Expected: the group has two rules on 6379. No tags.
 
 ### 3. OIDC identity provider (`OidcProvider`)
 
-```bash
-echo "$OIDC_ISSUER_URL"
-```
-
-Expected: `https://oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>` (32 hex characters). Empty means the cluster does not exist (`06-eks-cluster.md`).
+`OIDC_ISSUER_URL` has the form `https://oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>` (32 hex characters). If the cluster page shows no such URL, the cluster does not exist yet (`06-eks-cluster.md`).
 
 1. Go to **IAM -> Identity providers -> Add provider**.
 2. Set **Provider type** to `OpenID Connect`.
-3. Paste the URL printed above into **Provider URL**.
+3. Paste `OIDC_ISSUER_URL` into **Provider URL**.
 4. Set **Audience** to `sts.amazonaws.com`.
 5. Choose **Get thumbprint**. The console fills `9e99a48a9960b14926bb7f3b02e22da2b0ab7280`, which is the value the Template uses.
 6. Choose **Add provider**.
@@ -83,19 +91,12 @@ Expected: the provider is listed with that URL. No tags.
 
 ### 4. Six IRSA roles
 
-Every role trust policy contains two placeholders. Replace them before you paste a policy:
+Every role policy below contains two placeholders. Before you paste a policy, replace them with the values from the Depends on table:
 
-- `<ACCOUNT_ID>`: the value of the Discovery_Block variable `ACCOUNT_ID` (12 digits).
-- `<OIDC_ID>`: the value of the Discovery_Block variable `OIDC_ID` (32 hex characters).
+- `<ACCOUNT_ID>`: `ACCOUNT_ID` (12 digits).
+- `<OIDC_ID>`: `OIDC_ID` (32 hex characters).
 
-Print both values in the shell where you ran the Discovery_Block:
-
-```bash
-echo "ACCOUNT_ID=$ACCOUNT_ID"
-echo "OIDC_ID=$OIDC_ID"
-```
-
-Expected: both lines show a value. Create the roles one at a time, in the order below.
+Create the roles one at a time, in the order below.
 
 #### 4.1 Role `ridenow-prod-alb-controller`
 
@@ -447,12 +448,12 @@ Expected: role `ridenow-prod-notification-worker` exists. Trust relationships sh
 
 ## Values to record
 
-Re-run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) after creating the roles. It reads the ARNs by role name.
+After you create the roles, copy each ARN from the console (**IAM -> Roles**, open the role, copy **ARN**) and keep it under the value name below.
 
-| Output_Equivalent (Template export) | Where it comes from | Variable | Used by |
+| Output_Equivalent (Template export) | Where it comes from | Value name | Used by |
 |---|---|---|---|
-| `AlbControllerRoleArn` | IAM > Roles > `ridenow-prod-alb-controller` > ARN | `ALB_CONTROLLER_ROLE_ARN` | `00-deploy-runbook.md` Phase 4.1 |
-| `ExternalSecretsRoleArn` | IAM > Roles > `ridenow-prod-external-secrets` > ARN | `EXTERNAL_SECRETS_ROLE_ARN` | `00-deploy-runbook.md` Phase 4.2 |
+| `AlbControllerRoleArn` | IAM > Roles > `ridenow-prod-alb-controller` > ARN | `ALB_CONTROLLER_ROLE_ARN` | [06-eks-cluster.md](06-eks-cluster.md#3-aws-load-balancer-controller) |
+| `ExternalSecretsRoleArn` | IAM > Roles > `ridenow-prod-external-secrets` > ARN | `EXTERNAL_SECRETS_ROLE_ARN` | [06-eks-cluster.md](06-eks-cluster.md#4-external-secrets-operator) |
 | `TripServiceRoleArn` | IAM > Roles > `ridenow-prod-trip-service` > ARN | `TRIP_SERVICE_ROLE_ARN` | `iac/k8s/22-trip-service.yaml` |
 | `PaymentServiceRoleArn` | IAM > Roles > `ridenow-prod-payment-service` > ARN | `PAYMENT_SERVICE_ROLE_ARN` | `iac/k8s/23-payment-service.yaml` |
 | `MatchingServiceRoleArn` | IAM > Roles > `ridenow-prod-matching-service` > ARN | `MATCHING_SERVICE_ROLE_ARN` | `iac/k8s/24-matching-service.yaml` |
@@ -460,12 +461,45 @@ Re-run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-n
 
 ## Post-Deploy
 
-Run from the repository root in the shell where you ran the Discovery_Block. Prerequisites: images for `$IMAGE_TAG` in ECR (`03-ecr.md`); kubeconfig, `ridenow` namespace and database secrets (`06-eks-cluster.md`); ALB controller and External Secrets installed (`00-deploy-runbook.md` Phase 4.1 and 4.2).
+Run from the repository root in a bash shell. Prerequisites: images for your `IMAGE_TAG` in ECR (`03-ecr.md`); kubeconfig, `ridenow` namespace and database secrets (`06-eks-cluster.md`); ALB controller and External Secrets installed ([06-eks-cluster.md](06-eks-cluster.md#3-aws-load-balancer-controller) and 4.2).
 
-`APP_ORIGIN` is the browser origin allowed to call the API (never `*`). It defaults to the CloudFront domain. If `08-frontend.md` is not done yet, `export APP_ORIGIN=https://app.example.com` first and re-apply later.
+`APP_ORIGIN` is the browser origin allowed to call the API (never `*`).
+
+**Assign the values.** Replace every `<paste>` with the value from the Depends on table. Keep the quotes and paste the value only.
 
 ```bash
-APP_ORIGIN="${APP_ORIGIN:-${CLOUDFRONT_DOMAIN:+https://$CLOUDFRONT_DOMAIN}}"
+ACCOUNT_ID="<paste>"
+AWS_REGION=ap-southeast-1
+ENV=prod
+IMAGE_TAG="<paste>"
+APP_ORIGIN="<paste>"
+REDIS_ENDPOINT="<paste>"
+USER_DB_ENDPOINT="<paste>"
+DRIVER_DB_ENDPOINT="<paste>"
+TRIP_DB_ENDPOINT="<paste>"
+PAYMENT_DB_ENDPOINT="<paste>"
+MATCHING_DB_ENDPOINT="<paste>"
+NOTIFICATION_DB_ENDPOINT="<paste>"
+MATCHING_QUEUE_URL="<paste>"
+PAYMENT_QUEUE_URL="<paste>"
+NOTIFICATIONS_QUEUE_URL="<paste>"
+TRIP_SERVICE_ROLE_ARN="<paste>"
+PAYMENT_SERVICE_ROLE_ARN="<paste>"
+MATCHING_SERVICE_ROLE_ARN="<paste>"
+NOTIFICATION_WORKER_ROLE_ARN="<paste>"
+for V in ACCOUNT_ID IMAGE_TAG APP_ORIGIN REDIS_ENDPOINT USER_DB_ENDPOINT DRIVER_DB_ENDPOINT \
+         TRIP_DB_ENDPOINT PAYMENT_DB_ENDPOINT MATCHING_DB_ENDPOINT NOTIFICATION_DB_ENDPOINT \
+         MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL TRIP_SERVICE_ROLE_ARN \
+         PAYMENT_SERVICE_ROLE_ARN MATCHING_SERVICE_ROLE_ARN NOTIFICATION_WORKER_ROLE_ARN; do
+  case "${!V}" in ""|"<paste>") echo "NOT SET: $V" ;; esac
+done
+```
+
+Expected: no `NOT SET:` line. If one appears, look the value up in the Depends on table and assign it again.
+
+**Build the substitution list.** The `sed` commands in the next block use it.
+
+```bash
 SUBST=(
   -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g"
   -e "s|<REGION>|$AWS_REGION|g"
@@ -487,15 +521,7 @@ SUBST=(
   -e "s|<MATCHING_SERVICE_ROLE_ARN>|$MATCHING_SERVICE_ROLE_ARN|g"
   -e "s|<NOTIFICATION_WORKER_ROLE_ARN>|$NOTIFICATION_WORKER_ROLE_ARN|g"
 )
-for V in ACCOUNT_ID AWS_REGION ENV IMAGE_TAG APP_ORIGIN REDIS_ENDPOINT USER_DB_ENDPOINT DRIVER_DB_ENDPOINT \
-         TRIP_DB_ENDPOINT PAYMENT_DB_ENDPOINT MATCHING_DB_ENDPOINT NOTIFICATION_DB_ENDPOINT \
-         MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL TRIP_SERVICE_ROLE_ARN \
-         PAYMENT_SERVICE_ROLE_ARN MATCHING_SERVICE_ROLE_ARN NOTIFICATION_WORKER_ROLE_ARN; do
-  [ -n "${!V}" ] || echo "EMPTY: $V"
-done
 ```
-
-Expected: no `EMPTY:` line. If one appears, create that resource, re-run the Discovery_Block and this block.
 
 Deploy in this order (payment before trip, driver before matching). Fargate starts a node per pod, so each rollout can take several minutes.
 
@@ -511,9 +537,15 @@ Expected: seven `deployment "<service>" successfully rolled out` lines. If a rol
 
 ## Verify
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first.
+Assign the values from the Depends on table, then run the checks. Needs the AWS CLI, `jq` and `kubectl`.
 
 ```bash
+export AWS_DEFAULT_REGION=ap-southeast-1 AWS_PAGER=""
+ENV=prod
+OIDC_ID="<paste>"
+DB_SG_ID="<paste>"
+REDIS_SG_ID="<paste>"
+EKS_CLUSTER_SG_ID="<paste>"
 aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[?contains(Arn, '$OIDC_ID')].Arn" --output text
 aws ec2 describe-security-groups --group-ids "$DB_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`5432\`].UserIdGroupPairs[].GroupId" --output text
 aws ec2 describe-security-groups --group-ids "$REDIS_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`6379\`].UserIdGroupPairs[].GroupId" --output text

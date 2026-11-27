@@ -13,7 +13,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 GUIDES="$ROOT/guides/cloudformation"
 STACKS="$ROOT/iac/stacks"
 PARAMS="$ROOT/iac/params/prod.json"
-RUNBOOK="$GUIDES/00-deploy-runbook.md"
+RUNBOOK="$GUIDES/README.md"
 TMP="$ROOT/.tmp/check-guides"
 mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
@@ -181,7 +181,19 @@ for L in "${LAYERS[@]}"; do
   done <"$TMP/$L.guide-imp"
   while read -r IMP; do
     [ -n "$IMP" ] || continue
+    # Depends on may name the import token or, in a Value/Created in/Where to find table,
+    # the console resource that the import resolves to.
+    case "$IMP" in
+      network-VpcId) RES='ridenow-prod-vpc' ;;
+      network-PrivateSubnetIds) RES='ridenow-prod-private-1' ;;
+      network-DbSecurityGroupId) RES='ridenow-prod-db-sg' ;;
+      network-NodeSecurityGroupId) RES='ridenow-prod-cluster-sg' ;;
+      iam-ClusterRoleArn) RES='ridenow-prod-eks-cluster-role' ;;
+      iam-FargatePodExecutionRoleArn) RES='ridenow-prod-eks-fargate-pod-execution-role' ;;
+      *) RES='' ;;
+    esac
     grep -qxF "$IMP" "$TMP/$L.guide-imp" \
+      || { [ -n "$RES" ] && grep -qF "$RES" "$TMP/$L.dep"; } \
       || fail "$G" "${DLINE:-0}" "Fn::ImportValue '$IMP' of $L.yaml is not named under 'Depends on'"
   done <"$TMP/$L.imp"
 
@@ -292,7 +304,7 @@ else
         clean "$F" >"$TMP/other.txt"
       fi
       N=$(sed -E 's/^[[:space:]]+//' "$TMP/other.txt" | grep -cFxf "$TMP/db.lines")
-      [ "$N" -lt 3 ] || fail "$F" 0 "repeats $N lines of the Discovery_Block; link to it instead"
+      [ "$N" -lt 3 ] || fail "$F" 0 "repeats $N lines of the Discovery_Block; guides must not repeat it"
     done
   fi
 fi

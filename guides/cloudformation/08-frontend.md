@@ -1,6 +1,6 @@
 # 08 - Frontend (S3, CloudFront, GitHub deploy role)
 
-You create a private S3 bucket, a CloudFront distribution (site plus `/api/*` and `/live*` to the ALB) and an optional GitHub deploy role by hand in the Console, following `iac/stacks/08-frontend.yaml`. Region `ap-southeast-1`, Environment `prod`, values from `iac/params/prod.json` layer `08-frontend`. Do this after the ALB exists (Runbook, Phase 6).
+You create a private S3 bucket, a CloudFront distribution (site plus `/api/*` and `/live*` to the ALB) and an optional GitHub deploy role by hand in the Console, following `iac/stacks/08-frontend.yaml`. Region `ap-southeast-1`, Environment `prod`, values from `iac/params/prod.json` layer `08-frontend`. Do this after the ALB exists (the Ingress step in [06-eks-cluster.md](06-eks-cluster.md#post-deploy)).
 
 ## What it creates
 
@@ -17,12 +17,13 @@ You create a private S3 bucket, a CloudFront distribution (site plus `/api/*` an
 
 The Template imports nothing. It needs running services:
 
-| Value | Where it comes from | Used for |
+| Value | Created in | Where to find it in the console |
 |---|---|---|
-| `ALB_DNS_NAME` | Discovery_Block (the ALB of the `ridenow` Ingress) | Origin `backend` |
-| `ACCOUNT_ID`, `AWS_REGION` | Discovery_Block | Bucket name, ARNs |
+| ALB DNS name (for example `k8s-ridenow-xxxx.ap-southeast-1.elb.amazonaws.com`) | [06-eks-cluster.md](06-eks-cluster.md#post-deploy), the Ingress step | **EC2 -> Load Balancers**, select the ALB created by the Ingress (name starts with `k8s-ridenow`), copy **DNS name**. Or run `kubectl get ingress -n ridenow` and copy the **ADDRESS** column. |
+| Account id (`873716897107`) | Your AWS account | Click your account name at the top right of the console, copy **Account ID**. |
+| GitHub OIDC provider ARN (optional, only for GitHub publishing) | [Step 6](#6-github-oidc-provider-optional-only-for-github-publishing) here, or an earlier setup | **IAM -> Identity providers**, open `token.actions.githubusercontent.com`, copy **ARN**. Skip if it is not listed and you do not publish from GitHub. |
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws). Stop if `ALB_DNS_NAME` is `MISSING`.
+Stop if the ALB DNS name is missing: finish the Ingress step first.
 
 ## Create the resources
 
@@ -115,7 +116,7 @@ The wizard creates its own OAC and may rewrite the bucket policy. Fix both below
 **Add the ALB origin**
 
 1. On the **Origins** tab, choose **Create origin**.
-2. Set **Origin domain** to the value of `ALB_DNS_NAME` (plain DNS name, no `http://`, no path).
+2. Set **Origin domain** to the ALB DNS name from Depends on (plain DNS name, no `http://`, no path).
 3. Set **Protocol** to `HTTP only`.
 4. Set **HTTP port** to `80`.
 5. Set **Name** to `backend`.
@@ -181,7 +182,7 @@ The wizard creates its own OAC and may rewrite the bucket policy. Fix both below
 10. Choose **Save changes**.
 11. Leave the **Error pages** tab empty. The Template has no custom error responses, because the function handles SPA routes.
 
-Check: General tab shows the **Distribution domain name** (`d....cloudfront.net`) and **ID** (`E...`). Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) again so `CLOUDFRONT_ID` and `CLOUDFRONT_DOMAIN` are set.
+Check: General tab shows the **Distribution domain name** (`d....cloudfront.net`) and **ID** (`E...`). Write both down; they go in Values to record.
 
 ### 5. Bucket policy (`SiteBucketPolicy`)
 
@@ -319,27 +320,29 @@ Note: `ReadStackOutputs` is copied from the Template and grants access to nothin
 
 ## Values to record
 
-| Output in the Template | Where to read it | Variable | Consumed by |
+| Output_Equivalent | Value | Console location | Consumed by |
 |---|---|---|---|
-| `BucketName` | S3 -> Buckets | `BUCKET` (set in Post-Deploy) | Post-Deploy, Rollback, Teardown |
-| `DistributionId` | CloudFront -> Distributions -> ID | `CLOUDFRONT_ID` | Steps 5 and 7, Post-Deploy, Rollback |
-| `DistributionDomain` | CloudFront -> Distributions -> Domain name | `CLOUDFRONT_DOMAIN` | Post-Deploy, Verify |
-| `DeployRoleArn` (only if the role exists) | IAM -> Roles -> `ridenow-prod-frontend-deploy` -> ARN | `DEPLOY_ROLE_ARN` | GitHub variable `AWS_DEPLOY_ROLE_ARN` |
+| `BucketName` | `ridenow-prod-frontend-873716897107-ap-southeast-1` | **S3 -> Buckets** | Post-Deploy, Rollback, Teardown |
+| `DistributionId` (`E...`) | Copy it | **CloudFront -> Distributions**, **ID** column | Steps 5 and 7, Post-Deploy, Rollback, Troubleshooting |
+| `DistributionDomain` (`d....cloudfront.net`) | Copy it | **CloudFront -> Distributions**, **Domain name** column | Post-Deploy, Verify, Troubleshooting |
+| `DeployRoleArn` (only if the role exists) | Copy it | **IAM -> Roles -> `ridenow-prod-frontend-deploy`**, **ARN** | Post-Deploy part B, GitHub variable `AWS_DEPLOY_ROLE_ARN`, Troubleshooting |
 
-Empty values in `iac/params/prod.json`: `AlbDnsName` is `""`, take it from `ALB_DNS_NAME` (Discovery_Block) for origin `backend`. `GithubOidcProviderArn` is `""`, which skips `DeployRole`; use the ARN from step 6 to create it.
+Empty values in `iac/params/prod.json`: `AlbDnsName` is `""`, so use the ALB DNS name from Depends on for origin `backend`. `GithubOidcProviderArn` is `""`, which skips `DeployRole`; use the ARN from step 6 to create it.
 
 ## Post-Deploy
 
-Set the bucket name once per terminal, after the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws):
+Start every terminal session with these assignments. Replace the placeholders with the values you recorded above:
 
 ```bash
-BUCKET="ridenow-$ENV-frontend-$ACCOUNT_ID-$AWS_REGION"
-echo "$BUCKET  $CLOUDFRONT_ID  $CLOUDFRONT_DOMAIN"
+AWS_REGION=ap-southeast-1
+BUCKET=ridenow-prod-frontend-873716897107-ap-southeast-1
+CLOUDFRONT_ID=<DistributionId from Values to record>
+CLOUDFRONT_DOMAIN=<DistributionDomain from Values to record>
 ```
 
 ### A. First publish
 
-Build with the CloudFront domain as API base, upload `assets/*` immutable and the rest `no-cache`, invalidate `/index.html`:
+Run from the repository root. Build with the CloudFront domain as API base, upload `assets/*` immutable and the rest `no-cache`, invalidate `/index.html`:
 
 ```bash
 ( cd frontend && pnpm install --frozen-lockfile && VITE_API_BASE_URL="https://$CLOUDFRONT_DOMAIN" pnpm build )
@@ -359,6 +362,9 @@ Note: the stack-era `iac/scripts/publish-frontend.sh` still reads CloudFormation
 ### B. GitHub setup (only if you created the deploy role)
 
 ```bash
+AWS_REGION=ap-southeast-1
+GITHUB_REPO=alixblu/RideNow
+DEPLOY_ROLE_ARN=<DeployRoleArn from Values to record>
 REVIEWER_ID=$(gh api user --jq .id)
 jq -n --argjson id "$REVIEWER_ID" '{reviewers: [{type: "User", id: $id}]}' \
   | gh api -X PUT "repos/$GITHUB_REPO/environments/prod" --input - --jq '.name'
@@ -371,21 +377,21 @@ Note: required reviewers need a public repository or a paid plan. The workflow j
 
 ## Verify
 
-Load the variables with the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws), then:
-
 ```bash
+CLOUDFRONT_DOMAIN=<DistributionDomain from Values to record>
 curl -s -o /dev/null -w '%{http_code}\n' "https://$CLOUDFRONT_DOMAIN/"
 ```
 
 Expected: `200`. `403` means the bucket is empty (run part A) or the bucket policy names another distribution. `000` means the distribution is still Deploying.
-
 ## Rollback
 
 The bucket is versioned. The assets in `assets/*` are never deleted by a publish, so a rollback only needs to restore `index.html`.
 
-List the versions of `index.html`, newest first:
+Set the variables, then list the versions of `index.html`, newest first:
 
 ```bash
+BUCKET=ridenow-prod-frontend-873716897107-ap-southeast-1
+CLOUDFRONT_ID=<DistributionId from Values to record>
 aws s3api list-object-versions --bucket "$BUCKET" --prefix index.html \
   --query "Versions[?Key=='index.html'].[VersionId,LastModified,IsLatest]" --output table
 ```
@@ -423,7 +429,7 @@ Run this only when you remove the whole frontend. Delete in this order, each in 
 
 Result: none of the five resources is listed any more. The bucket must be empty first, or the delete fails with `BucketNotEmpty`.
 
-The GitHub OIDC provider is account-level and shared. Delete it (**IAM** > Identity providers) only if nothing else in the account uses it. The GitHub Environment `prod` and its variables also stay. Remove them with `gh api -X DELETE "repos/$GITHUB_REPO/environments/prod"` if you no longer deploy.
+The GitHub OIDC provider is account-level and shared. Delete it (**IAM** > Identity providers) only if nothing else in the account uses it. The GitHub Environment `prod` and its variables also stay. Remove them with `gh api -X DELETE repos/alixblu/RideNow/environments/prod` if you no longer deploy.
 
 ## Follow-ups
 
@@ -439,6 +445,7 @@ The GitHub OIDC provider is account-level and shared. Delete it (**IAM** > Ident
 The step `aws-actions/configure-aws-credentials` fails with `Credentials could not be loaded`. The cause is an empty `role-to-assume`: `vars.AWS_DEPLOY_ROLE_ARN` is empty in the job. The environment named in the workflow must exactly equal the GitHub Environment that holds the variables. Compare them:
 
 ```bash
+GITHUB_REPO=alixblu/RideNow
 gh variable list --env prod --repo "$GITHUB_REPO"
 grep -n 'environment:' .github/workflows/frontend-deploy.yml
 ```
@@ -447,14 +454,14 @@ Expected: the variable list shows `AWS_DEPLOY_ROLE_ARN`, and the workflow line r
 
 ### Not authorized to perform sts:AssumeRoleWithWebIdentity
 
-The role ARN is set but the assume call is rejected. Check the three things the trust policy compares:
+The role ARN is set but the assume call is rejected. Check the three things the trust policy compares (the role ARN is in Values to record):
 
 ```bash
 aws iam get-role --role-name ridenow-prod-frontend-deploy \
   --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals' --output json
 ```
 
-Expected: `token.actions.githubusercontent.com:aud` is `sts.amazonaws.com` and `token.actions.githubusercontent.com:sub` is exactly `repo:alixblu/RideNow:environment:prod`. A job without `environment: prod` sends `repo:alixblu/RideNow:ref:refs/heads/main` instead and is rejected. The workflow also needs `permissions: id-token: write` (already set). Check that the role ARN in the variable equals `$DEPLOY_ROLE_ARN` and that the provider exists:
+Expected: `token.actions.githubusercontent.com:aud` is `sts.amazonaws.com` and `token.actions.githubusercontent.com:sub` is exactly `repo:alixblu/RideNow:environment:prod`. A job without `environment: prod` sends `repo:alixblu/RideNow:ref:refs/heads/main` instead and is rejected. The workflow also needs `permissions: id-token: write` (already set). Check that the role ARN in the variable equals the `DeployRoleArn` you recorded and that the provider exists:
 
 ```bash
 aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[].Arn" --output text
@@ -468,24 +475,24 @@ The `prod` environment has no required reviewers. This happens on a private repo
 
 `AccessDenied` XML from a path that should exist. Check, in this order:
 
-1. The object exists: `aws s3 ls "s3://$BUCKET/index.html"`. An empty bucket gives 403, not 404, because the bucket policy does not grant `s3:ListBucket`. Run the first publish.
+1. The object exists: `aws s3 ls s3://ridenow-prod-frontend-873716897107-ap-southeast-1/index.html`. An empty bucket gives 403, not 404, because the bucket policy does not grant `s3:ListBucket`. Run the first publish.
 2. The bucket policy names this distribution:
 
 ```bash
-aws s3api get-bucket-policy --bucket "$BUCKET" --query Policy --output text \
+aws s3api get-bucket-policy --bucket ridenow-prod-frontend-873716897107-ap-southeast-1 --query Policy --output text \
   | jq -r '.Statement[] | select(.Sid=="AllowCloudFrontRead") | .Condition.StringEquals["AWS:SourceArn"]'
 ```
 
 Expected: `arn:aws:cloudfront::873716897107:distribution/<CLOUDFRONT_ID>`. If the id differs (for example after you recreated the distribution), edit the policy again as in step 5.
 
-3. The site was served over the S3 website endpoint or a direct bucket URL. Use only `https://$CLOUDFRONT_DOMAIN`.
+3. The site was served over the S3 website endpoint or a direct bucket URL. Use only `https://<DistributionDomain>`.
 
 ### /api returns HTML
 
 CloudFront served `index.html` for an API path, or the browser still calls localhost. The first means the `/api/*` behavior is missing:
 
 ```bash
-aws cloudfront get-distribution-config --id "$CLOUDFRONT_ID" \
+aws cloudfront get-distribution-config --id <DistributionId> \
   --query 'DistributionConfig.CacheBehaviors.Items[].PathPattern'
 ```
 
@@ -493,14 +500,14 @@ Expected: `["/api/*", "/live*"]`. The second means the build ran without `VITE_A
 
 ### /api returns 502 or 504
 
-CloudFront cannot reach the ALB. The ALB hostname changed (for example after the Ingress was recreated). Run the Discovery_Block, then open **CloudFront** > the distribution > **Origins** > `backend` > **Edit** and set **Origin domain** to the new `ALB_DNS_NAME`. Wait until Last modified shows a date.
+CloudFront cannot reach the ALB. The ALB hostname changed (for example after the Ingress was recreated). Open **CloudFront** > the distribution > **Origins** > `backend` > **Edit** and set **Origin domain** to the new ALB DNS name (**EC2 -> Load Balancers**, copy **DNS name**). Wait until Last modified shows a date.
 
 ### Old page after a publish
 
 The browser or CloudFront still has the previous `index.html`. The publish invalidates `/index.html` only. Check that the invalidation finished:
 
 ```bash
-aws cloudfront list-invalidations --distribution-id "$CLOUDFRONT_ID" --query 'InvalidationList.Items[0].[Id,Status]' --output text
+aws cloudfront list-invalidations --distribution-id <DistributionId> --query 'InvalidationList.Items[0].[Id,Status]' --output text
 ```
 
 Expected: `I...  Completed`.

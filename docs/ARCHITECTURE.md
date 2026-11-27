@@ -268,7 +268,7 @@ the SSE client contract and the map guidance.
 | 07 | IRSA roles for the add-ons and for trip, payment, matching and notification-worker |
 
 **What the stacks do not do.** Image builds, Helm add-ons, per-pod security groups and the
-`iac/k8s/` manifests are manual steps. Follow `guides/cloudformation/00-deploy-runbook.md`.
+`iac/k8s/` manifests are manual steps. Follow the guides in `guides/cloudformation/` (start at `README.md`).
 
 **Network posture.**
 

@@ -1,4 +1,4 @@
-# 03 - ECR (container registry)
+﻿# 03 - ECR (container registry)
 
 Create seven private ECR repositories by hand (source: `iac/stacks/03-ecr.yaml`, `iac/params/prod.json`; nothing is deployed). Values: `MaxImageCount` = `50`, `UntaggedExpireDays` = `14`.
 
@@ -16,7 +16,13 @@ Create seven private ECR repositories by hand (source: `iac/stacks/03-ecr.yaml`,
 
 ## Depends on
 
-None.
+No earlier guide is needed. Look up these values yourself before the Post-Deploy and Verify steps:
+
+| Value | Where to find it in the console |
+|---|---|
+| Account ID | Top-right account menu (the 12-digit number) |
+| Region | Top-right region selector: `ap-southeast-1` (Asia Pacific (Singapore)) |
+| Image tag | `v1.0.0` |
 
 ## Create the resources
 
@@ -263,11 +269,11 @@ Note: if the create page has no Scan on push option, turn it on after creating: 
 
 ## Values to record
 
-Each value is the repository URI: ECR -> Private registry -> Repositories -> URI column. Form: `<account-id>.dkr.ecr.<region>.amazonaws.com/<repository name>`. Account and Region come from the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws).
+Each value is the repository URI: ECR -> Private registry -> Repositories -> URI column. Form: `<account-id>.dkr.ecr.<region>.amazonaws.com/<repository name>`. Account ID and Region are in the table under "Depends on".
 
 | Output_Equivalent | Resource | Value | Consumed by |
 |---|---|---|---|
-| `UserServiceRepoUri` | `UserServiceRepo` | `<account-id>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/user-service` | Post-Deploy below; image references in `iac/k8s/` (see `00-deploy-runbook.md`, service deploy phase) |
+| `UserServiceRepoUri` | `UserServiceRepo` | `<account-id>.dkr.ecr.ap-southeast-1.amazonaws.com/ridenow/user-service` | Post-Deploy below; image references in `iac/k8s/` (see the service deploy in `07-eks-addons.md`) |
 | `DriverServiceRepoUri` | `DriverServiceRepo` | `.../ridenow/driver-service` | same |
 | `TripServiceRepoUri` | `TripServiceRepo` | `.../ridenow/trip-service` | same |
 | `PaymentServiceRepoUri` | `PaymentServiceRepo` | `.../ridenow/payment-service` | same |
@@ -277,9 +283,12 @@ Each value is the repository URI: ECR -> Private registry -> Repositories -> URI
 
 ## Post-Deploy
 
-Run the [Discovery_Block](00-deploy-runbook.md#discovery_block---load-every-non-fixed-value-from-aws) first. It sets `ACCOUNT_ID`, `AWS_DEFAULT_REGION` and `IMAGE_TAG` (default `v1.0.0`).
+Replace `<from the table>` with your 12-digit Account ID, then run from the repository root.
 
 ```bash
+ACCOUNT_ID=<from the table>
+AWS_DEFAULT_REGION=ap-southeast-1
+IMAGE_TAG=v1.0.0
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
   | docker login --username AWS --password-stdin "$REGISTRY"
@@ -296,6 +305,7 @@ Expected: `Login Succeeded`, then seven pushes. Tags are immutable: to push agai
 ## Verify
 
 ```bash
+AWS_DEFAULT_REGION=ap-southeast-1
 aws ecr describe-repositories \
   --query "repositories[?starts_with(repositoryName,'ridenow/')].[repositoryName,imageScanningConfiguration.scanOnPush,encryptionConfiguration.encryptionType,imageTagMutability]" \
   --output table
@@ -304,6 +314,7 @@ aws ecr describe-repositories \
 Expected: seven rows, each `True`, `KMS`, `IMMUTABLE`. Otherwise recreate the empty repository (encryption is fixed at creation).
 
 ```bash
+AWS_DEFAULT_REGION=ap-southeast-1
 aws ecr get-lifecycle-policy --repository-name ridenow/user-service \
   --query lifecyclePolicyText --output text | jq '.rules[] | {rulePriority, countNumber: .selection.countNumber}'
 ```
