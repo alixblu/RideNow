@@ -303,7 +303,48 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # ---- ADOT Collector IRSA role (sends traces to X-Ray) ---------------------
+  # Only the Collector gets X-Ray permissions; the services send OTLP to it.
+  AdotCollectorRole:
+    Type: AWS::IAM::Role
+    Condition: AddonsOn
+    Properties:
+      RoleName: !Sub "ridenow-${Environment}-adot-collector"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${ProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${Issuer}:sub": "system:serviceaccount:ridenow:adot-collector",
+                      "${Issuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - ProviderArn: !GetAtt OidcProvider.Arn
+            Issuer: !Sub "oidc.eks.${AWS::Region}.amazonaws.com/id/${OidcProviderId}"
+      ManagedPolicyArns:
+        - !ImportValue
+          Fn::Sub: "ridenow-${Environment}-iam-AdotCollectorXRayPolicyArn"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
 Outputs:
+  AdotCollectorRoleArn:
+    Condition: AddonsOn
+    Value: !GetAtt AdotCollectorRole.Arn
+    Export:
+      Name: !Sub "ridenow-${Environment}-eks-AdotCollectorRoleArn"
+
   TripServiceRoleArn:
     Condition: AddonsOn
     Value: !GetAtt TripServiceRole.Arn

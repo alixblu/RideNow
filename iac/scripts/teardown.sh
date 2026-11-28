@@ -3,7 +3,7 @@
 # teardown.sh - delete the RideNow CloudFormation stacks in REVERSE order.
 #
 # Because later layers import earlier layers' exports, they must be deleted in
-# reverse (07 -> 01); CloudFormation refuses to delete a stack whose exports are
+# reverse (09 -> 01); CloudFormation refuses to delete a stack whose exports are
 # still imported by a live stack.
 #
 # SAFETY: dry-run by default. Without --apply it only PRINTS the delete plan.
@@ -13,7 +13,7 @@
 #
 # Usage:
 #   ./scripts/teardown.sh dev              # print plan, delete nothing
-#   ./scripts/teardown.sh dev --apply      # delete 07 -> 01
+#   ./scripts/teardown.sh dev --apply      # delete 09 -> 01
 #
 set -euo pipefail
 
@@ -30,9 +30,11 @@ fi
 
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 
-# Reverse of the deploy order. 08-frontend is deployed separately (deploy-frontend.sh)
-# and imports nothing, so it goes first. A stack that does not exist is skipped by CloudFormation.
+# Reverse of the deploy order. 09-observability is deleted first: it imports from
+# earlier stacks and nothing imports it. 08-frontend is deployed separately
+# (deploy-frontend.sh) and imports nothing. A stack that does not exist is skipped by CloudFormation.
 LAYERS=(
+  "09-observability"
   "08-frontend"
   "07-eks-addons"
   "06-eks-cluster"

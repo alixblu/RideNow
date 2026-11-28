@@ -9,9 +9,11 @@
 #   3. CoreDNS on the kube-system Fargate profile
 #   4. AWS Load Balancer Controller (Helm) + its IAM policy (alb-controller-policy.sh)
 #   5. External Secrets Operator (Helm, webhook on 9443) + KMS grant for its role
-#   6. namespace + ExternalSecrets (waits until all six DB secrets are synced)
-#   7. the seven service manifests rendered from stack exports, then the Ingress
-#   8. waits for the ALB to answer, port-forwards matching-service, runs scripts/api-test.ps1
+#   6. namespace + Fargate log router config (01-aws-logging.yaml) + ExternalSecrets (waits until all six DB secrets are synced)
+#   7. the ADOT Collector (15-adot-collector.yaml, tag ADOT_COLLECTOR_TAG, default v0.51.0),
+#      then the seven service manifests rendered from stack exports, then the Ingress
+#   8. waits for the ALB to answer, port-forwards matching-service, runs scripts/api-test.ps1,
+#      then checks X-Ray for trip-service traces (PASS/FAIL printed, exit code unaffected)
 #
 # Every step is idempotent, so re-running after a failure continues where it broke.
 # Images are NOT built here: push them first (guides/scripts/push-to-ecr.sh) and pass
@@ -72,6 +74,8 @@ SERVICES=(user-service driver-service trip-service payment-service matching-serv
 # Deploy order: payment before trip (trip authorizes synchronously), driver before
 # matching (driver writes the location stream matching reads).
 MANIFESTS=(20-user-service 23-payment-service 21-driver-service 22-trip-service 25-notification-worker 24-matching-service 26-realtime-gateway)
+# Pinned ADOT Collector image tag; override with ADOT_COLLECTOR_TAG in the environment.
+ADOT_COLLECTOR_TAG="${ADOT_COLLECTOR_TAG:-v0.51.0}"
 PF_PID=""
 trap '[[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2>/dev/null || true' EXIT
 
@@ -172,6 +176,9 @@ kubectl get pods -n external-secrets
 # ---------------------------------------------------------------------------
 step "6/8 namespace and database secrets"
 kubectl apply -f iac/k8s/00-namespace.yaml
+# Fargate log router config (aws-observability ns + aws-logging ConfigMap). Must exist
+# before the service pods start, because Fargate reads it at pod launch.
+kubectl apply -f iac/k8s/01-aws-logging.yaml
 sed -e "s|<REGION>|${AWS_REGION}|g" \
     -e "s|<USER_SECRET_ARN>|$(need_exp "ridenow-${ENV}-data-UserDbSecretArn")|g" \
     -e "s|<DRIVER_SECRET_ARN>|$(need_exp "ridenow-${ENV}-data-DriverDbSecretArn")|g" \
@@ -189,6 +196,8 @@ step "7/8 services and Ingress"
 declare -A V=(
   [ACCOUNT_ID]="${ACCOUNT_ID}" [REGION]="${AWS_REGION}" [IMAGE_TAG]="${TAG}" [ENV]="${ENV}"
   [APP_ORIGIN]="${APP_ORIGIN}"
+  [ADOT_COLLECTOR_TAG]="${ADOT_COLLECTOR_TAG}"
+  [ADOT_COLLECTOR_ROLE_ARN]="$(need_exp "ridenow-${ENV}-eks-AdotCollectorRoleArn")"
   [REDIS_ENDPOINT]="$(need_exp "ridenow-${ENV}-messaging-RedisPrimaryEndpoint")"
   [USER_DB_ENDPOINT]="$(need_exp "ridenow-${ENV}-data-UserDbEndpoint")"
   [DRIVER_DB_ENDPOINT]="$(need_exp "ridenow-${ENV}-data-DriverDbEndpoint")"
@@ -206,6 +215,19 @@ declare -A V=(
 )
 SED_ARGS=()
 for k in "${!V[@]}"; do SED_ARGS+=(-e "s|<${k}>|${V[$k]}|g"); done
+
+render_and_apply() {
+  local m="$1" rendered left
+  rendered="$(sed "${SED_ARGS[@]}" "iac/k8s/${m}.yaml")"
+  left="$(grep -vE '^\s*#' <<<"${rendered}" | grep -oE '<[A-Z_]+>' | sort -u | tr '\n' ' ' || true)"
+  [[ -z "${left}" ]] || die "${m}.yaml still has placeholders: ${left}"
+  echo "-- ${m}"
+  kubectl apply -f - <<<"${rendered}"
+}
+
+# The ADOT Collector goes first so the services have an OTLP endpoint when they start.
+render_and_apply 15-adot-collector
+kubectl rollout status deployment/adot-collector -n "${NS}" --timeout=600s
 
 for m in "${MANIFESTS[@]}"; do
   rendered="$(sed "${SED_ARGS[@]}" "iac/k8s/${m}.yaml")"
@@ -267,6 +289,24 @@ set +e
 "${PS[@]}" -BaseUrl "${BASE}" -MatchUrl http://localhost:18085 -SkipHealth
 rc=$?
 set -e
+
+# X-Ray check (informational): never changes the API test exit code.
+step "X-Ray traces"
+xray_start="$(date -u -d '10 minutes ago' +%s 2>/dev/null || true)"
+xray_end="$(date -u +%s)"
+traces=""
+if [[ -n "${xray_start}" ]]; then
+  traces="$(aws xray get-trace-summaries --start-time "${xray_start}" --end-time "${xray_end}" \
+    --filter-expression 'service("trip-service")' \
+    --query 'length(TraceSummaries)' --output text 2>/dev/null || true)"
+fi
+if [[ "${traces}" =~ ^[0-9]+$ && "${traces}" -gt 0 ]]; then
+  echo "X-RAY CHECK PASS: ${traces} trace(s) for service trip-service in the last 10 minutes"
+else
+  echo "X-RAY CHECK FAIL: no traces for service trip-service in the last 10 minutes"
+  echo "Check the Collector: kubectl logs deploy/adot-collector -n ${NS}"
+fi
+
 echo
 if [[ ${rc} -eq 0 ]]; then
   echo "DEPLOY AND TEST PASSED (${ENV}, tag ${TAG}). ALB: ${BASE}"

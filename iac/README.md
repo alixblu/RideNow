@@ -17,13 +17,13 @@ hand; this folder holds the reviewable, repeatable templates and scripts they us
 
 | Layer | Template | Creates | Hardening |
 |-------|----------|---------|-----------|
-| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service | Least privilege; each messaging policy names the exact queue / topic ARN its service uses |
+| 1 | `stacks/01-iam.yaml` | EKS cluster role, Fargate pod execution role, scoped ECR / Secrets policy, one messaging policy per service, the `ridenow-<env>-adot-collector-xray` managed policy | Least privilege; each messaging policy names the exact queue / topic ARN its service uses; only the Collector may write to X-Ray |
 | 2 | `stacks/02-network.yaml` | VPC, public + private subnets (2 AZs), IGW, one NAT per AZ, route tables, cluster SG, DB SG | Private subnets for workloads + data; DB SG allows 5432 only from the cluster SG |
 | 3 | `stacks/03-ecr.yaml` | One repo per service: `ridenow/{user,driver,trip,payment,matching}-service`, `ridenow/notification-worker`, `ridenow/realtime-gateway` | Scan-on-push, KMS encryption, lifecycle expiry |
 | 4 | `stacks/04-data.yaml` | Six RDS PostgreSQL instances, **one per service that owns data**: user, driver, trip, payment, matching, notification (realtime-gateway has none) | Multi-AZ per params, `StorageEncrypted` + KMS, private, credentials in Secrets Manager (generated, never in templates) |
 | 5 | `stacks/05-messaging.yaml` | SNS topic; matching / payment / notifications SQS queues, each with a DLQ; one raw-delivery subscription per queue, filtered on the event `type`; ElastiCache for Valkey (Redis protocol; logical IDs keep the `Redis` name) | SQS queues encrypted; each queue policy admits only the RideNow topic (`aws:SourceArn`); the topic has no SSE because the AWS-managed `aws/sns` key blocks delivery to SQS; Valkey private with in-transit TLS |
 | 6 | `stacks/06-eks-cluster.yaml` | EKS control plane + **Fargate profiles** (app, system, observability) — no EC2 node group | KMS secrets envelope-encryption, OIDC/IRSA, serverless pods on private subnets |
-| 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
+| 7 | `stacks/07-eks-addons.yaml` | IRSA roles for AWS Load Balancer Controller + External Secrets, the ADOT Collector (`ridenow-<env>-adot-collector`), and for trip / payment / matching / notification-worker | Gated; each role trusts only its own service account and carries only its service's messaging policy |
 | 8 | `stacks/08-frontend.yaml` | Private S3 bucket, CloudFront distribution (static site, plus `/api/*` and `/live*` forwarded to the ALB), SPA rewrite function, GitHub Actions deploy role | Origin Access Control, TLS-only bucket policy, role trusts only `repo:alixblu/RideNow` in the matching GitHub Environment |
 
 Stack 08 is **not** run by `deploy.sh`. It needs the ALB hostname, which exists only after the
@@ -41,6 +41,7 @@ one has a source.
 | Manifest | Service | Database | Export-fed placeholders |
 |----------|---------|----------|-------------------------|
 | `10-external-secrets.yaml` | six `ExternalSecret`s | all six | `<*_SECRET_ARN>` from `04-data` |
+| `15-adot-collector.yaml` | ADOT Collector (2 replicas, OTLP :4317/:4318, exports to X-Ray) | none | `<ADOT_COLLECTOR_ROLE_ARN>`, `<ADOT_COLLECTOR_TAG>` |
 | `20-user-service.yaml` | user-service :8081 | user | `<USER_DB_ENDPOINT>` |
 | `21-driver-service.yaml` | driver-service :8080 | driver | `<DRIVER_DB_ENDPOINT>`, `<REDIS_ENDPOINT>` |
 | `22-trip-service.yaml` | trip-service :8082 | trip | `<TRIP_DB_ENDPOINT>`, `<TRIP_SERVICE_ROLE_ARN>` |
@@ -49,6 +50,11 @@ one has a source.
 | `25-notification-worker.yaml` | notification-worker :8084 | notification | `<NOTIFICATION_DB_ENDPOINT>`, `<REDIS_ENDPOINT>`, `<NOTIFICATIONS_QUEUE_URL>`, `<NOTIFICATION_WORKER_ROLE_ARN>` |
 | `26-realtime-gateway.yaml` | realtime-gateway :8086 | none | `<REDIS_ENDPOINT>` |
 | `30-ingress.yaml` | ALB: `/api/users`, `/api/drivers`, `/api/trips`, `/api/payments`, `/api/notifications`, `/live` | - | - |
+
+Tracing checks (no AWS call): `scripts/check-adot-manifest.sh` checks the Collector manifest
+(no DaemonSet or `hostPath`, ClusterIP on 4317/4318, at least 2 replicas, no account ids) and
+`scripts/check-otel-env.sh` checks that each service manifest sets the `OTEL_*` variables.
+See `../guides/cloudformation/09-xray-tracing.md`.
 
 ---
 

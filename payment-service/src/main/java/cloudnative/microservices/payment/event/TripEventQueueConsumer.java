@@ -1,7 +1,13 @@
 package cloudnative.microservices.payment.event;
 
+import cloudnative.microservices.payment.tracing.MessagingTracer;
+import cloudnative.microservices.payment.tracing.TraceContextCarrier;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import java.util.HashMap;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,7 +41,10 @@ public class TripEventQueueConsumer {
     private final String queueUrl;
     private final int waitSeconds;
     private final int maxMessages;
+    private final MessagingTracer tracer;
+    private final String queueName;
 
+    @Autowired
     public TripEventQueueConsumer(
             SqsClient sqs,
             TripEventHandler handler,
@@ -44,12 +53,29 @@ public class TripEventQueueConsumer {
             @Value("${ridenow.payment.poll.wait-seconds:10}") int waitSeconds,
             @Value("${ridenow.payment.poll.max-messages:10}") int maxMessages
     ) {
+        this(sqs, handler, objectMapper, queueUrl, waitSeconds, maxMessages, defaultTracer());
+    }
+    public TripEventQueueConsumer(
+            SqsClient sqs,
+            TripEventHandler handler,
+            ObjectMapper objectMapper,
+            String queueUrl,
+            int waitSeconds,
+            int maxMessages,
+            MessagingTracer tracer
+    ) {
+        this.tracer = tracer;
+        this.queueName = queueUrl.substring(queueUrl.lastIndexOf('/') + 1);
         this.sqs = sqs;
         this.handler = handler;
         this.objectMapper = objectMapper;
         this.queueUrl = queueUrl;
         this.waitSeconds = waitSeconds;
         this.maxMessages = maxMessages;
+    }
+    private static MessagingTracer defaultTracer() {
+        return new MessagingTracer(GlobalOpenTelemetry.get(),
+                new TraceContextCarrier(GlobalOpenTelemetry.getPropagators().getTextMapPropagator()));
     }
 
     /** One polling cycle. Scheduled back-to-back; long polling bounds the rate. */
@@ -59,15 +85,31 @@ public class TripEventQueueConsumer {
                 .queueUrl(queueUrl)
                 .maxNumberOfMessages(maxMessages)
                 .waitTimeSeconds(waitSeconds)
+                .messageAttributeNames(TraceContextCarrier.TRACEPARENT, TraceContextCarrier.XRAY)
                 .build());
 
         for (Message message : response.messages()) {
             try {
-                handler.handle(parse(message.body()));
-                sqs.deleteMessage(DeleteMessageRequest.builder()
-                        .queueUrl(queueUrl)
-                        .receiptHandle(message.receiptHandle())
-                        .build());
+                IncomingEvent event = null;
+                RuntimeException parseError = null;
+                try {
+                    event = parse(message.body());
+                } catch (RuntimeException ex) {
+                    parseError = ex;
+                }
+                final IncomingEvent parsed = event;
+                final RuntimeException failure = parseError;
+                tracer.consume(queueName, message.messageId(), stringAttributes(message),
+                        parsed != null ? parsed.type() : null, () -> {
+                    if (failure != null) {
+                        throw failure;
+                    }
+                    handler.handle(parsed);
+                    sqs.deleteMessage(DeleteMessageRequest.builder()
+                            .queueUrl(queueUrl)
+                            .receiptHandle(message.receiptHandle())
+                            .build());
+                });
             } catch (Exception ex) {
                 // Leave it on the queue: redelivered, then dead-lettered.
                 log.warn("Failed to process message (will retry/DLQ): {}", ex.getMessage());
@@ -75,6 +117,17 @@ public class TripEventQueueConsumer {
         }
     }
 
+    private static Map<String, String> stringAttributes(Message message) {
+        Map<String, String> result = new HashMap<>();
+        if (message.hasMessageAttributes()) {
+            message.messageAttributes().forEach((k, v) -> {
+                if (v != null && v.stringValue() != null) {
+                    result.put(k, v.stringValue());
+                }
+            });
+        }
+        return result;
+    }
     /**
      * Reads the event from the queue message. The SNS subscription uses raw message
      * delivery, so the body is the event JSON itself (no SNS envelope).

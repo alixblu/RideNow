@@ -1,22 +1,23 @@
-# 01 - IAM
+﻿# 01 - IAM
 
-Creates the two EKS roles and five customer managed policies of `iac/stacks/01-iam.yaml` in the IAM console. Region does not matter for IAM.
+Creates the two EKS roles and six customer managed policies of `iac/stacks/01-iam.yaml` in the IAM console. Region does not matter for IAM.
 
 ## What it creates
 
 | Template logical ID | AWS resource type | Name |
 |---------------------|-------------------|------|
 | `ClusterRole` | IAM role | `ridenow-prod-eks-cluster-role` |
-| `FargatePodExecutionRole` | IAM role | `ridenow-prod-eks-fargate-pod-execution-role` |
+| `FargatePodExecutionRole` | IAM role (with inline policy `fargate-log-router-logs`) | `ridenow-prod-eks-fargate-pod-execution-role` |
 | `AppAccessPolicy` | IAM customer managed policy | `ridenow-prod-app-access` |
 | `TripServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-trip-service-messaging` |
 | `PaymentServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-payment-service-messaging` |
 | `MatchingServiceMessagingPolicy` | IAM customer managed policy | `ridenow-prod-matching-service-messaging` |
 | `NotificationWorkerMessagingPolicy` | IAM customer managed policy | `ridenow-prod-notification-worker-messaging` |
+| `AdotCollectorXRayPolicy` | IAM customer managed policy | `ridenow-prod-adot-collector-xray` |
 
 ## Depends on
 
-Nothing. Start with the tools and identity listed in [README.md](README.md). The seven resources can be created in any order.
+Nothing. Start with the tools and identity listed in [README.md](README.md). The eight resources can be created in any order.
 
 Look up this value yourself before you start:
 
@@ -95,6 +96,43 @@ Look up this value yourself before you start:
   ]
 }
 ```
+
+**Add the inline policy `fargate-log-router-logs`**
+
+The managed policy has no `logs:*` actions, so the Fargate log router cannot write pod logs without this inline policy. It does not grant `logs:CreateLogGroup`: the log group `/aws/eks/ridenow-prod/fargate` is created in `10-cloudwatch.md` and the router runs with `auto_create_group false`.
+
+11. Go to **IAM -> Roles** and open `ridenow-prod-eks-fargate-pod-execution-role`.
+12. On the **Permissions** tab, choose **Add permissions -> Create inline policy**.
+13. Set **Policy editor** to `JSON`.
+14. Delete the default JSON.
+15. Paste the JSON below.
+16. Replace each `<ACCOUNT_ID>` with your account id.
+17. Choose **Next**.
+18. Set **Policy name** to `fargate-log-router-logs`.
+19. Choose **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WritePodLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/aws/eks/ridenow-prod/fargate",
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/aws/eks/ridenow-prod/fargate:log-stream:*"
+      ]
+    }
+  ]
+}
+```
+
+Expected: the role's **Permissions** tab lists `AmazonEKSFargatePodExecutionRolePolicy` (AWS managed) and `fargate-log-router-logs` (inline).
 
 ### 3. Policy `ridenow-prod-app-access` (`AppAccessPolicy`)
 
@@ -271,6 +309,41 @@ The description cannot be edited later, so type it exactly.
 }
 ```
 
+### 8. Policy `ridenow-prod-adot-collector-xray` (`AdotCollectorXRayPolicy`)
+
+Only the ADOT Collector sends traces to X-Ray, so only its role (`07-eks-addons.md`, step 5) gets this policy. Do not attach it to a service role. X-Ray write and sampling actions do not support resource-level permissions, so `Resource` must be `*`.
+
+1. Go to **IAM -> Policies -> Create policy**.
+2. Set **Policy editor** to `JSON`.
+3. Delete the default JSON.
+4. Paste the JSON below.
+5. Choose **Next**.
+6. Set **Policy name** to `ridenow-prod-adot-collector-xray`.
+7. Set **Description** to `ADOT Collector writes traces to X-Ray and reads sampling rules.`
+8. Choose **Create policy**.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "XRayWriteAndSampling",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:GetSamplingStatisticSummaries"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Expected: the policy `ridenow-prod-adot-collector-xray` is listed under **IAM -> Policies** as `Customer managed`, and its **Permissions** tab shows five X-Ray actions on `All resources`. The template exports its ARN as `iam-AdotCollectorXRayPolicyArn` (full export name `ridenow-prod-iam-AdotCollectorXRayPolicyArn`); in the console you pick the policy by name.
+
 ## Values to record
 
 Nothing to copy now: later guides pick these by name in the console. To read an ARN, open the role or policy in IAM and copy **ARN** at the top.
@@ -284,6 +357,7 @@ Nothing to copy now: later guides pick these by name in the console. To read an 
 | `PaymentServiceMessagingPolicyArn` | policy `ridenow-prod-payment-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-payment-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-payment-service` |
 | `MatchingServiceMessagingPolicyArn` | policy `ridenow-prod-matching-service-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-matching-service-messaging` | `07-eks-addons.md`: role `ridenow-prod-matching-service` |
 | `NotificationWorkerMessagingPolicyArn` | policy `ridenow-prod-notification-worker-messaging` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-notification-worker-messaging` | `07-eks-addons.md`: role `ridenow-prod-notification-worker` |
+| `AdotCollectorXRayPolicyArn` (export `iam-AdotCollectorXRayPolicyArn`) | policy `ridenow-prod-adot-collector-xray` | `arn:aws:iam::<ACCOUNT_ID>:policy/ridenow-prod-adot-collector-xray` | `07-eks-addons.md`: role `ridenow-prod-adot-collector` |
 
 ## Post-Deploy
 
@@ -299,8 +373,12 @@ aws iam list-policies --scope Local \
   --query "Policies[?starts_with(PolicyName,'ridenow-prod-')].PolicyName" --output text | tr '\t' '\n'
 aws iam get-role --role-name ridenow-prod-eks-cluster-role --query Role.Arn --output text
 aws iam get-role --role-name ridenow-prod-eks-fargate-pod-execution-role --query Role.Arn --output text
+aws iam get-role-policy --role-name ridenow-prod-eks-fargate-pod-execution-role \
+  --policy-name fargate-log-router-logs --query PolicyDocument.Statement[0].Action --output text
+aws iam get-policy-version --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/ridenow-prod-adot-collector-xray \
+  --version-id v1 --query PolicyVersion.Document.Statement[0].Action --output text
 ```
 
-Expected: five policy names (`ridenow-prod-app-access` and the four `-messaging` policies), then `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` and `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role`. A missing line means that resource was not created or is misspelled.
+Expected: six policy names (`ridenow-prod-app-access`, the four `-messaging` policies and `ridenow-prod-adot-collector-xray`), then `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-cluster-role` and `arn:aws:iam::<ACCOUNT_ID>:role/ridenow-prod-eks-fargate-pod-execution-role`, then the three log actions (`logs:CreateLogStream`, `logs:DescribeLogStreams`, `logs:PutLogEvents`), then the five X-Ray actions. A missing line means that resource was not created or is misspelled.
 
 Next: [02-network.md](02-network.md).

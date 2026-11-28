@@ -325,8 +325,15 @@ mechanism swap, not a redesign.
    - If a process dies between commit and the after-commit publish, the event is lost.
    - That matters most for `trip.completed`, which is what triggers the capture.
 5. **Thin observability.**
-   - There is a health endpoint only.
-   - There are no metrics, no tracing, and no correlation ids across HTTP -> SNS -> SQS.
+   - Tracing and correlation ids exist. The OpenTelemetry agent sends traces through the ADOT
+     Collector to X-Ray, trace context follows HTTP -> SNS -> SQS, and each log line and
+     response carries the trace id (`X-Trace-Id`).
+   - CloudWatch now covers pod logs (Fargate log router), EKS control-plane logs, 21
+     alarms, one dashboard, an alarm email topic, and Logs Insights queries that follow a
+     trace id across services.
+   - Application metrics remain a gap: the services expose a health endpoint only and emit
+     no business or runtime metrics of their own, so the alarms and dashboard rely on AWS
+     service metrics.
 
 ### 7.3 Lower-severity gaps
 

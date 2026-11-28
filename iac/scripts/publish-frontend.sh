@@ -69,7 +69,18 @@ fi
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   # The app treats a blank VITE_API_BASE_URL as "no gateway" and calls localhost.
   # CloudFront serves the site and routes /api and /live, so the site URL is the API URL.
-  VITE_API_BASE_URL="https://${DOMAIN}" pnpm build
+  # Under WSL, pnpm may be the Windows binary, which only sees variables listed in WSLENV.
+  # Without this it silently falls back to frontend/.env (often http://localhost:5173).
+  export WSLENV="VITE_API_BASE_URL${WSLENV:+:${WSLENV}}"
+  export VITE_API_BASE_URL="https://${DOMAIN}"
+  pnpm build
+fi
+
+# Guard: the build must contain the site URL, or the deployed app would call the wrong API.
+if ! grep -rqF "https://${DOMAIN}" dist/assets; then
+  echo "ERROR: dist/ does not contain https://${DOMAIN}. VITE_API_BASE_URL was not applied" >&2
+  echo "       (check frontend/.env or .env.production* overriding it). Nothing was uploaded." >&2
+  exit 1
 fi
 
 if [[ ! -f dist/index.html ]]; then

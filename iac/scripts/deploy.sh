@@ -2,13 +2,15 @@
 #
 # deploy.sh - deploy the RideNow CloudFormation stacks in dependency order.
 #
-# Layers are 01 -> 07. Each layer exports values that later layers import, so
+# Layers are 01 -> 07, then 09 (08-frontend is deployed by deploy-frontend.sh).
+# Each layer exports values that later layers import, so
 # order matters. By default every layer is deployed one after another. With
 # --parallel, layers that do not depend on each other run at the same time:
 #
 #   phase 1: 01-iam, 02-network, 03-ecr          (no imports)
 #   phase 2: 04-data, 05-messaging, 06-eks-cluster (import only 01 / 02)
 #   phase 3: 07-eks-addons                        (needs the cluster from 06)
+#   phase 4: 09-observability                     (alarms on 04 / 05 resources and the ALB)
 #
 # The slow resources (RDS, ElastiCache, EKS) all sit in phase 2, so --parallel
 # cuts about 30 minutes from a first deploy.
@@ -71,6 +73,7 @@ if [[ ${PARALLEL} -eq 1 ]]; then
     "01-iam 02-network 03-ecr"
     "04-data 05-messaging 06-eks-cluster"
     "07-eks-addons"
+    "09-observability"
   )
 else
   PHASES=(
@@ -81,6 +84,7 @@ else
     "05-messaging"
     "06-eks-cluster"
     "07-eks-addons"
+    "09-observability"
   )
 fi
 

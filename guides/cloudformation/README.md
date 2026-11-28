@@ -41,7 +41,7 @@ the checks at the end of this README and the teardown steps. It changes nothing 
 
 ## The order
 
-Follow the guides in numeric order, from `01-iam.md` up to `08-frontend.md`.
+Follow the guides in numeric order, from `01-iam.md` up to `10-cloudwatch.md`.
 
 | Guide | AWS services it creates | Non-console steps included |
 |-------|-------------------------|----------------------------|
@@ -53,6 +53,8 @@ Follow the guides in numeric order, from `01-iam.md` up to `08-frontend.md`.
 | `06-eks-cluster.md` | EKS control plane, Fargate profiles | kubeconfig, CoreDNS on Fargate, AWS Load Balancer Controller, External Secrets Operator, namespace, pod networking, database secrets, ALB ingress, smoke test |
 | `07-eks-addons.md` | Pod network access rules, IAM OIDC provider, IRSA roles | IRSA role checks and the seven service deploys: payment-service, user-service, driver-service, trip-service, matching-service, notification-worker, realtime-gateway |
 | `08-frontend.md` | S3, CloudFront, IAM (GitHub OIDC deploy role) | GitHub Environment and variables, first publish of the site, rollback |
+| `09-xray-tracing.md` | none (uses the policy from `01-iam.md` and the role from `07-eks-addons.md`) | Rebuild the seven images with the OpenTelemetry agent, apply the ADOT Collector, roll out the services, verify with the `X-Trace-Id` header, read traces in the X-Ray console |
+| `10-cloudwatch.md` | CloudWatch Logs (pod log group, 2 saved queries), CloudWatch alarms (21) and dashboard, SNS (alarm topic and email subscription) | Apply the Fargate log router ConfigMap `iac/k8s/01-aws-logging.yaml` and restart the pods, confirm the email subscription, run the trace query, test a DLQ alarm |
 
 ### Independence of 04, 05 and 06
 
@@ -73,6 +75,10 @@ the roles those two installations run as. So:
 4. Deploy the seven services from `07-eks-addons.md`.
 
 The smoke test in `06-eks-cluster.md` returns `200` only after the services are running.
+
+### Ordering constraint: 10-cloudwatch
+
+Create the `10-cloudwatch.md` resources after the `ridenow` Ingress has an ALB address when you want the ALB alarm. The ALB is created by the AWS Load Balancer Controller, and the alarm needs its `app/<name>/<id>` value. Without an ALB address, create everything else and skip the ALB alarm and its dashboard widgets. Check the address the same way as for `08-frontend.md` below.
 
 ### Ordering constraint: 08-frontend
 
@@ -350,8 +356,15 @@ Wait until the ALB is gone. Re-paste the Discovery_Block: `ALB_DNS_NAME` must pr
 
 ### T2. Delete in this order
 
+Start with the four `10-cloudwatch.md` rows (A1 to A4). They go first so that no alarm watches
+a resource that is already deleted. Row 10a goes after the cluster is deleted.
+
 | Step | Service_Console | Delete | Notes |
 |------|-----------------|--------|-------|
+| A1 | CloudWatch > **Dashboards** | `ridenow-prod` | |
+| A2 | CloudWatch > **All alarms** | The 21 alarms whose name starts with `ridenow-prod-` | Select all, then **Actions** > **Delete**. Delete the alarms before the topic they notify. |
+| A3 | SNS > **Topics**, **Subscriptions** | The email subscription, then `ridenow-prod-alarms` | |
+| A4 | CloudWatch > **Logs Insights** > **Queries**, then **Log groups** | The saved queries `ridenow-prod/by-trace-id` and `ridenow-prod/errors-by-service`, then the pod log group `/aws/eks/ridenow-prod/fargate` | The router stops writing when the group is gone. Deleting it now stops the pod log storage cost. |
 | 1 | CloudFront > **Distributions** | The `RideNow prod frontend` distribution | **Disable** it, wait until **Last modified** shows a date, then **Delete**. Then **Functions**: delete the SPA rewrite function. **Origin access control**: delete `ridenow-prod-frontend-oac`. |
 | 2 | S3 > **Buckets** | `ridenow-prod-frontend-<account id>-<region>` | **Empty** it (all versions), then **Delete**. |
 | 3 | IAM > **Roles** | `ridenow-prod-frontend-deploy` (if you created it) | Detach or delete its inline policy first. |
@@ -362,6 +375,7 @@ Wait until the ALB is gone. Re-paste the Discovery_Block: `ALB_DNS_NAME` must pr
 | 8 | IAM > **Policies** | `AWSLoadBalancerControllerIAMPolicy` | Delete after it is detached from the role in step 6. |
 | 9 | EKS > **Clusters** > `ridenow-prod` > **Compute** | The three Fargate profiles | Delete one at a time, in reverse order: observability, app, system. Wait for each to finish. |
 | 10 | EKS > **Clusters** | `ridenow-prod` | Delete after the profiles are gone. |
+| 10a | CloudWatch > **Log groups** | `/aws/eks/ridenow-prod/cluster` (control-plane logs) | Delete after the cluster in step 10, otherwise EKS recreates it. |
 | 11 | KMS > **Customer managed keys** | The cluster secrets key | **Schedule key deletion** (7 days minimum). |
 | 12 | ElastiCache > **Valkey caches** | `ridenow-prod-redis` | Delete, then **Subnet groups**: the Valkey subnet group. Then EC2: delete `ridenow-prod-redis-sg`. |
 | 13 | SNS > **Subscriptions**, **Topics** | The three subscriptions, then `ridenow-prod-events` | |
@@ -374,7 +388,6 @@ Wait until the ALB is gone. Re-paste the Discovery_Block: `ALB_DNS_NAME` must pr
 | 20 | VPC > **NAT gateways** | Both NAT gateways | Wait for **Deleted**, then VPC > **Elastic IPs**: **Release** both. |
 | 21 | VPC > **Route tables**, **Subnets**, **Internet gateways**, **Your VPCs** | Route tables, four subnets, the internet gateway (**Detach** then delete), then `ridenow-prod-vpc` | In this order. |
 | 22 | IAM > **Roles**, **Policies** | The two EKS roles, then the app-access policy and the four messaging policies | Last: guide 01 resources have no dependents left. |
-| 23 | CloudWatch > **Log groups** | `/aws/eks/ridenow/fargate` and the cluster log group | Optional. |
 
 After step 22, re-paste the [Discovery_Block](#discovery_block---load-every-non-fixed-value-from-aws).
 Every resource variable must print `MISSING`:

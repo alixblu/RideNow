@@ -79,4 +79,16 @@ class TripEventQueueConsumerTest {
 
         verify(sqs, never()).deleteMessage(any(DeleteMessageRequest.class));
     }
+
+    @Test
+    void receiveRequestAsksForBothTraceMessageAttributes() {
+        queueHolds(rawEvent());
+
+        consumer.poll();
+
+        var captor = org.mockito.ArgumentCaptor.forClass(ReceiveMessageRequest.class);
+        verify(sqs).receiveMessage(captor.capture());
+        assertThat(captor.getValue().messageAttributeNames())
+                .containsExactlyInAnyOrder("traceparent", "X-Amzn-Trace-Id");
+    }
 }

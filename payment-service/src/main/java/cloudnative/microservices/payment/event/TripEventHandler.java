@@ -2,6 +2,12 @@ package cloudnative.microservices.payment.event;
 
 import cloudnative.microservices.payment.exception.ResourceNotFoundException;
 import cloudnative.microservices.payment.service.PaymentService;
+import cloudnative.microservices.payment.dto.response.PaymentResponse;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
@@ -34,6 +40,7 @@ public class TripEventHandler {
     static final String TRIP_CANCELLED = "trip.cancelled";
 
     private final PaymentService paymentService;
+    private final Tracer tracer = GlobalOpenTelemetry.getTracer("ridenow-payment");
 
     public void handle(IncomingEvent event) {
         if (event == null || event.type() == null) {
@@ -56,7 +63,7 @@ public class TripEventHandler {
 
         try {
             if (TRIP_COMPLETED.equals(event.type())) {
-                paymentService.capture(tripId, parseAmount(data.get("finalFare")), parseUuid(data.get("passengerId")));
+                captureTraced(tripId, parseAmount(data.get("finalFare")), parseUuid(data.get("passengerId")));
             } else {
                 paymentService.release(tripId);
             }
@@ -70,6 +77,22 @@ public class TripEventHandler {
         }
     }
 
+    /** Runs the capture inside a {@code payment.capture} span tagged with the payment id. */
+    private void captureTraced(UUID tripId, BigDecimal finalFare, UUID passengerId) {
+        Span span = tracer.spanBuilder("payment.capture").startSpan();
+        try (Scope ignored = span.makeCurrent()) {
+            PaymentResponse response = paymentService.capture(tripId, finalFare, passengerId);
+            if (response != null && response.id() != null) {
+                span.setAttribute("ridenow.payment.id", response.id().toString());
+            }
+        } catch (RuntimeException ex) {
+            span.recordException(ex);
+            span.setStatus(StatusCode.ERROR);
+            throw ex;
+        } finally {
+            span.end();
+        }
+    }
     private static BigDecimal parseAmount(String value) {
         return value == null || value.isBlank() ? null : new BigDecimal(value);
     }

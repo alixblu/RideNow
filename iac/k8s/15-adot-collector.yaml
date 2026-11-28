@@ -1,0 +1,153 @@
+# adot-collector: ServiceAccount + ConfigMap + Deployment + Service + PodDisruptionBudget.
+#
+# Central AWS Distro for OpenTelemetry (ADOT) Collector. The services' OpenTelemetry
+# Java agent sends OTLP here; the Collector writes the traces to AWS X-Ray.
+# Fargate has no DaemonSet, so this is a Deployment behind a ClusterIP Service.
+# AWS access via IRSA (no static keys): the role is stack 07's
+# AdotCollectorRoleArn export (X-Ray write permissions only).
+#
+# Apply this file before the service manifests (20-26).
+#
+# Placeholders: <REGION> <ADOT_COLLECTOR_TAG> <ADOT_COLLECTOR_ROLE_ARN>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: adot-collector
+  namespace: ridenow
+  annotations:
+    eks.amazonaws.com/role-arn: "<ADOT_COLLECTOR_ROLE_ARN>"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adot-collector-config
+  namespace: ridenow
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      # Drops idle SQS polls (about 1 per second per consumer pod) and Kubernetes
+      # health probes so they do not fill the trace list.
+      filter/noise:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["rpc.method"] == "ReceiveMessage"'
+            - 'IsMatch(attributes["url.path"], "^/actuator/health")'
+      batch:
+        timeout: 5s
+    exporters:
+      # Only the listed span attributes become X-Ray annotations (filterable in the console).
+      awsxray:
+        region: <REGION>
+        indexed_attributes:
+          - ridenow.event.type
+          - messaging.destination.name
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          level: info
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [filter/noise, batch]
+          exporters: [awsxray]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adot-collector
+  namespace: ridenow
+  labels:
+    app: adot-collector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: adot-collector
+  template:
+    metadata:
+      labels:
+        app: adot-collector
+    spec:
+      serviceAccountName: adot-collector
+      containers:
+        - name: adot-collector
+          image: public.ecr.aws/aws-observability/aws-otel-collector:<ADOT_COLLECTOR_TAG>
+          args:
+            - "--config=/conf/config.yaml"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          env:
+            - name: AWS_REGION
+              value: "<REGION>"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: adot-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adot-collector
+  namespace: ridenow
+spec:
+  selector:
+    app: adot-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: adot-collector
+  namespace: ridenow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: adot-collector

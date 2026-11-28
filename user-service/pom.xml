@@ -28,6 +28,7 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<otel.contrib.version>1.62.1-alpha</otel.contrib.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -68,6 +69,27 @@
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<optional>true</optional>
+		</dependency>
+		<!-- Tracing API only (version managed by the Spring Boot BOM). No-op unless the OTel Java agent is attached. -->
+		<dependency>
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-sdk</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-sdk-testing</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.opentelemetry.contrib</groupId>
+			<artifactId>opentelemetry-aws-xray-propagator</artifactId>
+			<version>${otel.contrib.version}</version>
+			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>net.jqwik</groupId>

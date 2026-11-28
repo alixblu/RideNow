@@ -1,0 +1,29 @@
+# Fargate log router (Fluent Bit) configuration for the ridenow-prod EKS cluster.
+# EKS reads the ConfigMap "aws-logging" in namespace "aws-observability" and ships
+# container stdout/stderr of Fargate pods to CloudWatch Logs.
+# The log group /aws/eks/ridenow-prod/fargate is created by stack 09-observability
+# (auto_create_group is false). The Fargate pod execution role needs the
+# fargate-log-router-logs inline policy from stack 01-iam.
+# Pods that already run must be restarted to pick up this configuration.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws-observability
+  labels:
+    aws-observability: enabled
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-logging
+  namespace: aws-observability
+data:
+  flb_log_cw: "true"
+  output.conf: |
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               kube.*
+        region              ap-southeast-1
+        log_group_name      /aws/eks/ridenow-prod/fargate
+        log_stream_prefix   fargate-
+        auto_create_group   false

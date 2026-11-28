@@ -40,6 +40,10 @@ Resources:
   # ---- EKS Fargate pod execution role --------------------------------------
   # Every Fargate profile references this role. Fargate uses it to pull images
   # from ECR and to ship pod logs to CloudWatch via the Fargate log router.
+  # The managed policy has no logs:* actions, so the inline policy below grants
+  # the router write access to /aws/eks/ridenow-<env>/fargate. That log group
+  # is created by stack 09 (the router runs with auto_create_group false), so
+  # logs:CreateLogGroup is deliberately not granted.
   FargatePodExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -53,6 +57,20 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy
+      Policies:
+        - PolicyName: fargate-log-router-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WritePodLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/eks/ridenow-${Environment}/fargate"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/eks/ridenow-${Environment}/fargate:log-stream:*"
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -170,6 +188,28 @@ Resources:
               - sqs:GetQueueAttributes
             Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:ridenow-${Environment}-notifications"
 
+  # ---- ADOT Collector X-Ray write policy (attached by the IRSA role in 07) ---
+  # Only the Collector sends traces to X-Ray; service roles get no X-Ray access.
+  # X-Ray write and sampling actions do not support resource-level permissions,
+  # so Resource must be "*".
+  AdotCollectorXRayPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "ridenow-${Environment}-adot-collector-xray"
+      Description: ADOT Collector writes traces to X-Ray and reads sampling rules.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: XRayWriteAndSampling
+            Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+              - xray:GetSamplingStatisticSummaries
+            Resource: "*"
+
 Outputs:
   ClusterRoleArn:
     Value: !GetAtt ClusterRole.Arn
@@ -205,3 +245,8 @@ Outputs:
     Value: !Ref NotificationWorkerMessagingPolicy
     Export:
       Name: !Sub "ridenow-${Environment}-iam-NotificationWorkerMessagingPolicyArn"
+
+  AdotCollectorXRayPolicyArn:
+    Value: !Ref AdotCollectorXRayPolicy
+    Export:
+      Name: !Sub "ridenow-${Environment}-iam-AdotCollectorXRayPolicyArn"

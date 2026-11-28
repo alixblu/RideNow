@@ -79,6 +79,44 @@ spec:
             # Browser origin(s) of the app allowed to call /api/**. Never "*" here.
             - name: RIDENOW_CORS_ALLOWED_ORIGINS
               value: "<APP_ORIGIN>"
+            # OpenTelemetry Java agent -> ADOT Collector -> X-Ray (xray-tracing spec).
+            # The agent jar is baked into the image at /opt/otel; it is attached only here,
+            # so docker-compose runs the same image without it. Memory overhead: the agent
+            # adds roughly 100-200 MB heap/metaspace and slower startup; the 512Mi/1Gi
+            # resources and the 5 min startupProbe below are kept. Raise memory only if a
+            # rollout shows OOMKilled. No headers or bodies are captured.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-javaagent:/opt/otel/opentelemetry-javaagent.jar"
+            - name: OTEL_SERVICE_NAME
+              value: "notification-worker"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://adot-collector.ridenow.svc.cluster.local:4317"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_PROPAGATORS
+              value: "xray,tracecontext,baggage"
+            - name: OTEL_TRACES_SAMPLER
+              value: "parentbased_traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "1.0"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            - name: OTEL_LOGS_EXPORTER
+              value: "none"
+            # Poll loops (@Scheduled) must not each start a trace.
+            - name: OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED
+              value: "false"
+            # JDBC statements are recorded without parameter values.
+            - name: OTEL_INSTRUMENTATION_JDBC_STATEMENT_SANITIZER_ENABLED
+              value: "true"
+            # Keep the service map readable: no method-level spans for Spring Data
+            # repositories, Hibernate transactions or @Scheduled tasks. JDBC spans stay.
+            - name: OTEL_INSTRUMENTATION_SPRING_DATA_ENABLED
+              value: "false"
+            - name: OTEL_INSTRUMENTATION_HIBERNATE_ENABLED
+              value: "false"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment=<ENV>"
           resources:
             requests:
               cpu: "250m"

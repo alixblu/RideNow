@@ -1,5 +1,11 @@
 package cloudnative.microservices.matching.event;
 
+import cloudnative.microservices.matching.tracing.MessagingTracer;
+import cloudnative.microservices.matching.tracing.TraceContextCarrier;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import java.util.HashMap;
+import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,7 +40,9 @@ public class TripEventQueueConsumer {
     private final String queueUrl;
     private final int waitSeconds;
     private final int maxMessages;
+    private final MessagingTracer tracer;
 
+    @Autowired
     public TripEventQueueConsumer(
             SqsClient sqs,
             TripRequestedHandler handler,
@@ -43,6 +51,14 @@ public class TripEventQueueConsumer {
             @Value("${ridenow.matching.poll.wait-seconds:10}") int waitSeconds,
             @Value("${ridenow.matching.poll.max-messages:10}") int maxMessages
     ) {
+        this(sqs, handler, objectMapper, queueUrl, waitSeconds, maxMessages,
+                new MessagingTracer(GlobalOpenTelemetry.get(),
+                        new TraceContextCarrier(GlobalOpenTelemetry.getPropagators().getTextMapPropagator())));
+    }
+
+    public TripEventQueueConsumer(SqsClient sqs, TripRequestedHandler handler, ObjectMapper objectMapper,
+                                  String queueUrl, int waitSeconds, int maxMessages, MessagingTracer tracer) {
+        this.tracer = tracer;
         this.sqs = sqs;
         this.handler = handler;
         this.objectMapper = objectMapper;
@@ -58,20 +74,52 @@ public class TripEventQueueConsumer {
                 .queueUrl(queueUrl)
                 .maxNumberOfMessages(maxMessages)
                 .waitTimeSeconds(waitSeconds)
+                .messageAttributeNames(TraceContextCarrier.TRACEPARENT, TraceContextCarrier.XRAY)
                 .build());
 
         for (Message message : response.messages()) {
             try {
-                handler.handle(parse(message.body()));
-                sqs.deleteMessage(DeleteMessageRequest.builder()
-                        .queueUrl(queueUrl)
-                        .receiptHandle(message.receiptHandle())
-                        .build());
+                IncomingEvent event = null;
+                Exception parseError = null;
+                try {
+                    event = parse(message.body());
+                } catch (Exception ex) {
+                    parseError = ex;
+                }
+                final IncomingEvent parsed = event;
+                final Exception failure = parseError;
+                tracer.consume(queueName(), message.messageId(), traceAttributes(message),
+                        parsed == null ? null : parsed.type(), () -> {
+                            if (failure != null) {
+                                throw failure;
+                            }
+                            handler.handle(parsed);
+                            sqs.deleteMessage(DeleteMessageRequest.builder()
+                                    .queueUrl(queueUrl)
+                                    .receiptHandle(message.receiptHandle())
+                                    .build());
+                        });
             } catch (Exception ex) {
                 // Leave it on the queue: redelivered, then dead-lettered.
                 log.warn("Failed to process message (will retry/DLQ): {}", ex.getMessage());
             }
         }
+    }
+
+    private String queueName() {
+        return queueUrl.substring(queueUrl.lastIndexOf('/') + 1);
+    }
+
+    private static Map<String, String> traceAttributes(Message message) {
+        Map<String, String> out = new HashMap<>();
+        if (message.hasMessageAttributes()) {
+            message.messageAttributes().forEach((k, v) -> {
+                if (v != null && v.stringValue() != null) {
+                    out.put(k, v.stringValue());
+                }
+            });
+        }
+        return out;
     }
 
     /**

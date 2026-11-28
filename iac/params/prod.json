@@ -28,7 +28,8 @@
   },
   "06-eks-cluster": {
     "Environment": "prod",
-    "KubernetesVersion": "1.31"
+    "KubernetesVersion": "1.31",
+    "LogRetentionDays": "14"
   },
   "07-eks-addons": {
     "Environment": "prod",
@@ -40,5 +41,13 @@
     "AlbDnsName": "",
     "GithubRepo": "alixblu/RideNow",
     "GithubOidcProviderArn": ""
+  },
+  "09-observability": {
+    "Environment": "prod",
+    "EnableMessaging": "true",
+    "EnableRedis": "true",
+    "AlarmEmail": "",
+    "LogRetentionDays": "14",
+    "AlbFullName": ""
   }
 }

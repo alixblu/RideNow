@@ -16,6 +16,12 @@ Parameters:
     Default: "1.31"
     Description: EKS Kubernetes version.
 
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+    Description: Retention in days for the EKS control plane log group.
+
 Resources:
   # ---- KMS key for Kubernetes secrets envelope encryption ------------------
   ClusterKmsKey:
@@ -33,11 +39,28 @@ Resources:
             Action: "kms:*"
             Resource: "*"
 
+  # Control plane log group. EKS writes to /aws/eks/<cluster-name>/cluster; creating
+  # it here (before the cluster) lets us own its retention instead of keeping logs forever.
+  ClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/eks/ridenow-${Environment}/cluster"
+      RetentionInDays: !Ref LogRetentionDays
+
   Cluster:
     Type: AWS::EKS::Cluster
+    DependsOn: ClusterLogGroup
     Properties:
       Name: !Sub "ridenow-${Environment}"
       Version: !Ref KubernetesVersion
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+            - Type: controllerManager
+            - Type: scheduler
       RoleArn: !ImportValue
         Fn::Sub: "ridenow-${Environment}-iam-ClusterRoleArn"
       ResourcesVpcConfig:

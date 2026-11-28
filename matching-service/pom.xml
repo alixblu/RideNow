@@ -16,6 +16,7 @@
         <java.version>25</java.version>
         <aws.sdk.version>2.57.6</aws.sdk.version>
         <testcontainers.version>1.21.4</testcontainers.version>
+        <otel.contrib.version>1.62.1-alpha</otel.contrib.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -55,6 +56,12 @@
         <dependency><groupId>org.testcontainers</groupId><artifactId>postgresql</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.testcontainers</groupId><artifactId>localstack</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>net.jqwik</groupId><artifactId>jqwik</artifactId><version>1.9.3</version><scope>test</scope></dependency>
+        <!-- Tracing API only (version managed by the Spring Boot BOM). No-op unless the OTel Java agent is attached. -->
+        <dependency><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api</artifactId></dependency>
+        <dependency><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-testing</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>io.opentelemetry.contrib</groupId><artifactId>opentelemetry-aws-xray-propagator</artifactId><version>${otel.contrib.version}</version><scope>test</scope></dependency>
     </dependencies>
     <build>
         <plugins>

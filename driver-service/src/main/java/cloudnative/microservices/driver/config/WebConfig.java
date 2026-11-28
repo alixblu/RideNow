@@ -20,6 +20,7 @@ public class WebConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
                 .allowedMethods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+                .exposedHeaders("X-Trace-Id")
                 .allowedOriginPatterns(properties.allowedOrigins().toArray(String[]::new));
     }
 }

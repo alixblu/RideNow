@@ -75,6 +75,12 @@ if [[ ${APPLY} -eq 1 ]]; then
   sleep 30
 fi
 
+# --- 1b. Delete the ADOT Collector (X-Ray tracing) ---------------------------
+# Removed in-cluster before teardown.sh deletes stack 07 (its IRSA role) and
+# stack 01 (its X-Ray policy). Tolerates not-found.
+run "Delete ADOT Collector (ServiceAccount, Deployment, Service, ConfigMap)" \
+  kubectl delete -f ../k8s/15-adot-collector.yaml --ignore-not-found
+
 # --- 2. Delete the application workloads -------------------------------------
 run "Delete service manifests + SecurityGroupPolicies + namespace" \
   kubectl delete -f ../k8s/ --ignore-not-found --recursive

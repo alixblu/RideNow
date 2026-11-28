@@ -152,7 +152,8 @@ trip-service    --->  payment-service   authorize fare on trip request
 Topic: `ridenow-local-events`. Each queue has a DLQ (`maxReceiveCount` 5). Each queue
 is fed by one subscription with raw message delivery, so the SQS body is the event
 JSON itself (no SNS envelope). Subscriptions filter on the body's top-level `type`
-(`FilterPolicyScope=MessageBody`), so publishers set no message attributes.
+(`FilterPolicyScope=MessageBody`), so filtering needs no message attributes. Publishers add
+only the trace context attributes (`traceparent`, `X-Amzn-Trace-Id`); see section 4.1.
 
 | Queue | Subscription filter (`type`) | Consumer |
 |-------|------------------------------|----------|
@@ -176,6 +177,28 @@ driver-service --ridenow:driver:locations (Pub/Sub)--> realtime-gateway --SSE-->
 3. Pub/Sub for live tracking and the trip-ended signal to the gateway.
 4. Stream of driver locations, read by matching-service through a consumer group.
 5. Cache-aside for the driver profile (driver-service).
+
+### 4.1 Tracing
+
+All seven services run the OpenTelemetry Java agent (`JAVA_TOOL_OPTIONS=-javaagent:/opt/otel/opentelemetry-javaagent.jar`)
+and send OTLP over gRPC to the ADOT Collector at `http://adot-collector.ridenow.svc.cluster.local:4317`
+(manifest `iac/k8s/15-adot-collector.yaml`). The Collector exports to X-Ray.
+
+| Variable | Value |
+|----------|-------|
+| `OTEL_SERVICE_NAME` | the service name, for example `trip-service` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://adot-collector.ridenow.svc.cluster.local:4317` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
+| `OTEL_PROPAGATORS` | `xray,tracecontext,baggage` |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `parentbased_traceidratio`, `1.0` (lower it to cut cost) |
+| `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | `none` |
+| `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED` | `false` (queue pollers do not start traces) |
+| `OTEL_INSTRUMENTATION_JDBC_STATEMENT_SANITIZER_ENABLED` | `true` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=<env>` |
+
+Every HTTP response carries an `X-Trace-Id` header (`1-<8 hex>-<24 hex>`, exposed through CORS).
+Log lines carry `trace_id=` and `span_id=`. Paste the header value into the X-Ray console to open
+the trace. Without the agent the tracing code does nothing.
 
 ---
 

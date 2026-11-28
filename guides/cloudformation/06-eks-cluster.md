@@ -1,4 +1,4 @@
-# 06 - EKS cluster (control plane and Fargate profiles)
+﻿# 06 - EKS cluster (control plane and Fargate profiles)
 
 Creates a KMS key, the EKS cluster `ridenow-prod` and three Fargate profiles of `iac/stacks/06-eks-cluster.yaml` (`Environment=prod`, `KubernetesVersion=1.31`, from `iac/params/prod.json`) in region `ap-southeast-1`.
 
@@ -82,6 +82,18 @@ Do the steps in order. Note: the console needs an alias for the key (the Templat
 2. Tick **Automatically rotate this KMS key every year**.
 3. Select **Save**.
 
+### 1a. Control-plane log group (`ClusterLogGroup`)
+
+Create the log group before the cluster, so the cluster writes into a group that has a retention.
+
+1. Go to **CloudWatch -> Logs -> Log management -> Create log group**.
+2. Set **Log group name** to `/aws/eks/ridenow-prod/cluster`.
+3. Set **Retention setting** to `2 weeks (14 days)`.
+4. Leave **Log class** on `Standard`.
+5. Select **Create**.
+
+Note: if EKS already created a group with this name (an earlier cluster, or log types turned on before this step), delete it first. An auto-created group has **Never expire** retention and the template cannot create a group that already exists. Go to **CloudWatch -> Logs -> Log management**, tick `/aws/eks/ridenow-prod/cluster`, select **Actions -> Delete log group(s)**, then select **Delete**. This removes the old control-plane logs, so export anything you need first. Then do the numbered steps above.
+
 ### 2. EKS cluster (`Cluster`)
 
 **Configure cluster**
@@ -111,7 +123,7 @@ Do the steps in order. Note: the console needs an alias for the key (the Templat
 
 **Observability and add-ons**
 
-1. On **Configure observability**, leave every control plane log type off. Select **Next**.
+1. On **Configure observability**, under **Control plane logs**, turn on all five log types: `API server`, `Audit`, `Authenticator`, `Controller manager` and `Scheduler`. Leave **Prometheus metrics** and **CloudWatch Observability agent** off. Select **Next**. The logs go to the group from step 1a.
 2. On **Select add-ons**, leave `kube-proxy`, `CoreDNS` and `Amazon VPC CNI` ticked. Select **Next**.
 3. On **Configure selected add-ons settings**, leave the defaults. Select **Next**.
 4. Select **Create**.
@@ -362,34 +374,7 @@ Pods started earlier keep the old security group until restarted, which is why t
 
 ### 7. Fargate log router
 
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: aws-observability
-  labels:
-    aws-observability: enabled
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: aws-logging
-  namespace: aws-observability
-data:
-  flb_log_cw: "true"
-  output.conf: |
-    [OUTPUT]
-        Name cloudwatch_logs
-        Match kube.*
-        region ap-southeast-1
-        log_group_name /aws/eks/ridenow/fargate
-        log_stream_prefix fargate-
-        auto_create_group true
-EOF
-```
-
-Expected: `namespace/aws-observability created` and `configmap/aws-logging created`.
+Do this step in [10-cloudwatch.md](10-cloudwatch.md), in its Post-Deploy step 1 ("Fargate log router"), which applies `iac/k8s/01-aws-logging.yaml`. That guide creates the pod log group `/aws/eks/ridenow-prod/fargate` first, which the log router needs. The `ridenow-prod-observability` Fargate profile from this guide already covers the namespace `aws-observability`. Come back here for step 8.
 
 ### 8. Database secrets (ExternalSecrets)
 
@@ -460,5 +445,16 @@ aws eks list-fargate-profiles --cluster-name ridenow-prod --region ap-southeast-
 ```
 
 Expected: the first command prints the endpoint URL, the OIDC issuer URL and an `sg-...` id. The second prints `ACTIVE  1.31  True  True  secrets`. The third lists `ridenow-prod-system`, `ridenow-prod-app` and `ridenow-prod-observability`. A missing item means that step was skipped or misspelled.
+
+Check the control-plane logging:
+
+```bash
+aws eks describe-cluster --name ridenow-prod --region ap-southeast-1 \
+  --query "cluster.logging.clusterLogging[?enabled].types[]" --output text
+aws logs describe-log-groups --log-group-name-prefix /aws/eks/ridenow-prod/cluster \
+  --region ap-southeast-1 --query "logGroups[].[logGroupName,retentionInDays]" --output text
+```
+
+Expected: the first command lists `api audit authenticator controllerManager scheduler`. The second prints `/aws/eks/ridenow-prod/cluster  14`.
 
 Next: `07-eks-addons.md`.

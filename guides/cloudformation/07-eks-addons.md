@@ -1,6 +1,6 @@
 ﻿# 07 - EKS add-ons (pod network access, OIDC provider, IRSA roles, application services)
 
-You create two security group inbound rules, the cluster OIDC provider and six IRSA roles in the AWS Console, then deploy the seven services with `kubectl`. Reference: `iac/stacks/07-eks-addons.yaml` (read only). Region `ap-southeast-1`, environment `prod`.
+You create two security group inbound rules, the cluster OIDC provider and seven IRSA roles in the AWS Console, then deploy the ADOT Collector and the seven services with `kubectl`. Reference: `iac/stacks/07-eks-addons.yaml` (read only). Region `ap-southeast-1`, environment `prod`.
 
 ## What it creates
 
@@ -15,6 +15,7 @@ You create two security group inbound rules, the cluster OIDC provider and six I
 | `PaymentServiceRole` | IAM role | `ridenow-prod-payment-service` |
 | `MatchingServiceRole` | IAM role | `ridenow-prod-matching-service` |
 | `NotificationWorkerRole` | IAM role | `ridenow-prod-notification-worker` |
+| `AdotCollectorRole` | IAM role | `ridenow-prod-adot-collector` |
 
 `OidcProviderId` is empty in `iac/params/prod.json` because the cluster does not exist when the file is written. `OIDC_ID` is the last path segment of the cluster OIDC issuer URL (see the `OIDC_ID` row under Depends on).
 
@@ -35,6 +36,9 @@ Look up each value below in the console and keep it at hand. Use the value names
 | Payment messaging policy, import `iam-PaymentServiceMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-payment-service-messaging`. Open it and copy the ARN. |
 | Matching messaging policy, import `iam-MatchingServiceMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-matching-service-messaging`. Open it and copy the ARN. |
 | Notification messaging policy, import `iam-NotificationWorkerMessagingPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-notification-worker-messaging`. Open it and copy the ARN. |
+| ADOT Collector X-Ray policy, import `iam-AdotCollectorXRayPolicyArn` | `01-iam.md` | **IAM -> Policies**. Search `ridenow-prod-adot-collector-xray`. Open it and copy the ARN. |
+| `ADOT_COLLECTOR_TAG` | fixed | `v0.51.0`, the pinned tag of `public.ecr.aws/aws-observability/aws-otel-collector` that `iac/scripts/deploy-and-test.sh` uses by default. |
+| `ADOT_COLLECTOR_ROLE_ARN` | this guide, step 5 | **IAM -> Roles -> `ridenow-prod-adot-collector`**. Copy **ARN**. Look it up after step 5. |
 | `USER_DB_ENDPOINT`, `DRIVER_DB_ENDPOINT`, `TRIP_DB_ENDPOINT`, `PAYMENT_DB_ENDPOINT`, `MATCHING_DB_ENDPOINT`, `NOTIFICATION_DB_ENDPOINT` | `04-data.md` | **RDS -> Databases -> `ridenow-prod-<service>-db`** (`user`, `driver`, `trip`, `payment`, `matching`, `notification`) **-> Connectivity & security**. Copy **Endpoint** (host name only, no port). |
 | `REDIS_ENDPOINT` | `05-messaging.md` | **ElastiCache -> Valkey caches** (or **Redis OSS caches**) **-> `ridenow-prod-redis`**. Copy **Primary endpoint** (host name only, no `:6379`). |
 | `MATCHING_QUEUE_URL` | `05-messaging.md` | **SQS -> Queues -> `ridenow-prod-matching`**. Copy **URL**. |
@@ -446,6 +450,61 @@ Expected: role `ridenow-prod-notification-worker` exists. Trust relationships sh
 
 `user-service`, `driver-service` and `realtime-gateway` have no role.
 
+### 5. Role `ridenow-prod-adot-collector` (`AdotCollectorRole`)
+
+The ADOT Collector is the only workload that writes to X-Ray. The services send OTLP to it and have no X-Ray permissions.
+
+| Item | Value |
+|---|---|
+| Role name | `ridenow-prod-adot-collector` |
+| Service account | `ridenow:adot-collector` |
+| Permissions | managed policy `ridenow-prod-adot-collector-xray` |
+
+**Create the role**
+
+1. Go to **IAM -> Roles -> Create role**.
+2. Set **Trusted entity type** to `Web identity`.
+3. Set **Identity provider** to `oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>`.
+4. Set **Audience** to `sts.amazonaws.com`.
+5. Choose **Next**.
+6. On **Add permissions**, set the filter to `Customer managed`.
+7. Search for `ridenow-prod-adot-collector-xray`.
+8. Tick the checkbox of that policy, then choose **Next**.
+9. Set **Role name** to `ridenow-prod-adot-collector`.
+10. Leave **Description** blank.
+11. Choose **Create role**.
+
+**Replace the trust policy**
+
+1. In the roles list, search for `ridenow-prod-adot-collector` and open it.
+2. Open the **Trust relationships** tab and choose **Edit trust policy**.
+3. Delete the whole document.
+4. Paste the JSON below, with `<ACCOUNT_ID>` and `<OIDC_ID>` replaced.
+5. Choose **Update policy**.
+
+Trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>" },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:ridenow:adot-collector",
+          "oidc.eks.ap-southeast-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Expected: role `ridenow-prod-adot-collector` exists with the one policy `ridenow-prod-adot-collector-xray`. Trust relationships shows the OIDC provider as principal and `ridenow:adot-collector` in the condition. Copy its ARN as `ADOT_COLLECTOR_ROLE_ARN`.
+
 ## Values to record
 
 After you create the roles, copy each ARN from the console (**IAM -> Roles**, open the role, copy **ARN**) and keep it under the value name below.
@@ -458,6 +517,7 @@ After you create the roles, copy each ARN from the console (**IAM -> Roles**, op
 | `PaymentServiceRoleArn` | IAM > Roles > `ridenow-prod-payment-service` > ARN | `PAYMENT_SERVICE_ROLE_ARN` | `iac/k8s/23-payment-service.yaml` |
 | `MatchingServiceRoleArn` | IAM > Roles > `ridenow-prod-matching-service` > ARN | `MATCHING_SERVICE_ROLE_ARN` | `iac/k8s/24-matching-service.yaml` |
 | `NotificationWorkerRoleArn` | IAM > Roles > `ridenow-prod-notification-worker` > ARN | `NOTIFICATION_WORKER_ROLE_ARN` | `iac/k8s/25-notification-worker.yaml` |
+| `AdotCollectorRoleArn` | IAM > Roles > `ridenow-prod-adot-collector` > ARN | `ADOT_COLLECTOR_ROLE_ARN` | `iac/k8s/15-adot-collector.yaml` |
 
 ## Post-Deploy
 
@@ -487,10 +547,12 @@ TRIP_SERVICE_ROLE_ARN="<paste>"
 PAYMENT_SERVICE_ROLE_ARN="<paste>"
 MATCHING_SERVICE_ROLE_ARN="<paste>"
 NOTIFICATION_WORKER_ROLE_ARN="<paste>"
+ADOT_COLLECTOR_ROLE_ARN="<paste>"
+ADOT_COLLECTOR_TAG=v0.51.0
 for V in ACCOUNT_ID IMAGE_TAG APP_ORIGIN REDIS_ENDPOINT USER_DB_ENDPOINT DRIVER_DB_ENDPOINT \
          TRIP_DB_ENDPOINT PAYMENT_DB_ENDPOINT MATCHING_DB_ENDPOINT NOTIFICATION_DB_ENDPOINT \
          MATCHING_QUEUE_URL PAYMENT_QUEUE_URL NOTIFICATIONS_QUEUE_URL TRIP_SERVICE_ROLE_ARN \
-         PAYMENT_SERVICE_ROLE_ARN MATCHING_SERVICE_ROLE_ARN NOTIFICATION_WORKER_ROLE_ARN; do
+         PAYMENT_SERVICE_ROLE_ARN MATCHING_SERVICE_ROLE_ARN NOTIFICATION_WORKER_ROLE_ARN ADOT_COLLECTOR_ROLE_ARN; do
   case "${!V}" in ""|"<paste>") echo "NOT SET: $V" ;; esac
 done
 ```
@@ -520,8 +582,21 @@ SUBST=(
   -e "s|<PAYMENT_SERVICE_ROLE_ARN>|$PAYMENT_SERVICE_ROLE_ARN|g"
   -e "s|<MATCHING_SERVICE_ROLE_ARN>|$MATCHING_SERVICE_ROLE_ARN|g"
   -e "s|<NOTIFICATION_WORKER_ROLE_ARN>|$NOTIFICATION_WORKER_ROLE_ARN|g"
+  -e "s|<ADOT_COLLECTOR_ROLE_ARN>|$ADOT_COLLECTOR_ROLE_ARN|g"
+  -e "s|<ADOT_COLLECTOR_TAG>|$ADOT_COLLECTOR_TAG|g"
 )
 ```
+
+**Deploy the ADOT Collector first.** The services send traces to it, so apply `iac/k8s/15-adot-collector.yaml` before the service manifests. It creates the ServiceAccount `adot-collector`, its ConfigMap, a Deployment with two replicas, the ClusterIP Service `adot-collector` (ports 4317 and 4318) and a PodDisruptionBudget.
+
+```bash
+sed "${SUBST[@]}" iac/k8s/15-adot-collector.yaml | kubectl apply -f -
+kubectl rollout status deployment/adot-collector -n ridenow --timeout=900s
+kubectl get pods -n ridenow -l app=adot-collector
+kubectl logs -n ridenow deployment/adot-collector --tail=50
+```
+
+Expected: `deployment "adot-collector" successfully rolled out`, then two pods `1/1 Running`. The logs show the Collector starting (`Everything is ready. Begin running and processing data.`) and no `AccessDenied`, `WebIdentityErr`, `NoCredentialProviders` or `failed to export` lines. If a pod stays `Pending`, wait: Fargate starts a node per pod. If the logs show `AccessDenied` or `WebIdentityErr`, check that the role trust policy names `system:serviceaccount:ridenow:adot-collector`, that the policy `ridenow-prod-adot-collector-xray` is attached, and that `kubectl get sa adot-collector -n ridenow -o yaml` shows the `eks.amazonaws.com/role-arn` annotation with your role ARN. Then restart with `kubectl rollout restart deployment/adot-collector -n ridenow`.
 
 Deploy in this order (payment before trip, driver before matching). Fargate starts a node per pod, so each rollout can take several minutes.
 
@@ -550,13 +625,14 @@ aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[?conta
 aws ec2 describe-security-groups --group-ids "$DB_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`5432\`].UserIdGroupPairs[].GroupId" --output text
 aws ec2 describe-security-groups --group-ids "$REDIS_SG_ID" --query "SecurityGroups[0].IpPermissions[?FromPort==\`6379\`].UserIdGroupPairs[].GroupId" --output text
 echo "cluster SG: $EKS_CLUSTER_SG_ID"
-for ROLE in alb-controller external-secrets trip-service payment-service matching-service notification-worker; do
+for ROLE in alb-controller external-secrets trip-service payment-service matching-service notification-worker adot-collector; do
   aws iam get-role --role-name ridenow-$ENV-$ROLE --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals' --output json \
     | jq -r --arg r "$ROLE" 'to_entries[] | select(.key | endswith(":sub")) | "\($r)  \(.value)"'
 done
 kubectl get pods -n ridenow
+kubectl logs -n ridenow deployment/adot-collector --tail=50 | grep -iE "error|accessdenied|failed" || echo "no collector errors"
 ```
 
-Expected: one provider ARN ending in `/id/<OIDC_ID>`. Both group lines contain the `cluster SG:` value. Six role lines, each with its `system:serviceaccount:<namespace>:<service account>` from the table in step 4. 13 pods `1/1 Running` (two each for `user-service`, `driver-service`, `trip-service`, `payment-service`, `matching-service`, `realtime-gateway`; one `notification-worker`).
+Expected: one provider ARN ending in `/id/<OIDC_ID>`. Both group lines contain the `cluster SG:` value. Seven role lines, each with its `system:serviceaccount:<namespace>:<service account>` from the table in steps 4 and 5 (`adot-collector` shows `ridenow:adot-collector`). `no collector errors`. 15 pods `1/1 Running` (two each for `user-service`, `driver-service`, `trip-service`, `payment-service`, `matching-service`, `realtime-gateway`; one `notification-worker`), and two `adot-collector` pods (15 in total).
 
 Next: continue with `08-frontend.md` once the Ingress has an ALB address.

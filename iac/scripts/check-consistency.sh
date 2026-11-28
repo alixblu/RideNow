@@ -57,7 +57,7 @@ fi
 # --------------------------------------------------------- 2. placeholder sources
 head_ 2 "k8s placeholders have a source"
 # Values the operator supplies at deploy time, not exported by a stack.
-DEPLOY_TIME="ACCOUNT_ID REGION IMAGE_TAG ENV APP_ORIGIN"
+DEPLOY_TIME="ACCOUNT_ID REGION IMAGE_TAG ENV APP_ORIGIN ADOT_COLLECTOR_TAG"
 PLACEHOLDERS="$(grep -hoE '<[A-Z][A-Z0-9_]+>' "${K8S}"/*.yaml | tr -d '<>' | sort -u)"
 for p in ${PLACEHOLDERS}; do
   if echo " ${DEPLOY_TIME} " | grep -q " ${p} "; then continue; fi

@@ -1,6 +1,8 @@
 package cloudnative.microservices.notification.service;
 
 import cloudnative.microservices.notification.dto.IncomingEvent;
+import cloudnative.microservices.notification.tracing.MessagingTracer;
+import cloudnative.microservices.notification.tracing.TraceContextCarrier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +14,9 @@ import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Polls the SQS notifications queue and processes each message exactly once.
@@ -37,6 +42,7 @@ public class NotificationQueueConsumer {
     private final SqsClient sqs;
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
+    private final MessagingTracer tracer;
     private final String queueUrl;
     private final int waitSeconds;
     private final int maxMessages;
@@ -45,6 +51,7 @@ public class NotificationQueueConsumer {
             SqsClient sqs,
             NotificationService notificationService,
             ObjectMapper objectMapper,
+            MessagingTracer tracer,
             @Value("${ridenow.notifications.queue-url}") String queueUrl,
             @Value("${ridenow.notifications.poll.wait-seconds:10}") int waitSeconds,
             @Value("${ridenow.notifications.poll.max-messages:10}") int maxMessages
@@ -52,6 +59,7 @@ public class NotificationQueueConsumer {
         this.sqs = sqs;
         this.notificationService = notificationService;
         this.objectMapper = objectMapper;
+        this.tracer = tracer;
         this.queueUrl = queueUrl;
         this.waitSeconds = waitSeconds;
         this.maxMessages = maxMessages;
@@ -64,22 +72,36 @@ public class NotificationQueueConsumer {
                 .queueUrl(queueUrl)
                 .maxNumberOfMessages(maxMessages)
                 .waitTimeSeconds(waitSeconds)
+                .messageAttributeNames(TraceContextCarrier.TRACEPARENT, TraceContextCarrier.XRAY)
                 .build());
 
         for (Message message : response.messages()) {
             try {
                 IncomingEvent event = parse(message.body());
-                notificationService.handle(event);
-                sqs.deleteMessage(DeleteMessageRequest.builder()
-                        .queueUrl(queueUrl)
-                        .receiptHandle(message.receiptHandle())
-                        .build());
+                tracer.consume("notifications", message.messageId(), stringAttributes(message),
+                        event.type(), () -> {
+                            notificationService.handle(event);
+                            sqs.deleteMessage(DeleteMessageRequest.builder()
+                                    .queueUrl(queueUrl)
+                                    .receiptHandle(message.receiptHandle())
+                                    .build());
+                        });
             } catch (Exception ex) {
                 // Leave the message on the queue: it becomes visible again and is
                 // redelivered, then dead-lettered after maxReceiveCount.
                 log.warn("Failed to process message (will retry/DLQ): {}", ex.getMessage());
             }
         }
+    }
+
+    private static Map<String, String> stringAttributes(Message message) {
+        Map<String, String> attrs = new HashMap<>();
+        message.messageAttributes().forEach((k, v) -> {
+            if (v != null && v.stringValue() != null) {
+                attrs.put(k, v.stringValue());
+            }
+        });
+        return attrs;
     }
 
     /**

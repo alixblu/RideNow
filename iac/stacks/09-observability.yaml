@@ -1,0 +1,455 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::LanguageExtensions
+Description: >
+  RideNow observability layer (09). The CloudWatch Logs group the EKS Fargate log
+  router writes pod logs to, two saved Logs Insights queries (by trace id, errors
+  by service), and the SNS topic every CloudWatch alarm notifies (alarm and OK),
+  with an optional email subscription. Alarms and the dashboard are added in the
+  same stack. Names are built from Environment and the EnableMessaging /
+  EnableRedis flags (same values as stack 05), so this stack imports nothing and
+  can be deleted on its own. Deploy it last, after 07, so the ALB exists for the
+  ALB alarms.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [prod]
+
+  EnableMessaging:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Same value as stack 05. Creates the queue, DLQ and SNS alarms.
+
+  EnableRedis:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Same value as stack 05. Creates the Valkey alarms.
+
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Email address that receives alarm and OK mail. Empty creates no subscription.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+    Description: Days the pod log group keeps events.
+
+  QueueAgeThresholdSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    Description: Oldest message age (seconds) above which a queue alarm fires.
+
+  DbServices:
+    Type: CommaDelimitedList
+    Default: "user,driver,trip,payment,matching,notification"
+    Description: Services whose RDS instance ridenow-<env>-<service>-db gets alarms.
+
+  DbCpuThresholdPercent:
+    Type: Number
+    Default: 80
+    Description: RDS CPUUtilization percent above which the alarm fires.
+
+  DbFreeStorageThresholdBytes:
+    Type: Number
+    Default: 2147483648
+    Description: RDS FreeStorageSpace bytes below which the alarm fires (10% of 20 GiB).
+
+  CacheMemoryThresholdPercent:
+    Type: Number
+    Default: 80
+    Description: Valkey DatabaseMemoryUsagePercentage above which the alarm fires.
+
+  AlbFullName:
+    Type: String
+    Default: ""
+    Description: >
+      ALB dimension value, for example app/k8s-ridenow-abc/0123456789abcdef.
+      Empty creates no ALB alarm or widget.
+
+  Alb5xxThreshold:
+    Type: Number
+    Default: 5
+    Description: Target 5xx responses per minute above which the alarm fires.
+
+
+Conditions:
+  MessagingOn: !Equals [!Ref EnableMessaging, "true"]
+  RedisOn: !Equals [!Ref EnableRedis, "true"]
+  AlbOn: !Not [!Equals [!Ref AlbFullName, ""]]
+  EmailOn: !Not [!Equals [!Ref AlarmEmail, ""]]
+
+Resources:
+  # ---- Logs: pod log group + saved queries ----------------------------------
+  # The Fargate log router (iac/k8s/01-aws-logging.yaml) writes here with
+  # auto_create_group false, so this stack owns the group and its retention.
+  PodLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/eks/ridenow-${Environment}/fargate"
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Service logs are plain text ("... : trace_id=<id> span_id=<id> message"),
+  # so the queries match on the raw "log" field. kubernetes.container_name is
+  # added by the router's Kubernetes filter and equals the service name.
+  TraceIdQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "ridenow-${Environment}/by-trace-id"
+      LogGroupNames:
+        - !Ref PodLogGroup
+      QueryString: |
+        fields @timestamp, kubernetes.container_name as service, log
+        | filter log like "trace_id=1-REPLACE-ME"
+        | sort @timestamp asc
+
+  ErrorsByServiceQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "ridenow-${Environment}/errors-by-service"
+      LogGroupNames:
+        - !Ref PodLogGroup
+      QueryString: |
+        fields @timestamp, kubernetes.container_name as service
+        | filter log like / ERROR /
+        | stats count(*) as errors by service, bin(5m)
+
+  # ---- SNS: alarm topic -----------------------------------------------------
+  # No KmsMasterKeyId on purpose: CloudWatch alarms cannot publish to a topic
+  # encrypted with the AWS-managed aws/sns key, so delivery would fail silently.
+  # The message holds only the alarm name, state and metric values. To encrypt
+  # the topic, use a customer-managed key whose policy allows
+  # cloudwatch.amazonaws.com.
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "ridenow-${Environment}-alarms"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EmailOn
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # Only CloudWatch alarms in this account may publish to the topic.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlarmTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"
+
+  # ---- Alarms: messaging ----------------------------------------------------
+  # SQS and SNS publish metrics only while there is traffic, so missing data is
+  # notBreaching. Names are built from Environment (same as stack 05).
+  Fn::ForEach::DlqDepthAlarms:
+    - Queue
+    - [matching, payment, notifications]
+    - "${Queue}DlqDepthAlarm":
+        Type: AWS::CloudWatch::Alarm
+        Condition: MessagingOn
+        Properties:
+          AlarmName: !Sub "ridenow-${Environment}-${Queue}-dlq-depth"
+          AlarmDescription: !Sub "A message is waiting in ridenow-${Environment}-${Queue}-dlq."
+          Namespace: AWS/SQS
+          MetricName: ApproximateNumberOfMessagesVisible
+          Dimensions:
+            - Name: QueueName
+              Value: !Sub "ridenow-${Environment}-${Queue}-dlq"
+          Statistic: Maximum
+          Period: 60
+          EvaluationPeriods: 1
+          Threshold: 0
+          ComparisonOperator: GreaterThanThreshold
+          TreatMissingData: notBreaching
+          AlarmActions:
+            - !Ref AlarmTopic
+          OKActions:
+            - !Ref AlarmTopic
+
+  Fn::ForEach::QueueAgeAlarms:
+    - Queue
+    - [matching, payment, notifications]
+    - "${Queue}QueueAgeAlarm":
+        Type: AWS::CloudWatch::Alarm
+        Condition: MessagingOn
+        Properties:
+          AlarmName: !Sub "ridenow-${Environment}-${Queue}-queue-age"
+          AlarmDescription: !Sub "The oldest message in ridenow-${Environment}-${Queue} is older than the threshold."
+          Namespace: AWS/SQS
+          MetricName: ApproximateAgeOfOldestMessage
+          Dimensions:
+            - Name: QueueName
+              Value: !Sub "ridenow-${Environment}-${Queue}"
+          Statistic: Maximum
+          Period: 60
+          EvaluationPeriods: 3
+          Threshold: !Ref QueueAgeThresholdSeconds
+          ComparisonOperator: GreaterThanThreshold
+          TreatMissingData: notBreaching
+          AlarmActions:
+            - !Ref AlarmTopic
+          OKActions:
+            - !Ref AlarmTopic
+
+  EventsDeliveryFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: MessagingOn
+    Properties:
+      AlarmName: !Sub "ridenow-${Environment}-events-delivery-failed"
+      AlarmDescription: !Sub "SNS topic ridenow-${Environment}-events failed to deliver a notification."
+      Namespace: AWS/SNS
+      MetricName: NumberOfNotificationsFailed
+      Dimensions:
+        - Name: TopicName
+          Value: !Sub "ridenow-${Environment}-events"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # ---- Alarms: RDS ----------------------------------------------------------
+  # One alarm per service per metric (6 x 2 = 12). Add a service by adding it to
+  # DbServices. RDS publishes continuously, so missing data keeps the default.
+  Fn::ForEach::DbCpuAlarms:
+    - Svc
+    - !Ref DbServices
+    - "DbCpuAlarm${Svc}":
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+          AlarmName: !Sub "ridenow-${Environment}-${Svc}-db-cpu"
+          AlarmDescription: !Sub "CPU of ridenow-${Environment}-${Svc}-db is above the threshold."
+          Namespace: AWS/RDS
+          MetricName: CPUUtilization
+          Dimensions:
+            - Name: DBInstanceIdentifier
+              Value: !Sub "ridenow-${Environment}-${Svc}-db"
+          Statistic: Average
+          Period: 300
+          EvaluationPeriods: 3
+          Threshold: !Ref DbCpuThresholdPercent
+          ComparisonOperator: GreaterThanThreshold
+          AlarmActions:
+            - !Ref AlarmTopic
+          OKActions:
+            - !Ref AlarmTopic
+
+  Fn::ForEach::DbFreeStorageAlarms:
+    - Svc
+    - !Ref DbServices
+    - "DbFreeStorageAlarm${Svc}":
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+          AlarmName: !Sub "ridenow-${Environment}-${Svc}-db-free-storage"
+          AlarmDescription: !Sub "Free storage of ridenow-${Environment}-${Svc}-db is below the threshold."
+          Namespace: AWS/RDS
+          MetricName: FreeStorageSpace
+          Dimensions:
+            - Name: DBInstanceIdentifier
+              Value: !Sub "ridenow-${Environment}-${Svc}-db"
+          Statistic: Average
+          Period: 300
+          EvaluationPeriods: 1
+          Threshold: !Ref DbFreeStorageThresholdBytes
+          ComparisonOperator: LessThanThreshold
+          AlarmActions:
+            - !Ref AlarmTopic
+          OKActions:
+            - !Ref AlarmTopic
+
+  # ---- Alarms: Valkey -------------------------------------------------------
+  # The replication group has two nodes (-001, -002). Metrics are per node
+  # (CacheClusterId), so each alarm takes the MAX of both nodes. n1 and n2 are
+  # not returned; only the expression is evaluated.
+  CacheMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: RedisOn
+    Properties:
+      AlarmName: !Sub "ridenow-${Environment}-redis-memory"
+      AlarmDescription: !Sub "Valkey memory usage of ridenow-${Environment}-redis is above the threshold on a node."
+      Metrics:
+        - Id: e1
+          Expression: MAX([n1,n2])
+          Label: DatabaseMemoryUsagePercentage
+          ReturnData: true
+        - Id: n1
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ElastiCache
+              MetricName: DatabaseMemoryUsagePercentage
+              Dimensions:
+                - Name: CacheClusterId
+                  Value: !Sub "ridenow-${Environment}-redis-001"
+            Period: 300
+            Stat: Average
+        - Id: n2
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ElastiCache
+              MetricName: DatabaseMemoryUsagePercentage
+              Dimensions:
+                - Name: CacheClusterId
+                  Value: !Sub "ridenow-${Environment}-redis-002"
+            Period: 300
+            Stat: Average
+      EvaluationPeriods: 3
+      Threshold: !Ref CacheMemoryThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # ---- Alarms: ALB ----------------------------------------------------------
+  # Created only when AlbFullName is set (condition AlbOn). The ALB publishes metrics only while there is traffic, so missing
+  # data is notBreaching.
+  Alb5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlbOn
+    Properties:
+      AlarmName: !Sub "ridenow-${Environment}-alb-5xx"
+      AlarmDescription: "Targets behind the ALB returned 5xx responses above the threshold."
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Ref AlbFullName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: !Ref Alb5xxThreshold
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # ---- Dashboard ------------------------------------------------------------
+  # Five rows on a 24-column grid (y = 0, 4, 10, 16, 22). The body is one JSON
+  # string. Messaging, Valkey and ALB pieces are Fn::If fragments that become ""
+  # when their switch is off. Every fragment ends (or, in the alarm list, starts)
+  # with a comma so the JSON stays valid either way. Alarm ARNs are built from
+  # the alarm names, so the dashboard holds no Ref to each alarm. The six service
+  # names are written out; keep them in step with DbServices.
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "ridenow-${Environment}"
+      DashboardBody: !Sub
+        - |
+          {"widgets":[
+          {"type":"alarm","x":0,"y":0,"width":24,"height":4,"properties":{"title":"Alarm status","alarms":[
+          "${P}-user-db-cpu","${P}-user-db-free-storage",
+          "${P}-driver-db-cpu","${P}-driver-db-free-storage",
+          "${P}-trip-db-cpu","${P}-trip-db-free-storage",
+          "${P}-payment-db-cpu","${P}-payment-db-free-storage",
+          "${P}-matching-db-cpu","${P}-matching-db-free-storage",
+          "${P}-notification-db-cpu","${P}-notification-db-free-storage"
+          ${AlarmMessaging}${AlarmRedis}${AlarmAlb}]}},
+          ${WidgetMessaging}
+          {"type":"metric","x":0,"y":10,"width":12,"height":6,"properties":{"title":"RDS CPUUtilization","view":"timeSeries","region":"${AWS::Region}","stat":"Average","period":300,"metrics":[
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-user-db",{"label":"user"}],
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-driver-db",{"label":"driver"}],
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-trip-db",{"label":"trip"}],
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-payment-db",{"label":"payment"}],
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-matching-db",{"label":"matching"}],
+          ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","ridenow-${Environment}-notification-db",{"label":"notification"}]]}},
+          ${WidgetRedis}
+          ${WidgetAlb}
+          {"type":"log","x":0,"y":22,"width":24,"height":6,"properties":{"title":"ERROR count per service","region":"${AWS::Region}","view":"timeSeries","stacked":false,"query":"SOURCE '${PodLogGroup}' | fields @timestamp, kubernetes.container_name as service | filter log like / ERROR / | stats count(*) as errors by bin(5m), service"}}
+          ]}
+        - P: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}"
+          AlarmMessaging: !If
+            - MessagingOn
+            - !Sub |
+              ,"arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-matching-dlq-depth","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-payment-dlq-depth","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-notifications-dlq-depth","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-matching-queue-age","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-payment-queue-age","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-notifications-queue-age","arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-events-delivery-failed"
+            - ""
+          AlarmRedis: !If
+            - RedisOn
+            - !Sub |
+              ,"arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-redis-memory"
+            - ""
+          AlarmAlb: !If
+            - AlbOn
+            - !Sub |
+              ,"arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:ridenow-${Environment}-alb-5xx"
+            - ""
+          PodLogGroup: !Ref PodLogGroup
+          WidgetMessaging: !If
+            - MessagingOn
+            - !Sub |
+              {"type":"metric","x":0,"y":4,"width":12,"height":6,"properties":{"title":"DLQ visible messages","view":"timeSeries","region":"${AWS::Region}","stat":"Maximum","period":60,"metrics":[
+              ["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","ridenow-${Environment}-matching-dlq",{"label":"matching"}],
+              ["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","ridenow-${Environment}-payment-dlq",{"label":"payment"}],
+              ["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","ridenow-${Environment}-notifications-dlq",{"label":"notifications"}]]}},
+              {"type":"metric","x":12,"y":4,"width":12,"height":6,"properties":{"title":"Oldest message age (s)","view":"timeSeries","region":"${AWS::Region}","stat":"Maximum","period":60,"metrics":[
+              ["AWS/SQS","ApproximateAgeOfOldestMessage","QueueName","ridenow-${Environment}-matching",{"label":"matching"}],
+              ["AWS/SQS","ApproximateAgeOfOldestMessage","QueueName","ridenow-${Environment}-payment",{"label":"payment"}],
+              ["AWS/SQS","ApproximateAgeOfOldestMessage","QueueName","ridenow-${Environment}-notifications",{"label":"notifications"}]]}},
+            - ""
+          WidgetRedis: !If
+            - RedisOn
+            - !Sub |
+              {"type":"metric","x":12,"y":10,"width":12,"height":6,"properties":{"title":"Valkey memory % (max of nodes)","view":"timeSeries","region":"${AWS::Region}","period":300,"metrics":[
+              [{"expression":"MAX([a,b])","label":"DatabaseMemoryUsagePercentage","id":"e1"}],
+              ["AWS/ElastiCache","DatabaseMemoryUsagePercentage","CacheClusterId","ridenow-${Environment}-redis-001",{"id":"a","stat":"Average","visible":false}],
+              ["AWS/ElastiCache","DatabaseMemoryUsagePercentage","CacheClusterId","ridenow-${Environment}-redis-002",{"id":"b","stat":"Average","visible":false}]]}},
+            - ""
+          WidgetAlb: !If
+            - AlbOn
+            - !Sub
+              - |
+                {"type":"metric","x":0,"y":16,"width":12,"height":6,"properties":{"title":"ALB target 5xx","view":"timeSeries","region":"${AWS::Region}","stat":"Sum","period":60,"metrics":[
+                ["AWS/ApplicationELB","HTTPCode_Target_5XX_Count","LoadBalancer","${Alb}"]]}},
+              - Alb: !Ref AlbFullName
+            - ""
+
+Outputs:
+  DashboardName:
+    Value: !Ref Dashboard
+    Export:
+      Name: !Sub "ridenow-${Environment}-observability-DashboardName"
+
+  AlarmTopicArn:
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub "ridenow-${Environment}-observability-AlarmTopicArn"
+
+  PodLogGroupName:
+    Value: !Ref PodLogGroup
+    Export:
+      Name: !Sub "ridenow-${Environment}-observability-PodLogGroupName"
